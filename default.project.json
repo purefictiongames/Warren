@@ -1,0 +1,32 @@
+{
+  "name": "LibPureFiction",
+  "tree": {
+    "$className": "DataModel",
+
+    "ServerStorage": {
+      "LibPureFiction": {
+        "$path": "src/ServerStorage/LibPureFiction"
+      }
+    },
+
+    "ReplicatedStorage": {
+      "LibPureFiction": {
+        "$path": "src/ReplicatedStorage/LibPureFiction"
+      }
+    },
+
+    "ReplicatedFirst": {
+      "$path": "src/ReplicatedFirst"
+    },
+
+    "ServerScriptService": {
+      "$path": "src/ServerScriptService"
+    },
+
+    "StarterPlayer": {
+      "StarterPlayerScripts": {
+        "$path": "src/StarterPlayerScripts"
+      }
+    }
+  }
+}

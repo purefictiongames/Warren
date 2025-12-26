@@ -12,6 +12,9 @@
       },
       "Assets": {
         "$path": "src/Assets"
+      },
+      "Templates": {
+        "$path": "src/Templates"
       }
     },
 

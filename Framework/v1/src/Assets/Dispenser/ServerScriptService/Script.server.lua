@@ -51,7 +51,7 @@ local function setupDispenser(model)
 	prompt.Triggered:Connect(function(player)
 		local item = dispenser:dispense()
 		if item then
-			item.Parent = ReplicatedStorage
+			item.Parent = player.Backpack
 			model:SetAttribute("Remaining", dispenser.remaining)
 			print("Dispenser: Gave", item.Name, "to", player.Name)
 		else

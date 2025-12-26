@@ -1,0 +1,35 @@
+{
+  "name": "v1",
+  "tree": {
+    "$className": "DataModel",
+
+    "ReplicatedStorage": {
+      "Authentication": {
+        "$path": "src/Authentication/Shared/Authentication.shared.lua"
+      },
+      "Permissions": {
+        "$path": "src/Authentication/Shared/Permissions.shared.lua"
+      },
+      "Assets": {
+        "$path": "src/Assets"
+      }
+    },
+
+    "ServerScriptService": {
+      "System": {
+        "$path": "src/System"
+      },
+      "Authentication": {
+        "$path": "src/Authentication/Server"
+      }
+    },
+
+    "StarterPlayer": {
+      "StarterPlayerScripts": {
+        "Authentication": {
+          "$path": "src/Authentication/Client"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,25 @@
+  10:55:11.159  System.Script: Running bootstrap...  -  Server - System:218
+  10:55:11.159  Created RuntimeAssets folder in Workspace  -  Server - System:172
+  10:55:11.159  Bootstrapped to Workspace.RuntimeAssets: Dispenser  -  Server - System:177
+  10:55:11.159  DEBUG: Contents of Dispenser after cloning to Workspace:  -  Server - System:180
+  10:55:11.160    - Server Folder  -  Server - System:182
+  10:55:11.160    - Client Folder  -  Server - System:182
+  10:55:11.160    - Shared Folder  -  Server - System:182
+  10:55:11.160  System.Script: Building manifest from post-bootstrap state...  -  Server - System:221
+  10:55:11.160  System.Script: Manifest built with 20 entries  -  Server - System:225
+  10:55:11.160  System.Script: Verifying manifest...  -  Server - System:227
+  10:55:11.160  System.Script: All 20 resources verified ✓  -  Server - System:94
+  10:55:11.160  GetCollisionGroupId is deprecated. More info: https://devforum.roblox.com/t/updates-to-collision-groups/1990215  -  Studio
+  10:55:11.163  System.Script: ServerReady flag set ✓  -  Server - System:270
+  10:55:11.164  Authentication.Server: Initializing...  -  Server - Authentication:15
+  10:55:11.164  Attempted to call require with invalid argument(s).  -  Server - Authentication:19
+  10:55:11.164  Stack Begin  -  Studio
+  10:55:11.164  Script 'ServerScriptService.Authentication.Authentication', Line 19  -  Studio - Authentication:19
+  10:55:11.165  Stack End  -  Studio
+  10:55:11.264  System.LocalScript: Waiting for ServerReady...  -  Client - System:9
+  10:55:11.264  System.LocalScript: ServerReady received ✓  -  Client - System:19
+  10:55:11.264  System.LocalScript: Verifying client resources...  -  Client - System:44
+  10:55:16.173  Infinite yield possible on 'ReplicatedStorage:WaitForChild("RemoteEvents")'  -  Studio
+  10:55:16.174  Stack Begin  -  Studio
+  10:55:16.174  Script 'ServerScriptService.Player.Player', Line 18  -  Studio - Player:18
+  10:55:16.174  Stack End  -  Studio

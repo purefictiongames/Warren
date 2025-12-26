@@ -1,5 +1,8 @@
 # Project place file
-/LibPureFiction.rbxlx
+/v1.rbxlx
+
+# Build artifacts / exports
+/Dist/
 
 # Roblox Studio lock files
 /*.rbxlx.lock

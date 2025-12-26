@@ -5,11 +5,11 @@ local tool = script.Parent
 local cookFunction = tool:WaitForChild("cook")
 
 -- Cooking state
-local cookLevel = 0       -- 0 = raw, 100 = perfectly cooked, 150+ = burned
-local maxCookLevel = 150
+local toastLevel = 0       -- 0 = raw, 100 = perfectly cooked, 150+ = burned
+local maxToastLevel = 150
 
 -- Initialize attribute for replication to client
-tool:SetAttribute("CookLevel", cookLevel)
+tool:SetAttribute("ToastLevel", toastLevel)
 
 -- Handle cook callback from ZoneController
 cookFunction.OnInvoke = function(state)
@@ -18,21 +18,21 @@ cookFunction.OnInvoke = function(state)
     local dt = state.deltaTime or 0.5
 
     -- Apply heat based on time
-    cookLevel = math.min(cookLevel + (heat * dt), maxCookLevel)
-    tool:SetAttribute("CookLevel", cookLevel)
+    toastLevel = math.min(toastLevel + (heat * dt), maxToastLevel)
+    tool:SetAttribute("ToastLevel", toastLevel)
 
     -- Log cooking progress
-    if cookLevel < 50 then
-        print("Marshmallow: Warming up...", math.floor(cookLevel))
-    elseif cookLevel < 100 then
-        print("Marshmallow: Cooking nicely!", math.floor(cookLevel))
-    elseif cookLevel < 120 then
-        print("Marshmallow: Golden brown!", math.floor(cookLevel))
+    if toastLevel < 50 then
+        print("Marshmallow: Warming up...", math.floor(toastLevel))
+    elseif toastLevel < 100 then
+        print("Marshmallow: Cooking nicely!", math.floor(toastLevel))
+    elseif toastLevel < 120 then
+        print("Marshmallow: Golden brown!", math.floor(toastLevel))
     else
-        print("Marshmallow: Starting to burn!", math.floor(cookLevel))
+        print("Marshmallow: Starting to burn!", math.floor(toastLevel))
     end
 
-    return cookLevel
+    return toastLevel
 end
 
-print("Marshmallow ready - CookLevel:", cookLevel)
+print("Marshmallow ready - ToastLevel:", toastLevel)

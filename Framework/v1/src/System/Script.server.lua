@@ -4,6 +4,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerScriptService = game:GetService("ServerScriptService")
 local StarterPlayer = game:GetService("StarterPlayer")
+local StarterGui = game:GetService("StarterGui")
 local Workspace = game:GetService("Workspace")
 
 -- Get reference to self (System folder in ServerScriptService)
@@ -14,6 +15,7 @@ local SERVICE_FOLDERS = {
 	ReplicatedStorage = ReplicatedStorage,
 	ServerScriptService = ServerScriptService,
 	StarterPlayerScripts = StarterPlayer.StarterPlayerScripts,
+	StarterGui = StarterGui,
 }
 
 -- Deploy contents of a service folder to actual service

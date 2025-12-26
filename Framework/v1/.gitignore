@@ -9,3 +9,7 @@
 /*.rbxl.lock
 
 sourcemap.json
+
+# Wally
+Packages/
+wally.lock

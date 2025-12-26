@@ -1,0 +1,10 @@
+[package]
+name = "libpurefiction/system"
+version = "0.1.0"
+registry = "https://github.com/UpliftGames/wally-index"
+realm = "server"
+description = "Self-bootstrapping framework for Roblox games"
+license = "MIT"
+authors = ["LibPureFiction"]
+
+[dependencies]

@@ -4,10 +4,17 @@
 local Players = game:GetService("Players")
 
 local function setupTimedEvaluator(model)
-    -- Config from attributes
+    -- Config from attributes (with validation)
     local acceptType = model:GetAttribute("AcceptType") or "Marshmallow"
     local evalTarget = model:GetAttribute("EvalTarget") or "ToastLevel"
     local countdown = model:GetAttribute("Countdown") or 30
+
+    -- Validate target range (0 is falsy-ish for game logic, so check explicitly)
+    local targetMin = model:GetAttribute("TargetMin")
+    local targetMax = model:GetAttribute("TargetMax")
+    if targetMin == nil or targetMin <= 0 then targetMin = 30 end
+    if targetMax == nil or targetMax <= 0 then targetMax = 100 end
+    if targetMin > targetMax then targetMin, targetMax = targetMax, targetMin end
 
     -- Find components
     local anchor = model:FindFirstChild("Anchor")
@@ -30,6 +37,7 @@ local function setupTimedEvaluator(model)
 
     -- Internal state
     local timerThread = nil
+    local timerGeneration = 0  -- Invalidates old timer threads
     local isRunning = false
     local hasEvaluated = false
 
@@ -39,9 +47,9 @@ local function setupTimedEvaluator(model)
         hasEvaluated = true
         isRunning = false
 
-        -- Stop timer if running
+        -- Stop timer if running (pcall in case thread already finished)
         if timerThread then
-            task.cancel(timerThread)
+            pcall(function() task.cancel(timerThread) end)
             timerThread = nil
         end
 
@@ -72,18 +80,22 @@ local function setupTimedEvaluator(model)
 
     -- Start countdown timer
     local function startTimer()
+        timerGeneration = timerGeneration + 1
+        local myGeneration = timerGeneration
+
         timerThread = task.spawn(function()
             local timeRemaining = countdown
             model:SetAttribute("TimeRemaining", timeRemaining)
 
-            while timeRemaining > 0 and isRunning do
+            -- Check generation to ensure this timer is still valid
+            while timeRemaining > 0 and isRunning and myGeneration == timerGeneration do
                 task.wait(1)
                 timeRemaining = timeRemaining - 1
                 model:SetAttribute("TimeRemaining", timeRemaining)
             end
 
-            -- Time's up - evaluate with nothing
-            if isRunning and not hasEvaluated then
+            -- Time's up - evaluate with nothing (only if still current timer)
+            if isRunning and not hasEvaluated and myGeneration == timerGeneration then
                 evaluate(nil, nil)
             end
         end)
@@ -91,9 +103,9 @@ local function setupTimedEvaluator(model)
 
     -- Reset/init function
     local function reset()
-        -- Stop existing timer
+        -- Stop existing timer (pcall in case thread already finished)
         if timerThread then
-            task.cancel(timerThread)
+            pcall(function() task.cancel(timerThread) end)
             timerThread = nil
         end
 
@@ -101,12 +113,12 @@ local function setupTimedEvaluator(model)
         hasEvaluated = false
         isRunning = true
 
-        -- Set random target value (1-10 for now)
-        local newTarget = math.random(1, 10)
+        -- Set random target value within configured range
+        local newTarget = math.random(targetMin, targetMax)
         model:SetAttribute("TargetValue", newTarget)
         model:SetAttribute("TimeRemaining", countdown)
 
-        print("TimedEvaluator: Reset - TargetValue:", newTarget, "Countdown:", countdown)
+        print("TimedEvaluator: Reset - TargetValue:", newTarget, "(range:", targetMin, "-", targetMax, ") Countdown:", countdown)
 
         -- Start timer
         startTimer()

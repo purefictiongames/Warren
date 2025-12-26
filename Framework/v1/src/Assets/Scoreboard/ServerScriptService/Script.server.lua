@@ -4,8 +4,9 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local function setupScoreboard()
-    -- Wait for ScoreUpdate RemoteEvent (deployed by System bootstrap)
+    -- Wait for events (deployed by System bootstrap)
     local scoreUpdate = ReplicatedStorage:WaitForChild("Scoreboard.ScoreUpdate")
+    local roundComplete = ReplicatedStorage:WaitForChild("Scoreboard.RoundComplete")
 
     -- Track player scores
     local playerScores = {}
@@ -37,26 +38,36 @@ local function setupScoreboard()
     -- Handle evaluation complete from TimedEvaluator
     local function onEvaluationComplete(result)
         local player = result.player
-        if not player then
-            print("Scoreboard: No player in evaluation result")
-            return
+        local score = 0
+
+        if player then
+            score = calculateScore(result)
+
+            -- Update player's total score
+            playerScores[player] = (playerScores[player] or 0) + score
+
+            print("Scoreboard:", player.Name, "scored", score, "points. Total:", playerScores[player])
+
+            -- Fire to client
+            scoreUpdate:FireClient(player, {
+                roundScore = score,
+                totalScore = playerScores[player],
+                submitted = result.submitted,
+                submittedValue = result.submittedValue,
+                targetValue = result.targetValue,
+            })
+        else
+            print("Scoreboard: Timeout - no submission")
         end
 
-        local score = calculateScore(result)
-
-        -- Update player's total score
-        playerScores[player] = (playerScores[player] or 0) + score
-
-        print("Scoreboard:", player.Name, "scored", score, "points. Total:", playerScores[player])
-
-        -- Fire to client
-        scoreUpdate:FireClient(player, {
+        -- Signal round complete (for Orchestrator) - always fire to reset
+        roundComplete:Fire({
+            player = player,
             roundScore = score,
-            totalScore = playerScores[player],
-            submitted = result.submitted,
-            submittedValue = result.submittedValue,
-            targetValue = result.targetValue,
+            totalScore = player and playerScores[player] or 0,
+            timeout = not result.submitted,
         })
+        print("Scoreboard: Round complete signaled")
     end
 
     -- Find and connect to TimedEvaluator's EvaluationComplete event

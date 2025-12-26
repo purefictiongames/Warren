@@ -18,10 +18,16 @@ local function setupHUD()
     local scoreLabel = screenGui:FindFirstChild("ScoreLabel", true)
     local targetLabel = screenGui:FindFirstChild("TargetLabel", true)
 
+    -- Round to nearest 5
+    local function roundToNearest5(value)
+        return math.floor((value + 2.5) / 5) * 5
+    end
+
     -- Update display
     local function updateDisplay(data)
         if scoreLabel then
-            scoreLabel.Text = "Score: " .. tostring(data.totalScore)
+            local displayScore = roundToNearest5(math.floor(data.totalScore))
+            scoreLabel.Text = "Score: " .. tostring(displayScore)
         end
 
         if targetLabel then

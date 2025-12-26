@@ -29,8 +29,14 @@ local function deployServiceFolder(sourceFolder, targetService, namePrefix)
 end
 
 -- Bootstrap a module (extract its service folders)
-local function bootstrapModule(module, moduleName)
+-- skipServerScripts: true if module already lives in ServerScriptService (e.g., System as Package)
+local function bootstrapModule(module, moduleName, skipServerScripts)
 	for folderName, service in pairs(SERVICE_FOLDERS) do
+		-- Skip ServerScriptService extraction for modules already there
+		if skipServerScripts and folderName == "ServerScriptService" then
+			continue
+		end
+
 		local serviceFolder = module:FindFirstChild(folderName)
 		if serviceFolder then
 			deployServiceFolder(serviceFolder, service, moduleName)
@@ -41,13 +47,16 @@ end
 
 -- Bootstrap System and its child modules
 local function bootstrapSelf()
-	-- Bootstrap System's own service folders
-	bootstrapModule(System, "System")
+	-- Check if System is already in ServerScriptService (running as Package)
+	local isInServerScriptService = System:IsDescendantOf(ServerScriptService)
+
+	-- Bootstrap System's own service folders (skip SSS if already there)
+	bootstrapModule(System, "System", isInServerScriptService)
 
 	-- Bootstrap child modules (Folders inside System, excluding service folders)
 	for _, child in ipairs(System:GetChildren()) do
 		if child:IsA("Folder") and not SERVICE_FOLDERS[child.Name] then
-			bootstrapModule(child, child.Name)
+			bootstrapModule(child, child.Name, isInServerScriptService)
 			print("System: Bootstrapped module", child.Name)
 		end
 	end
@@ -63,11 +72,8 @@ local function bootstrapAssets()
 	runtimeAssets.Parent = Workspace
 
 	local assetsFolder = ReplicatedStorage:FindFirstChild("Assets")
-	if not assetsFolder then
-		warn("System: Assets folder not found in ReplicatedStorage")
-		return
-	end
 
+	local assetCount = 0
 	for _, asset in ipairs(assetsFolder:GetChildren()) do
 		if asset:IsA("Model") then
 			local clone = asset:Clone()
@@ -84,9 +90,12 @@ local function bootstrapAssets()
 
 			-- Parent cleaned clone to RuntimeAssets
 			clone.Parent = runtimeAssets
+			assetCount = assetCount + 1
 			print("System: Deployed", assetName, "to RuntimeAssets")
 		end
 	end
+
+	print("System: Deployed", assetCount, "assets to RuntimeAssets")
 end
 
 -- Run bootstrap

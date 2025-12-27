@@ -6,6 +6,11 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Dispenser = require(ReplicatedStorage:WaitForChild("Dispenser.ModuleScript"))
 
+-- Create Empty event for Orchestrator to listen to
+local emptyEvent = Instance.new("BindableEvent")
+emptyEvent.Name = "Dispenser.Empty"
+emptyEvent.Parent = ReplicatedStorage
+
 -- Set up a dispenser model
 local function setupDispenser(model)
 	-- Get config from model attributes
@@ -54,10 +59,27 @@ local function setupDispenser(model)
 			item.Parent = player.Backpack
 			model:SetAttribute("Remaining", dispenser.remaining)
 			print("Dispenser: Gave", item.Name, "to", player.Name)
+
+			-- Fire empty event if this was the last one
+			if dispenser:isEmpty() then
+				print("Dispenser: Now empty - firing event")
+				emptyEvent:Fire()
+			end
 		else
 			print("Dispenser: Empty")
 		end
 	end)
+
+	-- Expose Reset via BindableFunction (for Orchestrator)
+	local resetFunction = Instance.new("BindableFunction")
+	resetFunction.Name = "Reset"
+	resetFunction.OnInvoke = function()
+		dispenser:refill()
+		model:SetAttribute("Remaining", dispenser.remaining)
+		print("Dispenser: Refilled to", dispenser.remaining)
+		return true
+	end
+	resetFunction.Parent = model
 
 	print("Dispenser: Set up", model.Name, "(DispenseItem:" .. itemType .. ", Capacity:" .. capacity .. ")")
 end

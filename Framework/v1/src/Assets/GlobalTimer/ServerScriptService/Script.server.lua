@@ -25,7 +25,7 @@ end
 
 local function setupGlobalTimer(model)
     -- Parse countdown from attribute
-    local countdownStart = model:GetAttribute("CountdownStart") or 3.00
+    local countdownStart = model:GetAttribute("CountdownStart") or 1.00
     local totalSeconds = parseCountdown(countdownStart)
 
     if not totalSeconds then

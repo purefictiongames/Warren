@@ -10,12 +10,20 @@ local Workspace = game:GetService("Workspace")
 -- Get reference to self (System folder in ServerScriptService)
 local System = script.Parent
 
--- Service folder mappings
+-- Service folder mappings (order matters: deploy events before scripts)
 local SERVICE_FOLDERS = {
 	ReplicatedStorage = ReplicatedStorage,
 	ServerScriptService = ServerScriptService,
 	StarterPlayerScripts = StarterPlayer.StarterPlayerScripts,
 	StarterGui = StarterGui,
+}
+
+-- Ordered list for deterministic deployment (ReplicatedStorage first, then scripts)
+local SERVICE_ORDER = {
+	"ReplicatedStorage",
+	"StarterGui",
+	"StarterPlayerScripts",
+	"ServerScriptService",  -- Scripts last, after events exist
 }
 
 -- Deploy contents of a service folder to actual service
@@ -33,12 +41,13 @@ end
 -- Bootstrap a module (extract its service folders)
 -- skipServerScripts: true if module already lives in ServerScriptService (e.g., System as Package)
 local function bootstrapModule(module, moduleName, skipServerScripts)
-	for folderName, service in pairs(SERVICE_FOLDERS) do
+	for _, folderName in ipairs(SERVICE_ORDER) do
 		-- Skip ServerScriptService extraction for modules already there
 		if skipServerScripts and folderName == "ServerScriptService" then
 			continue
 		end
 
+		local service = SERVICE_FOLDERS[folderName]
 		local serviceFolder = module:FindFirstChild(folderName)
 		if serviceFolder then
 			deployServiceFolder(serviceFolder, service, moduleName)
@@ -82,8 +91,9 @@ local function bootstrapAssets()
 			local clone = asset:Clone()
 			local assetName = clone.Name
 
-			-- Extract service folders from clone
-			for folderName, service in pairs(SERVICE_FOLDERS) do
+			-- Extract service folders from clone (ordered: events before scripts)
+			for _, folderName in ipairs(SERVICE_ORDER) do
+				local service = SERVICE_FOLDERS[folderName]
 				local serviceFolder = clone:FindFirstChild(folderName)
 				if serviceFolder then
 					deployServiceFolder(serviceFolder, service, assetName)

@@ -12,7 +12,7 @@ local function setupTimedEvaluator(model)
     -- Validate target range (0 is falsy-ish for game logic, so check explicitly)
     local targetMin = model:GetAttribute("TargetMin")
     local targetMax = model:GetAttribute("TargetMax")
-    if targetMin == nil or targetMin <= 0 then targetMin = 30 end
+    if targetMin == nil or targetMin <= 0 then targetMin = 10 end
     if targetMax == nil or targetMax <= 0 then targetMax = 100 end
     if targetMin > targetMax then targetMin, targetMax = targetMax, targetMin end
 
@@ -40,6 +40,23 @@ local function setupTimedEvaluator(model)
     local timerGeneration = 0  -- Invalidates old timer threads
     local isRunning = false
     local hasEvaluated = false
+
+    -- Create TimerTick event for satisfaction updates
+    local timerTick = Instance.new("BindableEvent")
+    timerTick.Name = "TimerTick"
+    timerTick.Parent = model
+
+    -- Update satisfaction based on current state
+    local function updateSatisfaction(state)
+        local satisfaction = model:GetAttribute("Satisfaction") or 0
+        local decay = state.deltaTime * 3 -- Lose 3 satisfaction per second
+        satisfaction = math.max(0, satisfaction - decay)
+        model:SetAttribute("Satisfaction", satisfaction)
+        print("TimedEvaluator: Satisfaction updated to", math.floor(satisfaction))
+    end
+
+    -- Listen for timer ticks
+    timerTick.Event:Connect(updateSatisfaction)
 
     -- Evaluate submitted item (or nil if timeout)
     local function evaluate(item, player)
@@ -89,9 +106,16 @@ local function setupTimedEvaluator(model)
 
             -- Check generation to ensure this timer is still valid
             while timeRemaining > 0 and isRunning and myGeneration == timerGeneration do
-                task.wait(1)
+                local dt = task.wait(1)
                 timeRemaining = timeRemaining - 1
                 model:SetAttribute("TimeRemaining", timeRemaining)
+
+                -- Fire tick event with state for satisfaction updates
+                timerTick:Fire({
+                    deltaTime = dt,
+                    timeRemaining = timeRemaining,
+                    countdown = countdown,
+                })
             end
 
             -- Time's up - evaluate with nothing (only if still current timer)
@@ -117,6 +141,7 @@ local function setupTimedEvaluator(model)
         local newTarget = math.random(targetMin, targetMax)
         model:SetAttribute("TargetValue", newTarget)
         model:SetAttribute("TimeRemaining", countdown)
+        model:SetAttribute("Satisfaction", 100) -- Start fully satisfied
 
         print("TimedEvaluator: Reset - TargetValue:", newTarget, "(range:", targetMin, "-", targetMax, ") Countdown:", countdown)
 

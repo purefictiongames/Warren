@@ -6,7 +6,7 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 
 -- Deep search for instances that have a BindableFunction child with the method name
-local function findMethodInTree(root, methodName)
+local function findMethodInTree(root, methodName, isPlayer)
     local results = {}
 
     local function search(instance)
@@ -21,7 +21,20 @@ local function findMethodInTree(root, methodName)
         end
     end
 
-    search(root)
+    -- For players, search Character (in Workspace) and Backpack separately
+    if isPlayer then
+        local character = root.Character
+        if character then
+            search(character)
+        end
+        local backpack = root:FindFirstChild("Backpack")
+        if backpack then
+            search(backpack)
+        end
+    else
+        search(root)
+    end
+
     return results
 end
 
@@ -81,31 +94,17 @@ local function setupZoneController(model)
 
     -- Handle entity entering zone (called on first touch)
     local function onEntityEnter(entityRoot, entityType)
-        -- Deep search for matching method
-        local matches = findMethodInTree(entityRoot, matchCallback)
-
-        if #matches > 0 then
-            attendance[entityRoot] = {
-                instances = {},
-                entityType = entityType
-            }
-
-            for _, instance in ipairs(matches) do
-                attendance[entityRoot].instances[instance] = true
-            end
-
-            print("ZoneController: Entity entered with", #matches, "matching instances for", matchCallback)
-        end
+        -- Just mark entity as in zone - we'll search on each tick
+        attendance[entityRoot] = {
+            entityType = entityType
+        }
+        print("ZoneController: Entity entered zone")
     end
 
     -- Handle entity leaving zone (called when touch count reaches 0)
     local function onEntityExit(entityRoot)
         if attendance[entityRoot] then
-            local count = 0
-            for _ in pairs(attendance[entityRoot].instances) do
-                count = count + 1
-            end
-            print("ZoneController: Entity left, removing", count, "instances from attendance")
+            print("ZoneController: Entity left zone")
             attendance[entityRoot] = nil
         end
     end
@@ -157,15 +156,13 @@ local function setupZoneController(model)
             -- Future: heat, calculated per-instance based on distance
         }
 
-        -- Call method on all attended instances
+        -- Search and call method on all entities in zone
         for entityRoot, data in pairs(attendance) do
-            for instance, _ in pairs(data.instances) do
-                -- Check if instance still exists
-                if not instance:IsDescendantOf(game) then
-                    data.instances[instance] = nil
-                    continue
-                end
+            -- Deep search on each tick to find new instances (e.g., mounted marshmallows)
+            local isPlayer = data.entityType == "player"
+            local matches = findMethodInTree(entityRoot, matchCallback, isPlayer)
 
+            for _, instance in ipairs(matches) do
                 -- Invoke the BindableFunction
                 local callback = instance:FindFirstChild(matchCallback)
                 if callback then

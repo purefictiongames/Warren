@@ -56,9 +56,10 @@ local function bootstrapSelf()
 	bootstrapModule(System, "System", isInServerScriptService)
 
 	-- Bootstrap child modules (Folders inside System, excluding service folders)
+	-- Child modules always need full deployment (don't skip SSS)
 	for _, child in ipairs(System:GetChildren()) do
 		if child:IsA("Folder") and not SERVICE_FOLDERS[child.Name] then
-			bootstrapModule(child, child.Name, isInServerScriptService)
+			bootstrapModule(child, child.Name, false)
 			print("System: Bootstrapped module", child.Name)
 		end
 	end

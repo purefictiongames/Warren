@@ -3,13 +3,44 @@
 
 local tool = script.Parent
 local cookFunction = tool:WaitForChild("cook")
+local handle = tool:WaitForChild("Handle")
 
 -- Cooking state
-local toastLevel = 0       -- 0 = raw, 100 = perfectly cooked, 150+ = burned
-local maxToastLevel = 150
+local toastLevel = 0       -- 0 = raw, 100 = blackened
+local maxToastLevel = 100
 
--- Initialize attribute for replication to client
+-- Toast colors
+local TOAST_COLORS = {
+    raw = Color3.fromRGB(255, 250, 240),    -- Off-white
+    golden = Color3.fromRGB(210, 160, 60),  -- Golden brown
+    burnt = Color3.fromRGB(60, 30, 10),     -- Dark brown
+    blackened = Color3.fromRGB(15, 10, 5),  -- Near black
+}
+
+-- Calculate color based on toast level (0-100, 25% per bracket)
+local function getToastColor(level)
+    if level <= 25 then
+        local t = level / 25
+        return TOAST_COLORS.raw:Lerp(TOAST_COLORS.golden, t)
+    elseif level <= 50 then
+        local t = (level - 25) / 25
+        return TOAST_COLORS.golden:Lerp(TOAST_COLORS.burnt, t)
+    elseif level <= 75 then
+        local t = (level - 50) / 25
+        return TOAST_COLORS.burnt:Lerp(TOAST_COLORS.blackened, t)
+    else
+        return TOAST_COLORS.blackened
+    end
+end
+
+-- Update handle color
+local function updateColor()
+    handle.Color = getToastColor(toastLevel)
+end
+
+-- Initialize attribute and color
 tool:SetAttribute("ToastLevel", toastLevel)
+updateColor()
 
 -- Handle cook callback from ZoneController
 cookFunction.OnInvoke = function(state)
@@ -20,6 +51,7 @@ cookFunction.OnInvoke = function(state)
     -- Apply heat based on time
     toastLevel = math.min(toastLevel + (heat * dt), maxToastLevel)
     tool:SetAttribute("ToastLevel", toastLevel)
+    updateColor()
 
     -- Log cooking progress
     if toastLevel < 50 then

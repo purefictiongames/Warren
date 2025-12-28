@@ -2,8 +2,10 @@
 -- Timed evaluation system - accepts items and compares against target value
 
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local function setupTimedEvaluator(model)
+    local forceItemPickup = ReplicatedStorage:WaitForChild("Backpack.ForceItemPickup")
     -- Config from attributes (with validation)
     local acceptType = model:GetAttribute("AcceptType") or "Marshmallow"
     local evalTarget = model:GetAttribute("EvalTarget") or "ToastLevel"
@@ -149,22 +151,56 @@ local function setupTimedEvaluator(model)
         startTimer()
     end
 
+    -- Find marshmallow mounted on RoastingStick
+    local function findMountedItem(player)
+        local character = player.Character
+        if not character then return nil end
+
+        local stick = character:FindFirstChild("RoastingStick")
+        if not stick then return nil end
+
+        local mounted = stick:FindFirstChild(acceptType)
+        if mounted and mounted:IsA("Tool") then
+            return mounted
+        end
+
+        return nil
+    end
+
+    -- Unmount item from RoastingStick and move to backpack
+    local function unmountToBackpack(player, item)
+        -- Remove weld if present
+        local handle = item:FindFirstChild("Handle")
+        if handle then
+            local weld = handle:FindFirstChild("WeldConstraint")
+            if weld then
+                weld:Destroy()
+            end
+        end
+
+        -- Fire pickup event to move to backpack
+        forceItemPickup:Fire({
+            player = player,
+            item = item,
+        })
+    end
+
     -- Find accepted item in player's inventory
     local function findAcceptedItem(player)
-        -- Check equipped tool first
-        local character = player.Character
-        if character then
-            for _, child in ipairs(character:GetChildren()) do
+        -- Check backpack first
+        local backpack = player:FindFirstChild("Backpack")
+        if backpack then
+            for _, child in ipairs(backpack:GetChildren()) do
                 if child:IsA("Tool") and child.Name == acceptType then
                     return child
                 end
             end
         end
 
-        -- Check backpack
-        local backpack = player:FindFirstChild("Backpack")
-        if backpack then
-            for _, child in ipairs(backpack:GetChildren()) do
+        -- Check equipped tool
+        local character = player.Character
+        if character then
+            for _, child in ipairs(character:GetChildren()) do
                 if child:IsA("Tool") and child.Name == acceptType then
                     return child
                 end
@@ -179,6 +215,14 @@ local function setupTimedEvaluator(model)
         if not isRunning or hasEvaluated then
             print("TimedEvaluator: Not accepting submissions")
             return
+        end
+
+        -- Check for mounted item first and unmount to backpack
+        local mounted = findMountedItem(player)
+        if mounted then
+            print("TimedEvaluator: Unmounting", mounted.Name, "from RoastingStick")
+            unmountToBackpack(player, mounted)
+            task.wait(0.1) -- Let backpack receive it
         end
 
         local item = findAcceptedItem(player)

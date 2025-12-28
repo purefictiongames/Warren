@@ -1,5 +1,5 @@
 -- RoastingStick.Script (Server)
--- Auto-equips roasting stick on game start, watches for marshmallows to mount
+-- Auto-equips roasting stick on spawn, mounts marshmallows when received
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
@@ -8,57 +8,75 @@ local function setupRoastingStick()
     local templates = ReplicatedStorage:WaitForChild("Templates")
     local stickTemplate = templates:WaitForChild("RoastingStick")
 
+    -- Get backpack events
+    local forceItemDrop = ReplicatedStorage:WaitForChild("Backpack.ForceItemDrop")
+
     -- Mount marshmallow onto player's equipped stick
     local function mountMarshmallow(player, marshmallow)
         local character = player.Character
-        if not character then return false end
+        if not character then
+            return false, "no_character"
+        end
 
         local stick = character:FindFirstChild("RoastingStick")
         if not stick then
-            -- Stick not equipped, leave marshmallow in backpack
-            return false
+            return false, "stick_not_equipped"
         end
 
-        -- Check if stick already has a marshmallow
+        -- One marshmallow at a time rule
         if stick:FindFirstChild("Marshmallow") then
-            return false
+            return false, "already_mounted"
         end
 
         local stickHandle = stick:FindFirstChild("Handle")
-        if not stickHandle then return false end
+        if not stickHandle then
+            return false, "no_stick_handle"
+        end
 
         local marshmallowHandle = marshmallow:FindFirstChild("Handle")
-        if marshmallowHandle then
-            -- Position at tip of stick
-            local tipOffset = stickHandle.Size.Y / 2 + (marshmallowHandle.Size.Y / 2)
-            marshmallowHandle.CFrame = stickHandle.CFrame * CFrame.new(0, tipOffset, 0)
-
-            -- Weld marshmallow to stick
-            local weld = Instance.new("WeldConstraint")
-            weld.Part0 = stickHandle
-            weld.Part1 = marshmallowHandle
-            weld.Parent = marshmallowHandle
+        if not marshmallowHandle then
+            return false, "no_marshmallow_handle"
         end
+
+        -- Position at tip of stick (cylinder length is along X axis)
+        -- Offset along +X to reach the tip, center on YZ plane
+        local tipOffset = stickHandle.Size.X / 2 + marshmallowHandle.Size.Y / 2
+        marshmallowHandle.CFrame = stickHandle.CFrame * CFrame.new(tipOffset, 0, 0)
+
+        -- Weld marshmallow to stick
+        local weld = Instance.new("WeldConstraint")
+        weld.Part0 = stickHandle
+        weld.Part1 = marshmallowHandle
+        weld.Parent = marshmallowHandle
 
         -- Parent marshmallow to stick (removes from backpack)
         marshmallow.Parent = stick
 
         print("RoastingStick: Mounted marshmallow for", player.Name)
-        return true
+        return true, "mounted"
     end
 
-    -- Watch backpack for new marshmallows
-    local function watchBackpack(player)
-        local backpack = player:WaitForChild("Backpack")
+    -- Listen for items added to player backpacks
+    local itemAdded = ReplicatedStorage:WaitForChild("Backpack.ItemAdded")
+    itemAdded.Event:Connect(function(data)
+        local player = data.player
+        local item = data.item
 
-        backpack.ChildAdded:Connect(function(child)
-            if child.Name == "Marshmallow" and child:IsA("Tool") then
-                -- Small delay to let it fully load
-                task.wait(0.1)
-                mountMarshmallow(player, child)
-            end
-        end)
-    end
+        -- Only handle marshmallows
+        if item.Name ~= "Marshmallow" then return end
+
+        task.wait(0.1) -- Let item fully load
+        local success, reason = mountMarshmallow(player, item)
+
+        -- If mount failed, force drop the item
+        if not success then
+            print("RoastingStick: Mount failed -", reason, "- dropping item")
+            forceItemDrop:Fire({
+                player = player,
+                item = item,
+            })
+        end
+    end)
 
     -- Give player a roasting stick and equip it
     local function giveStick(player)
@@ -78,6 +96,12 @@ local function setupRoastingStick()
 
         -- Clone and give to player
         local stick = stickTemplate:Clone()
+
+        -- Set grip so cylinder points forward (length is along X axis)
+        stick.GripForward = Vector3.new(1, 0, 0)
+        stick.GripUp = Vector3.new(0, 1, 0)
+
+
         stick.Parent = backpack
 
         -- Auto-equip
@@ -93,8 +117,6 @@ local function setupRoastingStick()
 
     -- Setup player
     local function setupPlayer(player)
-        watchBackpack(player)
-
         player.CharacterAdded:Connect(function()
             task.wait(0.5)
             giveStick(player)

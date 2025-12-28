@@ -56,7 +56,9 @@ local function setupDispenser(model)
 	prompt.Triggered:Connect(function(player)
 		local item = dispenser:dispense()
 		if item then
-			item.Parent = player.Backpack
+			local backpack = player.Backpack
+			print("Dispenser: Putting", item.Name, "in backpack:", backpack:GetFullName())
+			item.Parent = backpack
 			model:SetAttribute("Remaining", dispenser.remaining)
 			print("Dispenser: Gave", item.Name, "to", player.Name)
 

@@ -11,9 +11,10 @@ local Workspace = game:GetService("Workspace")
 local System = script.Parent
 
 -- Service folder mappings (order matters: deploy events before scripts)
+-- Folder names use underscore prefix to prevent auto-run of nested scripts
 local SERVICE_FOLDERS = {
 	ReplicatedStorage = ReplicatedStorage,
-	ServerScriptService = ServerScriptService,
+	_ServerScriptService = ServerScriptService,
 	StarterPlayerScripts = StarterPlayer.StarterPlayerScripts,
 	StarterGui = StarterGui,
 }
@@ -23,7 +24,7 @@ local SERVICE_ORDER = {
 	"ReplicatedStorage",
 	"StarterGui",
 	"StarterPlayerScripts",
-	"ServerScriptService",  -- Scripts last, after events exist
+	"_ServerScriptService",  -- Scripts last, after events exist
 }
 
 -- Deploy contents of a service folder to actual service
@@ -34,7 +35,6 @@ local function deployServiceFolder(sourceFolder, targetService, namePrefix)
 			clone.Name = namePrefix .. "." .. child.Name
 		end
 		clone.Parent = targetService
-		print("System: Deployed", clone.Name, "to", targetService.Name)
 	end
 end
 
@@ -43,7 +43,7 @@ end
 local function bootstrapModule(module, moduleName, skipServerScripts)
 	for _, folderName in ipairs(SERVICE_ORDER) do
 		-- Skip ServerScriptService extraction for modules already there
-		if skipServerScripts and folderName == "ServerScriptService" then
+		if skipServerScripts and folderName == "_ServerScriptService" then
 			continue
 		end
 
@@ -69,11 +69,8 @@ local function bootstrapSelf()
 	for _, child in ipairs(System:GetChildren()) do
 		if child:IsA("Folder") and not SERVICE_FOLDERS[child.Name] then
 			bootstrapModule(child, child.Name, false)
-			print("System: Bootstrapped module", child.Name)
 		end
 	end
-
-	print("System: Self-bootstrap complete")
 end
 
 -- Deploy assets from ReplicatedStorage/Assets to RuntimeAssets
@@ -85,7 +82,6 @@ local function bootstrapAssets()
 
 	local assetsFolder = ReplicatedStorage:FindFirstChild("Assets")
 
-	local assetCount = 0
 	for _, asset in ipairs(assetsFolder:GetChildren()) do
 		if asset:IsA("Model") then
 			local clone = asset:Clone()
@@ -103,12 +99,8 @@ local function bootstrapAssets()
 
 			-- Parent cleaned clone to RuntimeAssets
 			clone.Parent = runtimeAssets
-			assetCount = assetCount + 1
-			print("System: Deployed", assetName, "to RuntimeAssets")
 		end
 	end
-
-	print("System: Deployed", assetCount, "assets to RuntimeAssets")
 end
 
 -- Run bootstrap

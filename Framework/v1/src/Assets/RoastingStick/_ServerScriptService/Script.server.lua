@@ -9,7 +9,9 @@ local function setupRoastingStick()
     local stickTemplate = templates:WaitForChild("RoastingStick")
 
     -- Get backpack events
-    local forceItemDrop = ReplicatedStorage:WaitForChild("Backpack.ForceItemDrop")
+    print("RoastingStick: Waiting for Backpack.ForceItemDrop...")
+    local forceItemDrop = ReplicatedStorage:WaitForChild("Backpack.ForceItemDrop", 10)
+    if not forceItemDrop then warn("RoastingStick: ForceItemDrop not found!") end
 
     -- Mount marshmallow onto player's equipped stick
     local function mountMarshmallow(player, marshmallow)
@@ -57,8 +59,15 @@ local function setupRoastingStick()
     end
 
     -- Listen for items added to player backpacks
-    local itemAdded = ReplicatedStorage:WaitForChild("Backpack.ItemAdded")
+    print("RoastingStick: Waiting for Backpack.ItemAdded...")
+    local itemAdded = ReplicatedStorage:WaitForChild("Backpack.ItemAdded", 10)
+    if not itemAdded then
+        warn("RoastingStick: ItemAdded not found! Mounting will not work.")
+        return
+    end
+    print("RoastingStick: Found ItemAdded, connecting...")
     itemAdded.Event:Connect(function(data)
+        print("RoastingStick: ItemAdded event received -", data.item and data.item.Name or "nil")
         local player = data.player
         local item = data.item
 
@@ -136,12 +145,39 @@ local function setupRoastingStick()
         end
     end)
 
+    -- Track which players we've set up
+    local trackedPlayers = {}
+
     -- Setup existing and new players
     for _, player in ipairs(Players:GetPlayers()) do
+        trackedPlayers[player] = true
         setupPlayer(player)
     end
 
-    Players.PlayerAdded:Connect(setupPlayer)
+    Players.PlayerAdded:Connect(function(player)
+        if not trackedPlayers[player] then
+            trackedPlayers[player] = true
+            setupPlayer(player)
+        end
+    end)
+
+    -- Fallback: poll for untracked players
+    task.spawn(function()
+        while true do
+            task.wait(1)
+            for _, player in ipairs(Players:GetPlayers()) do
+                if not trackedPlayers[player] then
+                    print("RoastingStick: Found untracked player via polling -", player.Name)
+                    trackedPlayers[player] = true
+                    setupPlayer(player)
+                end
+            end
+        end
+    end)
+
+    Players.PlayerRemoving:Connect(function(player)
+        trackedPlayers[player] = nil
+    end)
 
     print("RoastingStick: Setup complete")
 end

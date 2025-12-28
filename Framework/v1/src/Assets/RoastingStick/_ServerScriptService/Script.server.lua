@@ -4,7 +4,14 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 
+-- ClientMessage loaded lazily to avoid blocking setup
+local clientMessage = nil
+
 local function setupRoastingStick()
+    -- Get ClientMessage in background (don't block setup)
+    task.spawn(function()
+        clientMessage = ReplicatedStorage:WaitForChild("ClientMessage.ClientMessage", 10)
+    end)
     local templates = ReplicatedStorage:WaitForChild("Templates")
     local stickTemplate = templates:WaitForChild("RoastingStick")
 
@@ -26,7 +33,13 @@ local function setupRoastingStick()
         end
 
         -- One marshmallow at a time rule
-        if stick:FindFirstChild("Marshmallow") then
+        local existingMarshmallow = stick:FindFirstChild("Marshmallow")
+        if existingMarshmallow then
+            print("RoastingStick: Found existing marshmallow:", existingMarshmallow:GetFullName())
+            print("RoastingStick: Stick children:", table.concat(
+                (function() local names = {} for _, c in ipairs(stick:GetChildren()) do table.insert(names, c.Name) end return names end)(),
+                ", "
+            ))
             return false, "already_mounted"
         end
 
@@ -54,6 +67,9 @@ local function setupRoastingStick()
         -- Parent marshmallow to stick (removes from backpack)
         marshmallow.Parent = stick
 
+        -- Keep CanCollide off to avoid player collision (welded to stick now)
+        marshmallowHandle.CanCollide = false
+
         print("RoastingStick: Mounted marshmallow for", player.Name)
         return true, "mounted"
     end
@@ -74,16 +90,33 @@ local function setupRoastingStick()
         -- Only handle marshmallows
         if item.Name ~= "Marshmallow" then return end
 
+        -- IMMEDIATELY disable collision to prevent collision issues in test mode
+        local handle = item:FindFirstChild("Handle")
+        if handle then
+            handle.CanCollide = false
+        end
+
         task.wait(0.1) -- Let item fully load
         local success, reason = mountMarshmallow(player, item)
 
         -- If mount failed, force drop the item
         if not success then
             print("RoastingStick: Mount failed -", reason, "- dropping item")
+
+            -- Re-enable collision before dropping
+            if handle then
+                handle.CanCollide = true
+            end
+
             forceItemDrop:Fire({
                 player = player,
                 item = item,
             })
+
+            -- Notify player why it was dropped
+            if reason == "already_mounted" and clientMessage then
+                clientMessage:FireClient(player, "You dropped a marshmallow! (You can only carry one at a time)")
+            end
         end
     end)
 

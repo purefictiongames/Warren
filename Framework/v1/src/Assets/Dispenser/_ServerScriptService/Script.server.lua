@@ -6,6 +6,12 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Dispenser = require(ReplicatedStorage:WaitForChild("Dispenser.ModuleScript"))
 
+-- ClientMessage loaded lazily to avoid blocking setup
+local clientMessage = nil
+task.spawn(function()
+	clientMessage = ReplicatedStorage:WaitForChild("ClientMessage.ClientMessage", 10)
+end)
+
 -- Create Empty event for Orchestrator to listen to
 local emptyEvent = Instance.new("BindableEvent")
 emptyEvent.Name = "Dispenser.Empty"
@@ -56,11 +62,23 @@ local function setupDispenser(model)
 	prompt.Triggered:Connect(function(player)
 		local item = dispenser:dispense()
 		if item then
+			-- Disable collision BEFORE parenting to prevent collision with player/dispenser
+			-- Note: Don't anchor - just disable collision. Anchoring causes issues with Backpack.
+			local handle = item:FindFirstChild("Handle")
+			if handle then
+				handle.CanCollide = false
+			end
+
 			local backpack = player.Backpack
 			print("Dispenser: Putting", item.Name, "in backpack:", backpack:GetFullName())
 			item.Parent = backpack
 			model:SetAttribute("Remaining", dispenser.remaining)
 			print("Dispenser: Gave", item.Name, "to", player.Name)
+
+			-- Notify player
+			if clientMessage then
+				clientMessage:FireClient(player, "Roast your marshmallow over the campfire!")
+			end
 
 			-- Fire empty event if this was the last one
 			if dispenser:isEmpty() then
@@ -69,6 +87,9 @@ local function setupDispenser(model)
 			end
 		else
 			print("Dispenser: Empty")
+			if clientMessage then
+				clientMessage:FireClient(player, "The bag is empty!")
+			end
 		end
 	end)
 

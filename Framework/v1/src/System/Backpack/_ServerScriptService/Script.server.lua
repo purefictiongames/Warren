@@ -1,6 +1,12 @@
 -- Backpack.Script (Server)
 -- Handles backpack events: item added, force drop, force pickup
 
+-- Guard: Only run if this is the deployed version (name starts with "Backpack.")
+-- The original in _ServerScriptService will have name "Script" and should not run
+if not script.Name:match("^Backpack%.") then
+	return
+end
+
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")

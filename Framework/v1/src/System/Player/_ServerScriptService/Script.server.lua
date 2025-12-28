@@ -1,6 +1,11 @@
 -- Player.Script (Server)
 -- Handles player-level system concerns
 
+-- Guard: Only run if this is the deployed version (name starts with "Player.")
+if not script.Name:match("^Player%.") then
+	return
+end
+
 local Players = game:GetService("Players")
 
 -- Setup player

@@ -14,8 +14,8 @@ local function setupHUD()
     -- Wait for ScreenGui (deployed by System bootstrap)
     local screenGui = playerGui:WaitForChild("Scoreboard.ScreenGui")
 
-    -- Find UI elements (adjust names based on your Studio setup)
-    local scoreLabel = screenGui:FindFirstChild("ScoreLabel", true)
+    -- Find UI elements
+    local scoreValue = screenGui:FindFirstChild("ScoreValue", true)
     local targetLabel = screenGui:FindFirstChild("TargetLabel", true)
 
     -- Round to nearest 5
@@ -25,9 +25,9 @@ local function setupHUD()
 
     -- Update display
     local function updateDisplay(data)
-        if scoreLabel then
+        if scoreValue then
             local displayScore = roundToNearest5(math.floor(data.totalScore))
-            scoreLabel.Text = "Score: " .. tostring(displayScore)
+            scoreValue.Text = tostring(displayScore)
         end
 
         if targetLabel then
@@ -45,8 +45,8 @@ local function setupHUD()
     scoreUpdate.OnClientEvent:Connect(updateDisplay)
 
     -- Initialize display
-    if scoreLabel then
-        scoreLabel.Text = "Score: 0"
+    if scoreValue then
+        scoreValue.Text = "0"
     end
     if targetLabel then
         targetLabel.Text = "Waiting..."

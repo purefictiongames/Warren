@@ -1,4 +1,4 @@
--- ClientMessage.LocalScript (Client)
+-- MessageTicker.LocalScript (Client)
 -- Displays messages from server with fade-out effect
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -12,11 +12,11 @@ local FADE_DELAY = 3 -- seconds before fade starts
 local FADE_DURATION = 1 -- seconds for fade animation
 
 local function setupHUD()
-	local clientMessage = ReplicatedStorage:WaitForChild("ClientMessage.ClientMessage")
+	local messageTicker = ReplicatedStorage:WaitForChild("MessageTicker.MessageTicker")
 
 	-- Create ScreenGui
 	local screenGui = Instance.new("ScreenGui")
-	screenGui.Name = "ClientMessage.ScreenGui"
+	screenGui.Name = "MessageTicker.ScreenGui"
 	screenGui.ResetOnSpawn = false
 	screenGui.DisplayOrder = 10
 	screenGui.Parent = playerGui
@@ -60,7 +60,11 @@ local function setupHUD()
 		end)
 	end
 
-	clientMessage.OnClientEvent:Connect(showMessage)
+	messageTicker.OnClientEvent:Connect(showMessage)
+
+	print("MessageTicker.LocalScript: HUD ready")
 end
 
 setupHUD()
+
+print("MessageTicker.LocalScript loaded")

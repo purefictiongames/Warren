@@ -6,10 +6,10 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Dispenser = require(ReplicatedStorage:WaitForChild("Dispenser.ModuleScript"))
 
--- ClientMessage loaded lazily to avoid blocking setup
-local clientMessage = nil
+-- MessageTicker loaded lazily to avoid blocking setup
+local messageTicker = nil
 task.spawn(function()
-	clientMessage = ReplicatedStorage:WaitForChild("ClientMessage.ClientMessage", 10)
+	messageTicker = ReplicatedStorage:WaitForChild("MessageTicker.MessageTicker", 10)
 end)
 
 -- Create Empty event for Orchestrator to listen to
@@ -76,8 +76,8 @@ local function setupDispenser(model)
 			print("Dispenser: Gave", item.Name, "to", player.Name)
 
 			-- Notify player
-			if clientMessage then
-				clientMessage:FireClient(player, "Roast your marshmallow over the campfire!")
+			if messageTicker then
+				messageTicker:FireClient(player, "Roast your marshmallow over the campfire!")
 			end
 
 			-- Fire empty event if this was the last one
@@ -87,8 +87,8 @@ local function setupDispenser(model)
 			end
 		else
 			print("Dispenser: Empty")
-			if clientMessage then
-				clientMessage:FireClient(player, "The bag is empty!")
+			if messageTicker then
+				messageTicker:FireClient(player, "The bag is empty!")
 			end
 		end
 	end)

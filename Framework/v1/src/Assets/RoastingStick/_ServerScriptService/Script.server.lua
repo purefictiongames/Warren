@@ -4,13 +4,13 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 
--- ClientMessage loaded lazily to avoid blocking setup
-local clientMessage = nil
+-- MessageTicker loaded lazily to avoid blocking setup
+local messageTicker = nil
 
 local function setupRoastingStick()
-    -- Get ClientMessage in background (don't block setup)
+    -- Get MessageTicker in background (don't block setup)
     task.spawn(function()
-        clientMessage = ReplicatedStorage:WaitForChild("ClientMessage.ClientMessage", 10)
+        messageTicker = ReplicatedStorage:WaitForChild("MessageTicker.MessageTicker", 10)
     end)
     local templates = ReplicatedStorage:WaitForChild("Templates")
     local stickTemplate = templates:WaitForChild("RoastingStick")
@@ -97,6 +97,13 @@ local function setupRoastingStick()
         end
 
         task.wait(0.1) -- Let item fully load
+
+        -- Check if item still exists (might have been destroyed by TimedEvaluator)
+        if not item:IsDescendantOf(game) then
+            print("RoastingStick: Item no longer exists, skipping mount")
+            return
+        end
+
         local success, reason = mountMarshmallow(player, item)
 
         -- If mount failed, force drop the item
@@ -114,8 +121,8 @@ local function setupRoastingStick()
             })
 
             -- Notify player why it was dropped
-            if reason == "already_mounted" and clientMessage then
-                clientMessage:FireClient(player, "You dropped a marshmallow! (You can only carry one at a time)")
+            if reason == "already_mounted" and messageTicker then
+                messageTicker:FireClient(player, "You dropped a marshmallow! (You can only carry one at a time)")
             end
         end
     end)

@@ -1,10 +1,24 @@
 -- Dispenser.LocalScript (Client)
 -- Updates BillboardGui to show remaining count
 
-local Players = game:GetService("Players")
+-- Guard: Only run if this is the deployed version
+if not script.Name:match("^Dispenser%.") then
+	return
+end
 
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+-- Wait for boot system
+local System = require(ReplicatedStorage:WaitForChild("System.System"))
+System:WaitForStage(System.Stages.READY)
+
+-- Dependencies (guaranteed to exist after READY stage)
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
+local runtimeAssets = workspace:WaitForChild("RuntimeAssets")
+local model = runtimeAssets:WaitForChild("Dispenser")
+local anchor = model:WaitForChild("Anchor")
 
 local function createBillboardGui(anchor)
 	local billboardGui = Instance.new("BillboardGui")
@@ -65,25 +79,18 @@ local function createBillboardGui(anchor)
 	return billboardGui, countLabel
 end
 
-local function setupDisplay()
-	local runtimeAssets = workspace:WaitForChild("RuntimeAssets")
-	local model = runtimeAssets:WaitForChild("Dispenser")
-	local anchor = model:WaitForChild("Anchor")
+-- Setup display
+local billboardGui, countLabel = createBillboardGui(anchor)
 
-	local billboardGui, countLabel = createBillboardGui(anchor)
-
-	local function updateDisplay()
-		local remaining = model:GetAttribute("Remaining") or 0
-		countLabel.Text = tostring(remaining)
-	end
-
-	-- Initial update
-	updateDisplay()
-
-	-- Listen for changes
-	model:GetAttributeChangedSignal("Remaining"):Connect(updateDisplay)
-
-	print("Dispenser.LocalScript: Display ready")
+local function updateDisplay()
+	local remaining = model:GetAttribute("Remaining") or 0
+	countLabel.Text = tostring(remaining)
 end
 
-setupDisplay()
+-- Initial update
+updateDisplay()
+
+-- Listen for changes
+model:GetAttributeChangedSignal("Remaining"):Connect(updateDisplay)
+
+print("Dispenser.LocalScript: Display ready")

@@ -1,12 +1,23 @@
 -- Dispenser.Script (Server)
 -- Handles ProximityPrompt interaction and item dispensing
--- Synced
+
+-- Guard: Only run if this is the deployed version
+if not script.Name:match("^Dispenser%.") then
+	return
+end
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local Dispenser = require(ReplicatedStorage:WaitForChild("Dispenser.ModuleScript"))
+-- Wait for boot system
+local System = require(ReplicatedStorage:WaitForChild("System.System"))
+System:WaitForStage(System.Stages.SCRIPTS)
 
--- MessageTicker loaded lazily to avoid blocking setup
+-- Dependencies (guaranteed to exist after SCRIPTS stage)
+local Dispenser = require(ReplicatedStorage:WaitForChild("Dispenser.ModuleScript"))
+local runtimeAssets = game.Workspace:WaitForChild("RuntimeAssets")
+local model = runtimeAssets:WaitForChild("Dispenser")
+
+-- MessageTicker loaded lazily (optional dependency)
 local messageTicker = nil
 task.spawn(function()
 	messageTicker = ReplicatedStorage:WaitForChild("MessageTicker.MessageTicker", 10)
@@ -63,7 +74,6 @@ local function setupDispenser(model)
 		local item = dispenser:dispense()
 		if item then
 			-- Disable collision BEFORE parenting to prevent collision with player/dispenser
-			-- Note: Don't anchor - just disable collision. Anchoring causes issues with Backpack.
 			local handle = item:FindFirstChild("Handle")
 			if handle then
 				handle.CanCollide = false
@@ -107,9 +117,6 @@ local function setupDispenser(model)
 	print("Dispenser: Set up", model.Name, "(DispenseItem:" .. itemType .. ", Capacity:" .. capacity .. ")")
 end
 
--- Wait for model in RuntimeAssets
-local runtimeAssets = game.Workspace:WaitForChild("RuntimeAssets")
-local model = runtimeAssets:WaitForChild("Dispenser")
 setupDispenser(model)
 
 print("Dispenser.Script loaded")

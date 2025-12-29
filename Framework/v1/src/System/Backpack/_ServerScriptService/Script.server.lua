@@ -7,8 +7,12 @@ if not script.Name:match("^Backpack%.") then
 	return
 end
 
-local Players = game:GetService("Players")
+-- Wait for boot system to be ready
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local System = require(ReplicatedStorage:WaitForChild("System.System"))
+System:WaitForStage(System.Stages.SCRIPTS)
+
+local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 
 local itemAdded = ReplicatedStorage:WaitForChild("Backpack.ItemAdded", 10)

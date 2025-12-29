@@ -1,14 +1,20 @@
 -- System.Script (Server)
 -- Self-bootstrapping script - extracts own service folders, then deploys assets
+-- Implements staged boot system with player spawn control
 
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerScriptService = game:GetService("ServerScriptService")
 local StarterPlayer = game:GetService("StarterPlayer")
 local StarterGui = game:GetService("StarterGui")
 local Workspace = game:GetService("Workspace")
 
+-- CRITICAL: Disable character auto-loading IMMEDIATELY
+-- This prevents players from spawning before the system is ready
+Players.CharacterAutoLoads = false
+
 -- Get reference to self (System folder in ServerScriptService)
-local System = script.Parent
+local SystemFolder = script.Parent
 
 -- Service folder mappings (order matters: deploy events before scripts)
 -- Folder names use underscore prefix to prevent auto-run of nested scripts
@@ -59,14 +65,14 @@ end
 -- Bootstrap System and its child modules
 local function bootstrapSelf()
 	-- Check if System is already in ServerScriptService (running as Package)
-	local isInServerScriptService = System:IsDescendantOf(ServerScriptService)
+	local isInServerScriptService = SystemFolder:IsDescendantOf(ServerScriptService)
 
 	-- Bootstrap System's own service folders (skip SSS if already there)
-	bootstrapModule(System, "System", isInServerScriptService)
+	bootstrapModule(SystemFolder, "System", isInServerScriptService)
 
 	-- Bootstrap child modules (Folders inside System, excluding service folders)
 	-- Child modules always need full deployment (don't skip SSS)
-	for _, child in ipairs(System:GetChildren()) do
+	for _, child in ipairs(SystemFolder:GetChildren()) do
 		if child:IsA("Folder") and not SERVICE_FOLDERS[child.Name] then
 			bootstrapModule(child, child.Name, false)
 		end
@@ -103,8 +109,63 @@ local function bootstrapAssets()
 	end
 end
 
--- Run bootstrap
+-- Spawn all waiting players
+local function spawnWaitingPlayers()
+	for _, player in ipairs(Players:GetPlayers()) do
+		task.spawn(function()
+			player:LoadCharacter()
+		end)
+	end
+end
+
+--------------------------------------------------------------------------------
+-- STAGED BOOT SEQUENCE
+--------------------------------------------------------------------------------
+
+-- Phase 1: Bootstrap System (deploys ReplicatedStorage items including System.System module)
 bootstrapSelf()
+
+-- Get references to boot infrastructure (now deployed)
+local System = require(ReplicatedStorage:WaitForChild("System.System"))
+local BootStage = ReplicatedStorage:FindFirstChild("System.BootStage")
+local ClientBoot = ReplicatedStorage:FindFirstChild("System.ClientBoot")
+
+-- Wire up the stage event
+System._stageEvent = BootStage
+
+-- Set up client ping-pong handler
+if ClientBoot then
+	ClientBoot.OnServerEvent:Connect(function(player, message)
+		if message == "PING" then
+			-- Respond with current stage so client can catch up
+			ClientBoot:FireClient(player, "PONG", System._currentStage)
+		elseif message == "READY" then
+			-- Client confirmed ready (useful for debugging)
+			print("System: Client ready -", player.Name)
+		end
+	end)
+end
+
+-- Fire SYNC stage (System bootstrapped, boot events exist)
+System:_setStage(System.Stages.SYNC)
+
+-- Phase 2: Bootstrap Assets (deploys to all services)
 bootstrapAssets()
 
-print("System.Script loaded")
+-- Fire EVENTS stage (all events now exist in ReplicatedStorage)
+System:_setStage(System.Stages.EVENTS)
+
+-- Fire MODULES stage (all modules deployed and requireable)
+System:_setStage(System.Stages.MODULES)
+
+-- Fire SCRIPTS stage (server scripts can now initialize)
+System:_setStage(System.Stages.SCRIPTS)
+
+-- Fire READY stage (full boot complete)
+System:_setStage(System.Stages.READY)
+
+-- Re-enable character auto-loading and spawn waiting players
+Players.CharacterAutoLoads = true
+spawnWaitingPlayers()
+
+print("System.Script: Boot complete")

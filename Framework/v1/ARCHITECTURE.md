@@ -29,7 +29,7 @@ Stages = {
 
 ### Key Components
 
-1. **System.shared.lua** - Stage constants + `WaitForStage()` helper
+1. **System.lua** - Stage constants + `WaitForStage()` helper
 2. **System.BootStage** (BindableEvent) - Server scripts listen for stage transitions
 3. **System.ClientBoot** (RemoteEvent) - Client ping-pong protocol
 4. **CharacterAutoLoads = false** - Prevent player spawning until READY

@@ -19,9 +19,9 @@ local itemAdded = ReplicatedStorage:WaitForChild("Backpack.ItemAdded", 10)
 local forceItemDrop = ReplicatedStorage:WaitForChild("Backpack.ForceItemDrop", 10)
 local forceItemPickup = ReplicatedStorage:WaitForChild("Backpack.ForceItemPickup", 10)
 
-if not itemAdded then warn("Backpack: ItemAdded event not found!") end
-if not forceItemDrop then warn("Backpack: ForceItemDrop event not found!") end
-if not forceItemPickup then warn("Backpack: ForceItemPickup event not found!") end
+if not itemAdded then System.Debug:Warn("System.Backpack", "ItemAdded event not found!") end
+if not forceItemDrop then System.Debug:Warn("System.Backpack", "ForceItemDrop event not found!") end
+if not forceItemPickup then System.Debug:Warn("System.Backpack", "ForceItemPickup event not found!") end
 
 -- Connect ChildAdded on a backpack instance
 local function connectBackpackEvents(player, backpack)
@@ -91,7 +91,7 @@ if forceItemDrop then
         end
     end)
 else
-    warn("Backpack: Cannot listen for force drop - event not found")
+    System.Debug:Warn("System.Backpack", "Cannot listen for force drop - event not found")
 end
 
 -- Pick up an item into player's backpack
@@ -115,7 +115,7 @@ if forceItemPickup then
         end
     end)
 else
-    warn("Backpack: Cannot listen for force pickup - event not found")
+    System.Debug:Warn("System.Backpack", "Cannot listen for force pickup - event not found")
 end
 
 -- Track which players we've set up
@@ -152,4 +152,4 @@ Players.PlayerRemoving:Connect(function(player)
     trackedPlayers[player] = nil
 end)
 
-print("Backpack.Script loaded")
+System.Debug:Message("System.Backpack", "Script loaded")

@@ -1,6 +1,9 @@
 -- Marshmallow.Script (Server)
 -- Handles cooking logic when called by ZoneController
 
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local System = require(ReplicatedStorage:WaitForChild("System.System"))
+
 local tool = script.Parent
 local cookFunction = tool:WaitForChild("cook")
 local handle = tool:WaitForChild("Handle")
@@ -55,16 +58,16 @@ cookFunction.OnInvoke = function(state)
 
     -- Log cooking progress
     if toastLevel < 50 then
-        print("Marshmallow: Warming up...", math.floor(toastLevel))
+        System.Debug:Message("Marshmallow", "Warming up...", math.floor(toastLevel))
     elseif toastLevel < 100 then
-        print("Marshmallow: Cooking nicely!", math.floor(toastLevel))
+        System.Debug:Message("Marshmallow", "Cooking nicely!", math.floor(toastLevel))
     elseif toastLevel < 120 then
-        print("Marshmallow: Golden brown!", math.floor(toastLevel))
+        System.Debug:Message("Marshmallow", "Golden brown!", math.floor(toastLevel))
     else
-        print("Marshmallow: Starting to burn!", math.floor(toastLevel))
+        System.Debug:Message("Marshmallow", "Starting to burn!", math.floor(toastLevel))
     end
 
     return toastLevel
 end
 
-print("Marshmallow ready - ToastLevel:", toastLevel)
+System.Debug:Message("Marshmallow", "Ready - ToastLevel:", toastLevel)

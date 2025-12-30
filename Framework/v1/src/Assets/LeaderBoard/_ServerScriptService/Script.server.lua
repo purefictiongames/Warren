@@ -26,19 +26,19 @@ local DATASTORE_KEY = "TopScores"
 -- Find Billboard part with SurfaceGui
 local billboard = model:FindFirstChild("Billboard")
 if not billboard then
-	warn("LeaderBoard: No Billboard part found")
+	System.Debug:Warn("LeaderBoard", "No Billboard part found")
 	return
 end
 
 local surfaceGui = billboard:FindFirstChild("SurfaceGui")
 if not surfaceGui then
-	warn("LeaderBoard: No SurfaceGui found on Billboard")
+	System.Debug:Warn("LeaderBoard", "No SurfaceGui found on Billboard")
 	return
 end
 
 local textLabel = surfaceGui:FindFirstChild("TextLabel", true)
 if not textLabel then
-	warn("LeaderBoard: No TextLabel found in SurfaceGui")
+	System.Debug:Warn("LeaderBoard", "No TextLabel found in SurfaceGui")
 	return
 end
 
@@ -61,7 +61,7 @@ local success, err = pcall(function()
 end)
 
 if not success then
-	warn("LeaderBoard: DataStore unavailable -", err)
+	System.Debug:Warn("LeaderBoard", "DataStore unavailable -", err)
 end
 
 -- Load scores from DataStore
@@ -74,9 +74,9 @@ local function loadScores()
 
 	if success and data then
 		scores = data
-		print("LeaderBoard: Loaded", #scores, "scores from DataStore")
+		System.Debug:Message("LeaderBoard", "Loaded", #scores, "scores from DataStore")
 	elseif not success then
-		warn("LeaderBoard: Failed to load scores -", data)
+		System.Debug:Warn("LeaderBoard", "Failed to load scores -", data)
 	end
 end
 
@@ -89,9 +89,9 @@ local function saveScores()
 	end)
 
 	if success then
-		print("LeaderBoard: Saved scores to DataStore")
+		System.Debug:Message("LeaderBoard", "Saved scores to DataStore")
 	else
-		warn("LeaderBoard: Failed to save scores -", err)
+		System.Debug:Warn("LeaderBoard", "Failed to save scores -", err)
 	end
 end
 
@@ -132,7 +132,7 @@ local function addScore(playerName, score)
 
 	updateDisplay()
 	saveScores()
-	print("LeaderBoard: Added score for", playerName, "-", score)
+	System.Debug:Message("LeaderBoard", "Added score for", playerName, "-", score)
 end
 
 -- Track current round scores
@@ -157,7 +157,7 @@ local function onRoundEnd()
 	end
 
 	currentRoundScores = {}
-	print("LeaderBoard: Round ended - scores posted")
+	System.Debug:Message("LeaderBoard", "Round ended - scores posted")
 end
 
 -- Listen for round end triggers
@@ -168,6 +168,6 @@ dispenserEmpty.Event:Connect(onRoundEnd)
 loadScores()
 updateDisplay()
 
-print("LeaderBoard: Setup complete")
+System.Debug:Message("LeaderBoard", "Setup complete")
 
-print("LeaderBoard.Script loaded")
+System.Debug:Message("LeaderBoard", "Script loaded")

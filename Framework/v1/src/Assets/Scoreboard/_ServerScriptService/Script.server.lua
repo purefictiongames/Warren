@@ -42,7 +42,7 @@ local function calculateScore(result)
 
 	local score = accuracyScore + speedScore
 
-	print("Scoreboard: Accuracy:", accuracyScore, "Speed:", speedScore, "Total:", score)
+	System.Debug:Message("Scoreboard", "Accuracy:", accuracyScore, "Speed:", speedScore, "Total:", score)
 
 	return score
 end
@@ -58,7 +58,7 @@ local function onEvaluationComplete(result)
 		-- Update player's total score
 		playerScores[player] = (playerScores[player] or 0) + score
 
-		print("Scoreboard:", player.Name, "scored", score, "points. Total:", playerScores[player])
+		System.Debug:Message("Scoreboard", player.Name, "scored", score, "points. Total:", playerScores[player])
 
 		-- Fire to client
 		scoreUpdate:FireClient(player, {
@@ -69,7 +69,7 @@ local function onEvaluationComplete(result)
 			targetValue = result.targetValue,
 		})
 	else
-		print("Scoreboard: Timeout - no submission")
+		System.Debug:Message("Scoreboard", "Timeout - no submission")
 	end
 
 	-- Signal round complete (for Orchestrator) - always fire to reset
@@ -79,18 +79,18 @@ local function onEvaluationComplete(result)
 		totalScore = player and playerScores[player] or 0,
 		timeout = not result.submitted,
 	})
-	print("Scoreboard: Round complete signaled")
+	System.Debug:Message("Scoreboard", "Round complete signaled")
 end
 
 -- Connect to TimedEvaluator
 evaluationComplete.Event:Connect(onEvaluationComplete)
-print("Scoreboard: Connected to TimedEvaluator.EvaluationComplete")
+System.Debug:Message("Scoreboard", "Connected to TimedEvaluator.EvaluationComplete")
 
 -- Clean up when player leaves
 Players.PlayerRemoving:Connect(function(player)
 	playerScores[player] = nil
 end)
 
-print("Scoreboard: Setup complete")
+System.Debug:Message("Scoreboard", "Setup complete")
 
-print("Scoreboard.Script loaded")
+System.Debug:Message("Scoreboard", "Script loaded")

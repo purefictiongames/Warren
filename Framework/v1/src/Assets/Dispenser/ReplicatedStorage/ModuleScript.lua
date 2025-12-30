@@ -3,6 +3,7 @@
 -- Synced
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local System = require(ReplicatedStorage:WaitForChild("System.System"))
 
 local Dispenser = {}
 Dispenser.__index = Dispenser
@@ -22,13 +23,13 @@ function Dispenser:dispense()
 
 	local templates = ReplicatedStorage:FindFirstChild("Templates")
 	if not templates then
-		warn("Dispenser: Templates folder not found")
+		System.Debug:Warn("Dispenser", "Templates folder not found")
 		return nil
 	end
 
 	local template = templates:FindFirstChild(self.itemType)
 	if not template then
-		warn("Dispenser: Template not found:", self.itemType)
+		System.Debug:Warn("Dispenser", "Template not found:", self.itemType)
 		return nil
 	end
 

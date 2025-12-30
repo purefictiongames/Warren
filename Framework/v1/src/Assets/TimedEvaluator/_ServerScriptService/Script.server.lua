@@ -33,19 +33,19 @@ if targetMin > targetMax then targetMin, targetMax = targetMax, targetMin end
 -- Find components
 local anchor = model:FindFirstChild("Anchor")
 if not anchor then
-	warn("TimedEvaluator: No Anchor found in", model.Name)
+	System.Debug:Warn("TimedEvaluator", "No Anchor found in", model.Name)
 	return
 end
 
 local prompt = anchor:FindFirstChild("ProximityPrompt")
 if not prompt then
-	warn("TimedEvaluator: No ProximityPrompt found in Anchor")
+	System.Debug:Warn("TimedEvaluator", "No ProximityPrompt found in Anchor")
 	return
 end
 
 local evaluationComplete = anchor:FindFirstChild("EvaluationComplete")
 if not evaluationComplete then
-	warn("TimedEvaluator: No EvaluationComplete event found in Anchor")
+	System.Debug:Warn("TimedEvaluator", "No EvaluationComplete event found in Anchor")
 	return
 end
 
@@ -66,7 +66,7 @@ local function updateSatisfaction(state)
 	local decay = state.deltaTime * 3
 	satisfaction = math.max(0, satisfaction - decay)
 	model:SetAttribute("Satisfaction", satisfaction)
-	print("TimedEvaluator: Satisfaction updated to", math.floor(satisfaction))
+	System.Debug:Message("TimedEvaluator", "Satisfaction updated to", math.floor(satisfaction))
 end
 
 -- Listen for timer ticks
@@ -91,9 +91,9 @@ local function evaluate(item, player)
 	if item then
 		submittedValue = item:GetAttribute(evalTarget) or 0
 		score = math.abs(targetValue - submittedValue)
-		print("TimedEvaluator: Evaluated", item.Name, "- Submitted:", submittedValue, "Target:", targetValue, "Score:", score)
+		System.Debug:Message("TimedEvaluator", "Evaluated", item.Name, "- Submitted:", submittedValue, "Target:", targetValue, "Score:", score)
 	else
-		print("TimedEvaluator: Time ran out! Target was:", targetValue)
+		System.Debug:Message("TimedEvaluator", "Time ran out! Target was:", targetValue)
 	end
 
 	-- Fire event with result
@@ -151,7 +151,7 @@ local function reset()
 	model:SetAttribute("TimeRemaining", countdown)
 	model:SetAttribute("Satisfaction", 100)
 
-	print("TimedEvaluator: Reset - TargetValue:", newTarget, "(range:", targetMin, "-", targetMax, ") Countdown:", countdown)
+	System.Debug:Message("TimedEvaluator", "Reset - TargetValue:", newTarget, "(range:", targetMin, "-", targetMax, ") Countdown:", countdown)
 
 	startTimer()
 end
@@ -214,20 +214,20 @@ end
 -- Handle player interaction
 prompt.Triggered:Connect(function(player)
 	if not isRunning or hasEvaluated then
-		print("TimedEvaluator: Not accepting submissions")
+		System.Debug:Message("TimedEvaluator", "Not accepting submissions")
 		return
 	end
 
 	local mounted = findMountedItem(player)
 	if mounted then
-		print("TimedEvaluator: Unmounting", mounted.Name, "from RoastingStick")
+		System.Debug:Message("TimedEvaluator", "Unmounting", mounted.Name, "from RoastingStick")
 		unmountToBackpack(player, mounted)
 		task.wait(0.1)
 	end
 
 	local item = findAcceptedItem(player)
 	if not item then
-		print("TimedEvaluator: Player has no", acceptType)
+		System.Debug:Message("TimedEvaluator", "Player has no", acceptType)
 		return
 	end
 
@@ -249,6 +249,6 @@ resetFunction.Parent = model
 -- Initial reset on load
 reset()
 
-print("TimedEvaluator: Setup complete - AcceptType:", acceptType, "EvalTarget:", evalTarget)
+System.Debug:Message("TimedEvaluator", "Setup complete - AcceptType:", acceptType, "EvalTarget:", evalTarget)
 
-print("TimedEvaluator.Script loaded")
+System.Debug:Message("TimedEvaluator", "Script loaded")

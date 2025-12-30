@@ -10,7 +10,7 @@ local System = require(ReplicatedStorage:WaitForChild("System.System"))
 local ClientBoot = ReplicatedStorage:WaitForChild("System.ClientBoot", 30)
 
 if not ClientBoot then
-	warn("System.client: ClientBoot event not found, assuming server ready")
+	System.Debug:Warn("System.client", "ClientBoot event not found, assuming server ready")
 	System:_updateFromServer(System.Stages.READY)
 	return
 end
@@ -32,7 +32,7 @@ ClientBoot:FireServer("PING")
 -- Timeout fallback - assume READY if no response
 task.delay(PING_TIMEOUT, function()
 	if not responded then
-		warn("System.client: Server ping timeout, assuming READY")
+		System.Debug:Warn("System.client", "Server ping timeout, assuming READY")
 		System:_updateFromServer(System.Stages.READY)
 	end
 end)
@@ -43,5 +43,5 @@ task.spawn(function()
 	if ClientBoot then
 		ClientBoot:FireServer("READY")
 	end
-	print("System.client: Ready")
+	System.Debug:Message("System.client", "Ready")
 end)

@@ -40,7 +40,7 @@ local function setupDispenser(model)
 	-- Find Anchor
 	local anchor = model:FindFirstChild("Anchor")
 	if not anchor then
-		warn("Dispenser: No Anchor found in", model.Name)
+		System.Debug:Warn("Dispenser", "No Anchor found in", model.Name)
 		return
 	end
 
@@ -55,14 +55,14 @@ local function setupDispenser(model)
 			-- Hide anchor, mesh is the visual
 			anchor.Transparency = 1
 		else
-			warn("Dispenser: Mesh not found:", meshName)
+			System.Debug:Warn("Dispenser", "Mesh not found:", meshName)
 		end
 	end
 
 	-- Find ProximityPrompt
 	local prompt = anchor:FindFirstChild("ProximityPrompt")
 	if not prompt then
-		warn("Dispenser: No ProximityPrompt found in", model.Name)
+		System.Debug:Warn("Dispenser", "No ProximityPrompt found in", model.Name)
 		return
 	end
 
@@ -80,10 +80,10 @@ local function setupDispenser(model)
 			end
 
 			local backpack = player.Backpack
-			print("Dispenser: Putting", item.Name, "in backpack:", backpack:GetFullName())
+			System.Debug:Message("Dispenser", "Putting", item.Name, "in backpack:", backpack:GetFullName())
 			item.Parent = backpack
 			model:SetAttribute("Remaining", dispenser.remaining)
-			print("Dispenser: Gave", item.Name, "to", player.Name)
+			System.Debug:Message("Dispenser", "Gave", item.Name, "to", player.Name)
 
 			-- Notify player
 			if messageTicker then
@@ -92,11 +92,11 @@ local function setupDispenser(model)
 
 			-- Fire empty event if this was the last one
 			if dispenser:isEmpty() then
-				print("Dispenser: Now empty - firing event")
+				System.Debug:Message("Dispenser", "Now empty - firing event")
 				emptyEvent:Fire()
 			end
 		else
-			print("Dispenser: Empty")
+			System.Debug:Message("Dispenser", "Empty")
 			if messageTicker then
 				messageTicker:FireClient(player, "The bag is empty!")
 			end
@@ -109,14 +109,14 @@ local function setupDispenser(model)
 	resetFunction.OnInvoke = function()
 		dispenser:refill()
 		model:SetAttribute("Remaining", dispenser.remaining)
-		print("Dispenser: Refilled to", dispenser.remaining)
+		System.Debug:Message("Dispenser", "Refilled to", dispenser.remaining)
 		return true
 	end
 	resetFunction.Parent = model
 
-	print("Dispenser: Set up", model.Name, "(DispenseItem:" .. itemType .. ", Capacity:" .. capacity .. ")")
+	System.Debug:Message("Dispenser", "Set up", model.Name, "(DispenseItem:" .. itemType .. ", Capacity:" .. capacity .. ")")
 end
 
 setupDispenser(model)
 
-print("Dispenser.Script loaded")
+System.Debug:Message("Dispenser", "Script loaded")

@@ -43,6 +43,6 @@ if timerLabel then
 	timerLabel.Text = "--:--"
 end
 
-print("GlobalTimer.LocalScript: HUD ready")
+System.Debug:Message("GlobalTimer.client", "HUD ready")
 
-print("GlobalTimer.LocalScript loaded")
+System.Debug:Message("GlobalTimer.client", "Script loaded")

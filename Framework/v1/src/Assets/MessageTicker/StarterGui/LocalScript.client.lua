@@ -70,6 +70,6 @@ end
 
 messageTicker.OnClientEvent:Connect(showMessage)
 
-print("MessageTicker.LocalScript: HUD ready")
+System.Debug:Message("MessageTicker.client", "HUD ready")
 
-print("MessageTicker.LocalScript loaded")
+System.Debug:Message("MessageTicker.client", "Script loaded")

@@ -3,6 +3,12 @@
   "tree": {
     "$className": "DataModel",
 
+    "ReplicatedFirst": {
+      "System": {
+        "$path": "src/System/ReplicatedFirst"
+      }
+    },
+
     "ReplicatedStorage": {
       "Authentication": {
         "$path": "src/Authentication/Shared/Authentication.shared.lua"

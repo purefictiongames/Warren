@@ -33,7 +33,7 @@ local dispenserEmpty = ReplicatedStorage:WaitForChild("Dispenser.Empty")
 
 -- Per-submission reset (RoundComplete from Scoreboard)
 local function onRoundComplete(result)
-	print("Orchestrator: Submission received - resetting TimedEvaluator")
+	System.Debug:Message("Orchestrator", "Submission received - resetting TimedEvaluator")
 	task.wait(1)
 	timedEvaluatorReset:Invoke()
 end
@@ -42,7 +42,7 @@ roundComplete.Event:Connect(onRoundComplete)
 
 -- Full reset function (shared by multiple triggers)
 local function fullReset(reason)
-	print("Orchestrator:", reason, "- resetting all assets")
+	System.Debug:Message("Orchestrator", reason, "- resetting all assets")
 
 	-- Delay to let players see result
 	task.wait(3)
@@ -52,7 +52,7 @@ local function fullReset(reason)
 	timedEvaluatorReset:Invoke()
 	globalTimerStart:Invoke()
 
-	print("Orchestrator: New round started")
+	System.Debug:Message("Orchestrator", "New round started")
 end
 
 -- Listen for GlobalTimer expiration
@@ -68,6 +68,6 @@ end)
 -- Start GlobalTimer on game load
 globalTimerStart:Invoke()
 
-print("Orchestrator: Setup complete")
+System.Debug:Message("Orchestrator", "Setup complete")
 
-print("Orchestrator.Script loaded")
+System.Debug:Message("Orchestrator", "Script loaded")

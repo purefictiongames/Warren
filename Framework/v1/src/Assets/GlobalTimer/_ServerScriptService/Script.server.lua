@@ -29,7 +29,7 @@ local function parseCountdown(value)
 	local seconds = math.floor(decimalPart * 100 + 0.5)
 
 	if seconds > 59 then
-		warn("GlobalTimer: Invalid CountdownStart - seconds must be <= 59 (got", seconds, ")")
+		System.Debug:Warn("GlobalTimer", "Invalid CountdownStart - seconds must be <= 59 (got", seconds, ")")
 		return nil
 	end
 
@@ -41,11 +41,11 @@ local countdownStart = model:GetAttribute("CountdownStart") or 1.00
 local totalSeconds = parseCountdown(countdownStart)
 
 if not totalSeconds then
-	warn("GlobalTimer: Invalid CountdownStart attribute, defaulting to 3:00")
+	System.Debug:Warn("GlobalTimer", "Invalid CountdownStart attribute, defaulting to 3:00")
 	totalSeconds = 180
 end
 
-print("GlobalTimer: Countdown set to", totalSeconds, "seconds (from", countdownStart, ")")
+System.Debug:Message("GlobalTimer", "Countdown set to", totalSeconds, "seconds (from", countdownStart, ")")
 
 -- Internal state
 local timerThread = nil
@@ -83,7 +83,7 @@ local function start()
 	timeRemaining = totalSeconds
 	model:SetAttribute("TimeRemaining", timeRemaining)
 
-	print("GlobalTimer: Started -", formatTime(timeRemaining))
+	System.Debug:Message("GlobalTimer", "Started -", formatTime(timeRemaining))
 	broadcastUpdate()
 
 	timerThread = task.spawn(function()
@@ -96,7 +96,7 @@ local function start()
 
 		if isRunning and myGeneration == timerGeneration then
 			isRunning = false
-			print("GlobalTimer: Expired!")
+			System.Debug:Message("GlobalTimer", "Expired!")
 			broadcastUpdate()
 			timerExpired:Fire()
 		end
@@ -112,7 +112,7 @@ local function stop()
 	isRunning = false
 	model:SetAttribute("TimeRemaining", timeRemaining)
 	broadcastUpdate()
-	print("GlobalTimer: Stopped at", formatTime(timeRemaining))
+	System.Debug:Message("GlobalTimer", "Stopped at", formatTime(timeRemaining))
 end
 
 -- Expose Start via BindableFunction (for Orchestrator)
@@ -133,6 +133,6 @@ stopFunction.OnInvoke = function()
 end
 stopFunction.Parent = model
 
-print("GlobalTimer: Setup complete")
+System.Debug:Message("GlobalTimer", "Setup complete")
 
-print("GlobalTimer.Script loaded")
+System.Debug:Message("GlobalTimer", "Script loaded")

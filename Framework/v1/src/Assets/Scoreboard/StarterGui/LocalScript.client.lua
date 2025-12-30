@@ -41,7 +41,7 @@ local function updateDisplay(data)
 		end
 	end
 
-	print("HUD: Updated - Round:", data.roundScore, "Total:", data.totalScore)
+	System.Debug:Message("Scoreboard.client", "Updated - Round:", data.roundScore, "Total:", data.totalScore)
 end
 
 -- Listen for score updates
@@ -55,6 +55,6 @@ if targetLabel then
 	targetLabel.Text = "Waiting..."
 end
 
-print("Scoreboard.LocalScript: HUD ready")
+System.Debug:Message("Scoreboard.client", "HUD ready")
 
-print("Scoreboard.LocalScript loaded")
+System.Debug:Message("Scoreboard.client", "Script loaded")

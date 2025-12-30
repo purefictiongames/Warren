@@ -70,7 +70,7 @@ local function mountMarshmallow(player, marshmallow)
 	-- Keep CanCollide off to avoid player collision (welded to stick now)
 	marshmallowHandle.CanCollide = false
 
-	print("RoastingStick: Mounted marshmallow for", player.Name)
+	System.Debug:Message("RoastingStick", "Mounted marshmallow for", player.Name)
 	return true, "mounted"
 end
 
@@ -107,7 +107,7 @@ local function giveStick(player)
 		end
 	end
 
-	print("RoastingStick: Gave stick to", player.Name)
+	System.Debug:Message("RoastingStick", "Gave stick to", player.Name)
 end
 
 -- Setup player
@@ -205,4 +205,4 @@ Players.PlayerRemoving:Connect(function(player)
 	trackedPlayers[player] = nil
 end)
 
-print("RoastingStick.Script loaded")
+System.Debug:Message("RoastingStick", "Script loaded")

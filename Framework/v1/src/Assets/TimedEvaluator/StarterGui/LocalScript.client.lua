@@ -118,17 +118,17 @@ end
 local function setupMarshmallowPreview(viewport)
 	local marshmallowTemplate = templates:FindFirstChild("Marshmallow")
 	if not marshmallowTemplate then
-		warn("TimedEvaluator: Marshmallow template not found")
+		System.Debug:Warn("TimedEvaluator.client", "Marshmallow template not found")
 		return nil
 	end
 
 	local handle = marshmallowTemplate:FindFirstChild("Handle")
 	if not handle then
-		warn("TimedEvaluator: No Handle found in Marshmallow template")
+		System.Debug:Warn("TimedEvaluator.client", "No Handle found in Marshmallow template")
 		return nil
 	end
 
-	print("TimedEvaluator: Handle found - Part Size:", handle.Size)
+	System.Debug:Message("TimedEvaluator.client", "Handle found - Part Size:", handle.Size)
 
 	local previewPart = handle:Clone()
 	previewPart.CFrame = CFrame.new(0, 0, 0)
@@ -147,7 +147,7 @@ local function setupMarshmallowPreview(viewport)
 	light.Range = 10
 	light.Parent = previewPart
 
-	print("TimedEvaluator: Preview part parented to viewport")
+	System.Debug:Message("TimedEvaluator.client", "Preview part parented to viewport")
 
 	return previewPart
 end
@@ -175,4 +175,4 @@ updateToastPreview()
 model:GetAttributeChangedSignal("Satisfaction"):Connect(updateSatisfactionDisplay)
 model:GetAttributeChangedSignal("TargetValue"):Connect(updateToastPreview)
 
-print("TimedEvaluator.LocalScript: Display ready")
+System.Debug:Message("TimedEvaluator.client", "Display ready")

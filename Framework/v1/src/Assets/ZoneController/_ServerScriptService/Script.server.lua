@@ -85,14 +85,14 @@ local function setupZoneController(zoneModel)
 	local tickRate = zoneModel:GetAttribute("TickRate") or 0.5
 
 	if not matchCallback then
-		warn("ZoneController: No MatchCallback attribute set on", zoneModel.Name)
+		System.Debug:Warn("ZoneController", "No MatchCallback attribute set on", zoneModel.Name)
 		return
 	end
 
 	-- Find Zone part
 	local zone = zoneModel:FindFirstChild("Zone")
 	if not zone then
-		warn("ZoneController: No Zone part found in", zoneModel.Name)
+		System.Debug:Warn("ZoneController", "No Zone part found in", zoneModel.Name)
 		return
 	end
 
@@ -112,13 +112,13 @@ local function setupZoneController(zoneModel)
 		attendance[entityRoot] = {
 			entityType = entityType
 		}
-		print("ZoneController: Entity entered zone")
+		System.Debug:Message("ZoneController", "Entity entered zone")
 	end
 
 	-- Handle entity leaving zone (called when touch count reaches 0)
 	local function onEntityExit(entityRoot)
 		if attendance[entityRoot] then
-			print("ZoneController: Entity left zone")
+			System.Debug:Message("ZoneController", "Entity left zone")
 			attendance[entityRoot] = nil
 		end
 	end
@@ -183,16 +183,16 @@ local function setupZoneController(zoneModel)
 						callback:Invoke(state)
 					end)
 					if not success then
-						warn("ZoneController: Error calling", matchCallback, "on", instance.Name, "-", err)
+						System.Debug:Alert("ZoneController", "Error calling", matchCallback, "on", instance.Name, "-", err)
 					end
 				end
 			end
 		end
 	end)
 
-	print("ZoneController: Set up", zoneModel.Name, "(MatchCallback:", matchCallback, ", TickRate:", tickRate, ")")
+	System.Debug:Message("ZoneController", "Set up", zoneModel.Name, "(MatchCallback:", matchCallback, ", TickRate:", tickRate, ")")
 end
 
 setupZoneController(model)
 
-print("ZoneController.Script loaded")
+System.Debug:Message("ZoneController", "Script loaded")

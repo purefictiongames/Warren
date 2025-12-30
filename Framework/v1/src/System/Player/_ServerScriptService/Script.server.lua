@@ -25,4 +25,4 @@ end
 
 Players.PlayerAdded:Connect(setupPlayer)
 
-print("Player.Script loaded")
+System.Debug:Message("System.Player", "Script loaded")

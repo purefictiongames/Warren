@@ -141,7 +141,7 @@ if ClientBoot then
 			ClientBoot:FireClient(player, "PONG", System._currentStage)
 		elseif message == "READY" then
 			-- Client confirmed ready (useful for debugging)
-			print("System: Client ready -", player.Name)
+			System.Debug:Message("System", "Client ready -", player.Name)
 		end
 	end)
 end
@@ -168,4 +168,4 @@ System:_setStage(System.Stages.READY)
 Players.CharacterAutoLoads = true
 spawnWaitingPlayers()
 
-print("System.Script: Boot complete")
+System.Debug:Message("System.Script", "Boot complete")

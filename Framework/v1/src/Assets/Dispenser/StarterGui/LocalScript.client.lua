@@ -93,4 +93,4 @@ updateDisplay()
 -- Listen for changes
 model:GetAttributeChangedSignal("Remaining"):Connect(updateDisplay)
 
-print("Dispenser.LocalScript: Display ready")
+System.Debug:Message("Dispenser.client", "Display ready")

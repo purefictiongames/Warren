@@ -21,6 +21,8 @@ local runtimeAssets = workspace:WaitForChild("RuntimeAssets")
 local model = runtimeAssets:WaitForChild("TimedEvaluator")
 local anchor = model:WaitForChild("Anchor")
 
+local GUI = require(ReplicatedStorage:WaitForChild("GUI.GUI"))
+
 -- Emoji stages from highest to lowest satisfaction
 local EMOJI_STAGES = {
 	{ min = 80, emoji = "😀" },
@@ -73,49 +75,60 @@ local function getColorForToastLevel(toastLevel)
 	end
 end
 
-local function createBillboardGui()
-	local billboardGui = Instance.new("BillboardGui")
-	billboardGui.Name = "TimedEvaluatorDisplay"
-	billboardGui.Adornee = anchor
-	billboardGui.Size = UDim2.new(2.5, 0, 1.25, 0)
-	billboardGui.StudsOffset = Vector3.new(0, 5.5, 0)
-	billboardGui.AlwaysOnTop = true
-	billboardGui.Parent = playerGui
+-- Create BillboardGui using declarative system
+local billboardGui = GUI:Create({
+	type = "BillboardGui",
+	name = "TimedEvaluatorDisplay",
+	size = {2.5, 0, 1.25, 0},
+	studsOffset = Vector3.new(0, 5.5, 0),
+	alwaysOnTop = true,
+	children = {
+		{
+			type = "Frame",
+			name = "Container",
+			size = {1, 0, 1, 0},
+			backgroundTransparency = 1,
+			listLayout = {
+				direction = "Horizontal",
+				hAlign = "Center",
+				vAlign = "Center",
+				padding = {0.1, 0},
+				sortOrder = "LayoutOrder",
+			},
+			children = {
+				{
+					type = "ViewportFrame",
+					id = "marshmallow-preview",
+					name = "MarshmallowPreview",
+					size = {1, 0, 1, 0},
+					backgroundTransparency = 1,
+					layoutOrder = 0,
+				},
+				{
+					type = "TextLabel",
+					id = "evaluator-emoji",
+					name = "Emoji",
+					size = {1, 0, 1, 0},
+					backgroundTransparency = 1,
+					text = "😀",
+					textScaled = true,
+					layoutOrder = 1,
+				},
+			}
+		}
+	}
+})
 
-	local container = Instance.new("Frame")
-	container.Name = "Container"
-	container.Size = UDim2.new(1, 0, 1, 0)
-	container.BackgroundTransparency = 1
-	container.Parent = billboardGui
+-- Set adornee (needs runtime reference)
+billboardGui.Adornee = anchor
+billboardGui.Parent = playerGui
 
-	local layout = Instance.new("UIListLayout")
-	layout.FillDirection = Enum.FillDirection.Horizontal
-	layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-	layout.VerticalAlignment = Enum.VerticalAlignment.Center
-	layout.SortOrder = Enum.SortOrder.LayoutOrder
-	layout.Padding = UDim.new(0.1, 0)
-	layout.Parent = container
+-- Get references
+local viewport = GUI:GetById("marshmallow-preview")
+local emojiLabel = GUI:GetById("evaluator-emoji")
 
-	local viewport = Instance.new("ViewportFrame")
-	viewport.Name = "MarshmallowPreview"
-	viewport.Size = UDim2.new(1, 0, 1, 0)
-	viewport.BackgroundTransparency = 1
-	viewport.LayoutOrder = 0
-	viewport.Parent = container
-
-	local emojiLabel = Instance.new("TextLabel")
-	emojiLabel.Name = "Emoji"
-	emojiLabel.Size = UDim2.new(1, 0, 1, 0)
-	emojiLabel.BackgroundTransparency = 1
-	emojiLabel.Text = "😀"
-	emojiLabel.TextScaled = true
-	emojiLabel.LayoutOrder = 1
-	emojiLabel.Parent = container
-
-	return billboardGui, emojiLabel, viewport
-end
-
-local function setupMarshmallowPreview(viewport)
+-- Setup 3D preview in viewport (not part of GUI system)
+local function setupMarshmallowPreview()
 	local marshmallowTemplate = templates:FindFirstChild("Marshmallow")
 	if not marshmallowTemplate then
 		System.Debug:Warn("TimedEvaluator.client", "Marshmallow template not found")
@@ -152,9 +165,7 @@ local function setupMarshmallowPreview(viewport)
 	return previewPart
 end
 
--- Setup display
-local billboardGui, emojiLabel, viewport = createBillboardGui()
-local previewPart = setupMarshmallowPreview(viewport)
+local previewPart = setupMarshmallowPreview()
 
 local function updateSatisfactionDisplay()
 	local satisfaction = model:GetAttribute("Satisfaction") or 100

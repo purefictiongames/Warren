@@ -1,0 +1,101 @@
+-- Styles.ModuleScript (ReplicatedFirst)
+-- Stylesheet definitions for the GUI system
+-- Loaded earliest for fastest access
+--
+-- Cascade order: base → class (in attribute order) → id → inline
+--
+-- Shorthand syntax:
+--   size = {0.5, 0, 100, 0}     → UDim2.new(0.5, 0, 100, 0)
+--   textColor = {255, 170, 0}  → Color3.fromRGB(255, 170, 0)
+--   font = "Bangers"           → Enum.Font.Bangers
+
+return {
+	-- Base styles applied to all elements of a type
+	base = {
+		TextLabel = {
+			backgroundTransparency = 1,
+			font = "SourceSans",
+			textColor = {255, 255, 255},
+		},
+		TextButton = {
+			backgroundTransparency = 0.2,
+			backgroundColor = {60, 60, 60},
+			font = "SourceSans",
+			textColor = {255, 255, 255},
+		},
+		Frame = {
+			backgroundTransparency = 0.1,
+			backgroundColor = {30, 30, 30},
+		},
+		ImageLabel = {
+			backgroundTransparency = 1,
+		},
+		ImageButton = {
+			backgroundTransparency = 1,
+		},
+	},
+
+	-- Class styles (applied by class="..." attribute)
+	-- Multiple classes applied in order: class="first second third"
+	classes = {
+		-- Typography
+		["hud-text"] = {
+			textSize = 24,
+			font = "GothamBold",
+		},
+		["hud-large"] = {
+			textSize = 36,
+		},
+		["hud-small"] = {
+			textSize = 16,
+		},
+
+		-- Colors
+		["gold"] = {
+			textColor = {255, 170, 0},
+		},
+		["white"] = {
+			textColor = {255, 255, 255},
+		},
+		["red"] = {
+			textColor = {255, 80, 80},
+		},
+		["green"] = {
+			textColor = {80, 255, 80},
+		},
+
+		-- Layout
+		["centered"] = {
+			anchorPoint = {0.5, 0.5},
+		},
+		["centered-x"] = {
+			anchorPoint = {0.5, 0},
+		},
+		["centered-y"] = {
+			anchorPoint = {0, 0.5},
+		},
+
+		-- Visibility
+		["hidden"] = {
+			visible = false,
+		},
+
+		-- Transparency
+		["transparent"] = {
+			backgroundTransparency = 1,
+		},
+		["semi-transparent"] = {
+			backgroundTransparency = 0.5,
+		},
+	},
+
+	-- ID styles (applied by id="..." attribute)
+	-- Higher specificity than classes
+	ids = {
+		-- Example ID styles (customize per project)
+		-- ["score-display"] = {
+		--     textSize = 48,
+		--     textColor = {255, 215, 0},
+		-- },
+	},
+}

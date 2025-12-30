@@ -6,6 +6,9 @@
     "ReplicatedFirst": {
       "System": {
         "$path": "src/System/ReplicatedFirst"
+      },
+      "GUI": {
+        "$path": "src/System/GUI/ReplicatedFirst"
       }
     },
 

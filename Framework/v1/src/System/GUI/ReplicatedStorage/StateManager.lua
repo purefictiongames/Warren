@@ -271,4 +271,166 @@ function StateManager.setDisabled(element, disabled, definition, styles)
 	element:SetAttribute("guiDisabled", disabled)
 end
 
+--------------------------------------------------------------------------------
+-- BUILT-IN ACTIONS (Phase 8)
+--------------------------------------------------------------------------------
+
+-- Reference to GUI module (set during wireActions)
+local guiRef = nil
+
+-- Find target element by selector
+-- Supports: "#id" for ID lookup, ".class" for class lookup (first match)
+local function findTarget(selector, rootElement)
+	if not selector then
+		return nil
+	end
+
+	-- ID selector: #myId
+	if selector:sub(1, 1) == "#" then
+		local id = selector:sub(2)
+		if guiRef and guiRef.GetById then
+			return guiRef:GetById(id)
+		end
+		return nil
+	end
+
+	-- Class selector: .myClass (returns first match)
+	if selector:sub(1, 1) == "." then
+		local className = selector:sub(2)
+		if guiRef and guiRef.GetByClass then
+			local matches = guiRef:GetByClass(className)
+			return matches[1]  -- Return first match
+		end
+		return nil
+	end
+
+	-- Direct element name (search descendants)
+	if rootElement then
+		return rootElement:FindFirstChild(selector, true)
+	end
+
+	return nil
+end
+
+-- Execute a single action
+local function executeAction(actionDef, element)
+	local actionType = actionDef.action
+	local target = actionDef.target and findTarget(actionDef.target, element) or element
+
+	if not target then
+		return
+	end
+
+	if actionType == "hide" then
+		target.Visible = false
+
+	elseif actionType == "show" then
+		target.Visible = true
+
+	elseif actionType == "toggle" then
+		target.Visible = not target.Visible
+
+	elseif actionType == "addClass" then
+		local className = actionDef.class
+		if className and guiRef and guiRef.AddClass then
+			guiRef:AddClass(target, className)
+		end
+
+	elseif actionType == "removeClass" then
+		local className = actionDef.class
+		if className and guiRef and guiRef.RemoveClass then
+			guiRef:RemoveClass(target, className)
+		end
+
+	elseif actionType == "toggleClass" then
+		local className = actionDef.class
+		if className and guiRef and guiRef.ToggleClass then
+			guiRef:ToggleClass(target, className)
+		end
+
+	elseif actionType == "setClass" then
+		local className = actionDef.class
+		if className and guiRef and guiRef.SetClass then
+			guiRef:SetClass(target, className)
+		end
+	end
+end
+
+-- Execute an array of actions
+local function executeActions(actions, element)
+	if not actions then
+		return
+	end
+
+	for _, actionDef in ipairs(actions) do
+		executeAction(actionDef, element)
+	end
+end
+
+-- Wire built-in actions for an element
+-- @param element: The Roblox GuiObject
+-- @param definition: The element definition with actions property
+-- @param gui: Reference to GUI module for element lookup
+function StateManager.wireActions(element, definition, gui)
+	if not definition.actions then
+		return
+	end
+
+	-- Store GUI reference for target lookup
+	guiRef = gui
+
+	local actions = definition.actions
+
+	-- Wire onClick (for buttons)
+	if actions.onClick then
+		if element:IsA("GuiButton") then
+			element.Activated:Connect(function()
+				executeActions(actions.onClick, element)
+			end)
+		end
+	end
+
+	-- Wire onHover (MouseEnter)
+	if actions.onHover then
+		if element:IsA("GuiObject") then
+			element.MouseEnter:Connect(function()
+				executeActions(actions.onHover, element)
+			end)
+		end
+	end
+
+	-- Wire onLeave (MouseLeave)
+	if actions.onLeave then
+		if element:IsA("GuiObject") then
+			element.MouseLeave:Connect(function()
+				executeActions(actions.onLeave, element)
+			end)
+		end
+	end
+
+	-- Wire onMouseDown
+	if actions.onMouseDown then
+		if element:IsA("GuiObject") then
+			element.InputBegan:Connect(function(input)
+				if input.UserInputType == Enum.UserInputType.MouseButton1 or
+				   input.UserInputType == Enum.UserInputType.Touch then
+					executeActions(actions.onMouseDown, element)
+				end
+			end)
+		end
+	end
+
+	-- Wire onMouseUp
+	if actions.onMouseUp then
+		if element:IsA("GuiObject") then
+			element.InputEnded:Connect(function(input)
+				if input.UserInputType == Enum.UserInputType.MouseButton1 or
+				   input.UserInputType == Enum.UserInputType.Touch then
+					executeActions(actions.onMouseUp, element)
+				end
+			end)
+		end
+	end
+end
+
 return StateManager

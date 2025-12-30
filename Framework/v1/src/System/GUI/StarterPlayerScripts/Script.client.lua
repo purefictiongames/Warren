@@ -51,7 +51,7 @@ end)
 System.Debug:Message("System.GUI.client", "Script loaded")
 
 --------------------------------------------------------------------------------
--- PHASE 5-7 TEST: Responsive + Z-Index + Pseudo-classes (remove after verification)
+-- PHASE 5-8 TEST: Responsive + Z-Index + Pseudo-classes + Actions (remove after verification)
 --------------------------------------------------------------------------------
 
 local Players = game:GetService("Players")
@@ -70,13 +70,13 @@ local function createResponsiveTest()
 	-- Create new GUI with current breakpoint styles
 	currentTestGui = GUI:Create({
 		type = "ScreenGui",
-		name = "GUI_Phase7_Test",
+		name = "GUI_Phase8_Test",
 		resetOnSpawn = false,
 		zIndex = 50,  -- Phase 6: maps to DisplayOrder for ScreenGui
 		children = {
 			{
 				type = "Frame",
-				size = {0.4, 0, 0, 160},
+				size = {0.4, 0, 0, 260},
 				position = {0.5, 0, 0.05, 0},
 				anchorPoint = {0.5, 0},
 				backgroundColor = {40, 40, 50},
@@ -124,6 +124,37 @@ local function createResponsiveTest()
 								cornerRadius = 6,
 								layoutOrder = 4,
 							},
+							{
+								type = "TextButton",
+								text = "Toggle Panel (Phase 8)",
+								class = "btn",
+								size = {1, 0, 0, 30},
+								cornerRadius = 6,
+								layoutOrder = 5,
+								actions = {
+									onClick = {
+										{ action = "toggle", target = "#toggle-panel" }
+									}
+								}
+							},
+							{
+								type = "Frame",
+								id = "toggle-panel",
+								size = {1, 0, 0, 40},
+								backgroundColor = {60, 100, 60},
+								cornerRadius = 6,
+								layoutOrder = 6,
+								children = {
+									{
+										type = "TextLabel",
+										text = "I can be toggled!",
+										textColor = {255, 255, 255},
+										textSize = 14,
+										size = {1, 0, 1, 0},
+										backgroundTransparency = 1,
+									}
+								}
+							},
 						}
 					}
 				}
@@ -142,4 +173,4 @@ GUI:OnBreakpointChanged(function(newBreakpoint, oldBreakpoint)
 	createResponsiveTest()
 end)
 
-System.Debug:Message("System.GUI.client", "Phase 7 test created (responsive + z-index + pseudo-classes)")
+System.Debug:Message("System.GUI.client", "Phase 8 test created (all features)")

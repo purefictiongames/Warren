@@ -396,6 +396,9 @@ function ElementFactory.createWithStyles(definition, styles, guiRef)
 	-- Wire pseudo-class event handlers (:hover, :active, :disabled)
 	StateManager.wire(element, definition, styles)
 
+	-- Wire built-in actions (onClick, onHover, etc.)
+	StateManager.wireActions(element, definition, guiRef)
+
 	-- Create children recursively (with styles)
 	if definition.children then
 		for _, childDef in ipairs(definition.children) do

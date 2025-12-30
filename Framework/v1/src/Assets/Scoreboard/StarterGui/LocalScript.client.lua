@@ -17,9 +17,50 @@ System:WaitForStage(System.Stages.READY)
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 local scoreUpdate = ReplicatedStorage:WaitForChild("Scoreboard.ScoreUpdate")
-local screenGui = playerGui:WaitForChild("Scoreboard.ScreenGui")
-local scoreValue = screenGui:FindFirstChild("ScoreValue", true)
-local targetLabel = screenGui:FindFirstChild("TargetLabel", true)
+local GUI = require(ReplicatedStorage:WaitForChild("GUI.GUI"))
+
+-- Create scoreboard GUI
+local screenGui = GUI:Create({
+	type = "ScreenGui",
+	name = "Scoreboard.ScreenGui",
+	resetOnSpawn = false,
+	zIndex = 5,
+	children = {
+		{
+			type = "Frame",
+			size = {0, 150, 0, 70},
+			position = {1, -10, 0, 10},
+			anchorPoint = {1, 0},
+			backgroundTransparency = 1,
+			children = {
+				{
+					type = "TextLabel",
+					id = "score-value",
+					class = "score-value",
+					text = "0",
+					size = {1, 0, 0, 40},
+					position = {0.5, 0, 0, 0},
+					anchorPoint = {0.5, 0},
+					textXAlignment = Enum.TextXAlignment.Center,
+				},
+				{
+					type = "TextLabel",
+					id = "target-label",
+					class = "score-label",
+					text = "Waiting...",
+					size = {1, 0, 0, 24},
+					position = {0.5, 0, 1, 0},
+					anchorPoint = {0.5, 1},
+					textXAlignment = Enum.TextXAlignment.Center,
+				},
+			}
+		}
+	}
+})
+screenGui.Parent = playerGui
+
+local scoreValue = GUI:GetById("score-value")
+local targetLabel = GUI:GetById("target-label")
 
 -- Round to nearest 5
 local function roundToNearest5(value)
@@ -46,14 +87,6 @@ end
 
 -- Listen for score updates
 scoreUpdate.OnClientEvent:Connect(updateDisplay)
-
--- Initialize display
-if scoreValue then
-	scoreValue.Text = "0"
-end
-if targetLabel then
-	targetLabel.Text = "Waiting..."
-end
 
 System.Debug:Message("Scoreboard.client", "HUD ready")
 

@@ -17,8 +17,29 @@ System:WaitForStage(System.Stages.READY)
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 local timerUpdate = ReplicatedStorage:WaitForChild("GlobalTimer.TimerUpdate")
-local screenGui = playerGui:WaitForChild("GlobalTimer.ScreenGui")
-local timerLabel = screenGui:FindFirstChild("TimerLabel", true)
+local GUI = require(ReplicatedStorage:WaitForChild("GUI.GUI"))
+
+-- Create timer GUI
+local screenGui = GUI:Create({
+	type = "ScreenGui",
+	name = "GlobalTimer.ScreenGui",
+	resetOnSpawn = false,
+	zIndex = 5,
+	children = {
+		{
+			type = "TextLabel",
+			id = "timer-label",
+			class = "timer-text",
+			text = "--:--",
+			size = {0, 120, 0, 60},
+			position = {0.5, 0, 0, 10},
+			anchorPoint = {0.5, 0},
+		}
+	}
+})
+screenGui.Parent = playerGui
+
+local timerLabel = GUI:GetById("timer-label")
 
 -- Update display
 local function updateDisplay(data)
@@ -37,11 +58,6 @@ end
 
 -- Listen for timer updates
 timerUpdate.OnClientEvent:Connect(updateDisplay)
-
--- Initialize display
-if timerLabel then
-	timerLabel.Text = "--:--"
-end
 
 System.Debug:Message("GlobalTimer.client", "HUD ready")
 

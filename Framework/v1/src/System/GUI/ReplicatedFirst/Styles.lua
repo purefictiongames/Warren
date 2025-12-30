@@ -145,6 +145,28 @@ return {
 			backgroundTransparency = 1,
 		},
 
+		-- GlobalTimer styles
+		["timer-text"] = {
+			font = "GothamBold",
+			textSize = 48,
+			textColor = {255, 255, 255},
+			backgroundTransparency = 1,
+		},
+
+		-- Scoreboard styles
+		["score-value"] = {
+			font = "GothamBold",
+			textSize = 36,
+			textColor = {255, 220, 100},
+			backgroundTransparency = 1,
+		},
+		["score-label"] = {
+			font = "Gotham",
+			textSize = 16,
+			textColor = {200, 200, 200},
+			backgroundTransparency = 1,
+		},
+
 		-- Z-index layering (zIndex maps to DisplayOrder for ScreenGui, ZIndex for elements)
 		["overlay"] = {
 			zIndex = 100,

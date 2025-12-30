@@ -20,35 +20,44 @@ local roundComplete = ReplicatedStorage:WaitForChild("Scoreboard.RoundComplete")
 local timerExpired = ReplicatedStorage:WaitForChild("GlobalTimer.TimerExpired")
 local dispenserEmpty = ReplicatedStorage:WaitForChild("Dispenser.Empty")
 
+-- Note: GUI module is client-only, so we create SurfaceGui directly here
+-- SurfaceGui is server-side (on world Part), not client ScreenGui
+
 local DATASTORE_NAME = "LeaderBoard_v1"
 local DATASTORE_KEY = "TopScores"
 
--- Find Billboard part with SurfaceGui
+-- Find Billboard part
 local billboard = model:FindFirstChild("Billboard")
 if not billboard then
 	System.Debug:Warn("LeaderBoard", "No Billboard part found")
 	return
 end
 
+-- Create SurfaceGui in code (replacing Studio-built version)
 local surfaceGui = billboard:FindFirstChild("SurfaceGui")
-if not surfaceGui then
-	System.Debug:Warn("LeaderBoard", "No SurfaceGui found on Billboard")
-	return
+if surfaceGui then
+	surfaceGui:Destroy() -- Remove Studio-built version if present
 end
 
-local textLabel = surfaceGui:FindFirstChild("TextLabel", true)
-if not textLabel then
-	System.Debug:Warn("LeaderBoard", "No TextLabel found in SurfaceGui")
-	return
-end
+surfaceGui = Instance.new("SurfaceGui")
+surfaceGui.Name = "SurfaceGui"
+surfaceGui.Face = Enum.NormalId.Front
+surfaceGui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+surfaceGui.PixelsPerStud = 50
+surfaceGui.Parent = billboard
 
--- Size TextLabel to fill the SurfaceGui
+local textLabel = Instance.new("TextLabel")
+textLabel.Name = "TextLabel"
 textLabel.Size = UDim2.new(1, 0, 1, 0)
 textLabel.Position = UDim2.new(0, 0, 0, 0)
+textLabel.BackgroundTransparency = 1
+textLabel.Font = Enum.Font.Code
+textLabel.TextColor3 = Color3.fromRGB(255, 220, 100)
 textLabel.TextXAlignment = Enum.TextXAlignment.Left
 textLabel.TextYAlignment = Enum.TextYAlignment.Top
 textLabel.TextScaled = true
-textLabel.BackgroundTransparency = 1
+textLabel.Text = ""
+textLabel.Parent = surfaceGui
 
 -- Score tracking
 local scores = {}

@@ -133,6 +133,18 @@ return {
 			backgroundTransparency = 1,
 		},
 
+		-- Dispenser styles
+		["dispenser-frame"] = {
+			backgroundColor = {255, 255, 255},
+			backgroundTransparency = 0.8,
+		},
+		["dispenser-text"] = {
+			font = "GothamBold",
+			textSize = 28,
+			textColor = {255, 170, 0},
+			backgroundTransparency = 1,
+		},
+
 		-- Z-index layering (zIndex maps to DisplayOrder for ScreenGui, ZIndex for elements)
 		["overlay"] = {
 			zIndex = 100,

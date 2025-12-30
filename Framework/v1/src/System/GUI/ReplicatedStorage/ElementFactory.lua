@@ -6,6 +6,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ValueConverter = require(ReplicatedStorage:WaitForChild("GUI.ValueConverter"))
 local StyleResolver = require(ReplicatedStorage:WaitForChild("GUI.StyleResolver"))
+local StateManager = require(ReplicatedStorage:WaitForChild("GUI.StateManager"))
 
 local ElementFactory = {}
 
@@ -391,6 +392,9 @@ function ElementFactory.createWithStyles(definition, styles, guiRef)
 	if definition.id then
 		element:SetAttribute("guiId", definition.id)
 	end
+
+	-- Wire pseudo-class event handlers (:hover, :active, :disabled)
+	StateManager.wire(element, definition, styles)
 
 	-- Create children recursively (with styles)
 	if definition.children then

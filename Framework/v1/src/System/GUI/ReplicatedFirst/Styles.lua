@@ -102,6 +102,24 @@ return {
 			textColor = {255, 100, 100},  -- Red for phone
 		},
 
+		-- Button with pseudo-classes (Phase 7)
+		["btn"] = {
+			backgroundColor = {80, 80, 100},
+			textColor = {255, 255, 255},
+			textSize = 16,
+			backgroundTransparency = 0,
+		},
+		["btn:hover"] = {
+			backgroundColor = {100, 100, 140},
+		},
+		["btn:active"] = {
+			backgroundColor = {60, 60, 80},
+		},
+		["btn:disabled"] = {
+			backgroundColor = {50, 50, 50},
+			textColor = {120, 120, 120},
+		},
+
 		-- Z-index layering (zIndex maps to DisplayOrder for ScreenGui, ZIndex for elements)
 		["overlay"] = {
 			zIndex = 100,

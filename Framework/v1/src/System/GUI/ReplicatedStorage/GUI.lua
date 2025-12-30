@@ -7,6 +7,7 @@ local ReplicatedFirst = game:GetService("ReplicatedFirst")
 
 -- After deployment, modules are prefixed: GUI.GUI, GUI.ElementFactory, GUI.ValueConverter
 local ElementFactory = require(ReplicatedStorage:WaitForChild("GUI.ElementFactory"))
+local LayoutBuilder = require(ReplicatedStorage:WaitForChild("GUI.LayoutBuilder"))
 
 local GUI = {
 	-- Internal state
@@ -106,6 +107,72 @@ function GUI:CreateMany(definitions)
 		elements[i] = self:Create(definition)
 	end
 	return elements
+end
+
+--------------------------------------------------------------------------------
+-- LAYOUT CREATION
+--------------------------------------------------------------------------------
+
+-- Create a layout from a named layout definition
+-- @param layoutName: Name of layout in Layouts.lua (e.g., "hud")
+-- @param content: Table mapping region IDs to content definitions
+-- @return: ScreenGui instance
+function GUI:CreateLayout(layoutName, content)
+	self:_loadStyles()
+	self:_loadLayouts()
+
+	-- Get layout definition
+	local layoutDef = self._layouts[layoutName]
+	if not layoutDef then
+		warn("GUI: Layout not found:", layoutName)
+		return nil
+	end
+
+	-- Build the layout structure
+	local screenGui, regions = LayoutBuilder.build(layoutDef, layoutName)
+
+	-- Assign content to regions
+	if content then
+		for regionId, contentDef in pairs(content) do
+			local region = regions[regionId]
+			if region then
+				LayoutBuilder.assignContent(region, contentDef, self, self._styles)
+			else
+				warn("GUI: Region not found in layout:", regionId)
+			end
+		end
+	end
+
+	-- Store regions for later access
+	screenGui:SetAttribute("layoutName", layoutName)
+
+	return screenGui, regions
+end
+
+-- Create a layout from an inline definition (not from Layouts.lua)
+-- @param layoutDef: Layout definition table with rows/columns
+-- @param content: Table mapping region IDs to content definitions
+-- @param name: Optional name for the ScreenGui
+-- @return: ScreenGui instance
+function GUI:CreateLayoutFromDef(layoutDef, content, name)
+	self:_loadStyles()
+
+	-- Build the layout structure
+	local screenGui, regions = LayoutBuilder.build(layoutDef, name or "CustomLayout")
+
+	-- Assign content to regions
+	if content then
+		for regionId, contentDef in pairs(content) do
+			local region = regions[regionId]
+			if region then
+				LayoutBuilder.assignContent(region, contentDef, self, self._styles)
+			else
+				warn("GUI: Region not found in layout:", regionId)
+			end
+		end
+	end
+
+	return screenGui, regions
 end
 
 --------------------------------------------------------------------------------

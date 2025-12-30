@@ -6,11 +6,21 @@
 -- Pixel values: 100 → 100 offset
 
 return {
-	-- Breakpoint thresholds (viewport width in pixels)
+	-- Breakpoint thresholds
+	-- Simple format: breakpoint = minWidth (pixels)
+	-- Table format: breakpoint = { minWidth, maxWidth, minAspect, maxAspect }
+	--   minAspect/maxAspect = width/height ratio (e.g., 1.5 = landscape, 0.7 = portrait)
+	--
+	-- Examples:
+	--   desktop = 1200                    -- width >= 1200px
+	--   tablet = { minWidth = 768 }       -- width >= 768px
+	--   landscape = { minAspect = 1.3 }   -- width/height >= 1.3
+	--   portrait = { maxAspect = 0.8 }    -- width/height <= 0.8
+	--
 	breakpoints = {
-		desktop = 1200,  -- >= 1200px
-		tablet = 768,    -- >= 768px
-		phone = 0,       -- < 768px (fallback)
+		desktop = 1200,  -- >= 1200px width
+		tablet = 768,    -- >= 768px width
+		phone = 0,       -- < 768px width (fallback)
 	},
 
 	-- Example HUD layout

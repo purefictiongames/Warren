@@ -66,8 +66,9 @@ end
 -- Resolve all styles for a definition
 -- @param definition: The element definition table
 -- @param styles: The stylesheet { base = {}, classes = {}, ids = {} }
+-- @param breakpoint: Optional current breakpoint name (e.g., "tablet", "phone")
 -- @return: Merged properties table
-function StyleResolver.resolve(definition, styles)
+function StyleResolver.resolve(definition, styles, breakpoint)
 	local resolved = {}
 
 	-- Safety check
@@ -77,24 +78,52 @@ function StyleResolver.resolve(definition, styles)
 
 	-- 1. Apply base styles (by element type)
 	local elementType = definition.type
-	if elementType and styles.base and styles.base[elementType] then
-		merge(resolved, styles.base[elementType])
+	if elementType and styles.base then
+		-- Base style
+		if styles.base[elementType] then
+			merge(resolved, styles.base[elementType])
+		end
+		-- Responsive base style (e.g., TextLabel@tablet)
+		if breakpoint then
+			local responsiveKey = elementType .. "@" .. breakpoint
+			if styles.base[responsiveKey] then
+				merge(resolved, styles.base[responsiveKey])
+			end
+		end
 	end
 
 	-- 2. Apply class styles (in order from class attribute)
 	if definition.class then
 		local classList = parseClasses(definition.class)
 		for _, className in ipairs(classList) do
-			if styles.classes and styles.classes[className] then
-				merge(resolved, styles.classes[className])
+			if styles.classes then
+				-- Base class style
+				if styles.classes[className] then
+					merge(resolved, styles.classes[className])
+				end
+				-- Responsive class style (e.g., hud-text@tablet)
+				if breakpoint then
+					local responsiveKey = className .. "@" .. breakpoint
+					if styles.classes[responsiveKey] then
+						merge(resolved, styles.classes[responsiveKey])
+					end
+				end
 			end
 		end
 	end
 
 	-- 3. Apply ID styles
-	if definition.id then
-		if styles.ids and styles.ids[definition.id] then
+	if definition.id and styles.ids then
+		-- Base ID style
+		if styles.ids[definition.id] then
 			merge(resolved, styles.ids[definition.id])
+		end
+		-- Responsive ID style (e.g., score@tablet)
+		if breakpoint then
+			local responsiveKey = definition.id .. "@" .. breakpoint
+			if styles.ids[responsiveKey] then
+				merge(resolved, styles.ids[responsiveKey])
+			end
 		end
 	end
 

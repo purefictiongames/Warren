@@ -15,7 +15,8 @@ local GUI = {
 	_layouts = nil,
 	_elements = {},           -- Track elements by ID
 	_initialized = false,
-	_currentBreakpoint = nil, -- For Phase 5: responsive
+	_currentBreakpoint = nil, -- Current breakpoint name (desktop/tablet/phone)
+	_breakpointCallbacks = {}, -- Callbacks for breakpoint changes
 }
 
 --------------------------------------------------------------------------------
@@ -81,6 +82,99 @@ function GUI:_loadLayouts()
 	end
 
 	return self._layouts
+end
+
+--------------------------------------------------------------------------------
+-- RESPONSIVE BREAKPOINTS
+--------------------------------------------------------------------------------
+
+-- Get breakpoint name for a given viewport size
+function GUI:_getBreakpointForSize(width, height)
+	local layouts = self:_loadLayouts()
+	local breakpoints = layouts.breakpoints or { desktop = 1200, tablet = 768, phone = 0 }
+	local aspectRatio = width / height
+
+	-- Sort breakpoints by threshold descending (for width-based)
+	local sorted = {}
+	for name, config in pairs(breakpoints) do
+		-- Support both simple format (desktop = 1200) and table format (desktop = { minWidth = 1200 })
+		local threshold = type(config) == "number" and config or (config.minWidth or 0)
+		table.insert(sorted, {
+			name = name,
+			threshold = threshold,
+			config = type(config) == "table" and config or { minWidth = config }
+		})
+	end
+	table.sort(sorted, function(a, b) return a.threshold > b.threshold end)
+
+	-- Find matching breakpoint (must satisfy all conditions)
+	for _, bp in ipairs(sorted) do
+		local config = bp.config
+		local matches = true
+
+		-- Check minWidth
+		if config.minWidth and width < config.minWidth then
+			matches = false
+		end
+
+		-- Check maxWidth
+		if config.maxWidth and width > config.maxWidth then
+			matches = false
+		end
+
+		-- Check minAspect (width/height ratio)
+		if config.minAspect and aspectRatio < config.minAspect then
+			matches = false
+		end
+
+		-- Check maxAspect
+		if config.maxAspect and aspectRatio > config.maxAspect then
+			matches = false
+		end
+
+		if matches then
+			return bp.name
+		end
+	end
+
+	return "phone"  -- Default fallback
+end
+
+-- Get current breakpoint name
+function GUI:GetBreakpoint()
+	return self._currentBreakpoint or "desktop"
+end
+
+-- Update breakpoint based on viewport size
+-- Returns true if breakpoint changed
+function GUI:_updateBreakpoint(width, height)
+	local newBreakpoint = self:_getBreakpointForSize(width, height or width)
+
+	if newBreakpoint ~= self._currentBreakpoint then
+		local oldBreakpoint = self._currentBreakpoint
+		self._currentBreakpoint = newBreakpoint
+
+		-- Fire callbacks
+		for _, callback in ipairs(self._breakpointCallbacks) do
+			task.spawn(callback, newBreakpoint, oldBreakpoint)
+		end
+
+		return true
+	end
+
+	return false
+end
+
+-- Register a callback for breakpoint changes
+-- @param callback: function(newBreakpoint, oldBreakpoint)
+function GUI:OnBreakpointChanged(callback)
+	table.insert(self._breakpointCallbacks, callback)
+end
+
+-- Get breakpoint-aware style key
+-- e.g., "hud-text" at tablet breakpoint checks for "hud-text@tablet" first
+function GUI:_getResponsiveStyleKey(baseKey, breakpoint)
+	return baseKey .. "@" .. breakpoint
 end
 
 --------------------------------------------------------------------------------

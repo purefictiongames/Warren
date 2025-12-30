@@ -87,6 +87,20 @@ return {
 		["semi-transparent"] = {
 			backgroundTransparency = 0.5,
 		},
+
+		-- Responsive text styles
+		["responsive-text"] = {
+			textSize = 24,
+			textColor = {100, 200, 255},  -- Blue for desktop
+		},
+		["responsive-text@tablet"] = {
+			textSize = 20,
+			textColor = {255, 200, 100},  -- Orange for tablet
+		},
+		["responsive-text@phone"] = {
+			textSize = 16,
+			textColor = {255, 100, 100},  -- Red for phone
+		},
 	},
 
 	-- ID styles (applied by id="..." attribute)

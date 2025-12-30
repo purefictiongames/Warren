@@ -341,8 +341,14 @@ function ElementFactory.createWithStyles(definition, styles, guiRef)
 	-- Create the instance
 	local element = Instance.new(className)
 
-	-- Resolve styles using cascade order
-	local resolvedProps = StyleResolver.resolve(definition, styles)
+	-- Get current breakpoint from GUI ref (if available)
+	local breakpoint = nil
+	if guiRef and guiRef.GetBreakpoint then
+		breakpoint = guiRef:GetBreakpoint()
+	end
+
+	-- Resolve styles using cascade order (with responsive breakpoint)
+	local resolvedProps = StyleResolver.resolve(definition, styles, breakpoint)
 
 	-- Apply resolved properties to element
 	applyProperties(element, resolvedProps)

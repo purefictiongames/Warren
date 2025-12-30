@@ -101,6 +101,17 @@ return {
 			textSize = 16,
 			textColor = {255, 100, 100},  -- Red for phone
 		},
+
+		-- Z-index layering (zIndex maps to DisplayOrder for ScreenGui, ZIndex for elements)
+		["overlay"] = {
+			zIndex = 100,
+		},
+		["modal"] = {
+			zIndex = 200,
+		},
+		["tooltip"] = {
+			zIndex = 300,
+		},
 	},
 
 	-- ID styles (applied by id="..." attribute)

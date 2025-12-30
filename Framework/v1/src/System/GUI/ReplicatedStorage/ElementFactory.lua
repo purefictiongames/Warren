@@ -64,6 +64,8 @@ local RESERVED_KEYS = {
 	stroke = true,
 	gradient = true,
 	aspectRatio = true,
+	-- Z-index (handled specially - maps to different properties)
+	zIndex = true,
 }
 
 -- Apply a single property to an element
@@ -281,6 +283,24 @@ local function applyModifiers(element, properties)
 	end
 end
 
+-- Apply zIndex to the appropriate property based on element type
+-- ScreenGui uses DisplayOrder, GuiObjects use ZIndex
+local function applyZIndex(element, properties, elementType)
+	if properties.zIndex == nil then
+		return
+	end
+
+	local zValue = properties.zIndex
+
+	-- ScreenGui, BillboardGui, SurfaceGui use DisplayOrder
+	if elementType == "ScreenGui" or elementType == "BillboardGui" or elementType == "SurfaceGui" then
+		element.DisplayOrder = zValue
+	else
+		-- All other GuiObjects use ZIndex
+		element.ZIndex = zValue
+	end
+end
+
 -- Create a single element from a definition
 function ElementFactory.create(definition, styles, guiRef)
 	-- Get the element type
@@ -355,6 +375,9 @@ function ElementFactory.createWithStyles(definition, styles, guiRef)
 
 	-- Apply UI modifiers (UICorner, UIListLayout, etc.)
 	applyModifiers(element, resolvedProps)
+
+	-- Apply z-index (maps to DisplayOrder for ScreenGui, ZIndex for others)
+	applyZIndex(element, resolvedProps, elementType)
 
 	-- Store ID for lookup (if GUI reference provided)
 	if definition.id and guiRef then

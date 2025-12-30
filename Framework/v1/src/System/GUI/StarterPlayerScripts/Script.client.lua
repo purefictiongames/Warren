@@ -51,7 +51,7 @@ end)
 System.Debug:Message("System.GUI.client", "Script loaded")
 
 --------------------------------------------------------------------------------
--- PHASE 5 TEST: Responsive Breakpoints (remove after verification)
+-- PHASE 5-6 TEST: Responsive Breakpoints + Z-Index (remove after verification)
 --------------------------------------------------------------------------------
 
 local Players = game:GetService("Players")
@@ -70,9 +70,9 @@ local function createResponsiveTest()
 	-- Create new GUI with current breakpoint styles
 	currentTestGui = GUI:Create({
 		type = "ScreenGui",
-		name = "GUI_Phase5_Test",
+		name = "GUI_Phase6_Test",
 		resetOnSpawn = false,
-		displayOrder = 50,
+		zIndex = 50,  -- Phase 6: maps to DisplayOrder for ScreenGui
 		children = {
 			{
 				type = "Frame",

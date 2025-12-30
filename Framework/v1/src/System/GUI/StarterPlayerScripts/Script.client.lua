@@ -51,7 +51,7 @@ end)
 System.Debug:Message("System.GUI.client", "Script loaded")
 
 --------------------------------------------------------------------------------
--- PHASE 5-8 TEST: Responsive + Z-Index + Pseudo-classes + Actions (remove after verification)
+-- PHASE 5-9 TEST: All GUI Features (remove after verification)
 --------------------------------------------------------------------------------
 
 local Players = game:GetService("Players")
@@ -70,13 +70,13 @@ local function createResponsiveTest()
 	-- Create new GUI with current breakpoint styles
 	currentTestGui = GUI:Create({
 		type = "ScreenGui",
-		name = "GUI_Phase8_Test",
+		name = "GUI_Phase9_Test",
 		resetOnSpawn = false,
 		zIndex = 50,  -- Phase 6: maps to DisplayOrder for ScreenGui
 		children = {
 			{
 				type = "Frame",
-				size = {0.4, 0, 0, 260},
+				size = {0.4, 0, 0, 300},
 				position = {0.5, 0, 0.05, 0},
 				anchorPoint = {0.5, 0},
 				backgroundColor = {40, 40, 50},
@@ -126,7 +126,7 @@ local function createResponsiveTest()
 							},
 							{
 								type = "TextButton",
-								text = "Toggle Panel (Phase 8)",
+								text = "Toggle Visibility (Phase 8)",
 								class = "btn",
 								size = {1, 0, 0, 30},
 								cornerRadius = 6,
@@ -138,16 +138,29 @@ local function createResponsiveTest()
 								}
 							},
 							{
+								type = "TextButton",
+								text = "Toggle Highlight (Phase 9)",
+								class = "btn",
+								size = {1, 0, 0, 30},
+								cornerRadius = 6,
+								layoutOrder = 6,
+								actions = {
+									onClick = {
+										{ action = "toggleClass", target = "#toggle-panel", class = "highlight" }
+									}
+								}
+							},
+							{
 								type = "Frame",
 								id = "toggle-panel",
 								size = {1, 0, 0, 40},
 								backgroundColor = {60, 100, 60},
 								cornerRadius = 6,
-								layoutOrder = 6,
+								layoutOrder = 7,
 								children = {
 									{
 										type = "TextLabel",
-										text = "I can be toggled!",
+										text = "Toggle my highlight!",
 										textColor = {255, 255, 255},
 										textSize = 14,
 										size = {1, 0, 1, 0},
@@ -173,4 +186,4 @@ GUI:OnBreakpointChanged(function(newBreakpoint, oldBreakpoint)
 	createResponsiveTest()
 end)
 
-System.Debug:Message("System.GUI.client", "Phase 8 test created (all features)")
+System.Debug:Message("System.GUI.client", "Phase 9 test created (all features)")

@@ -8,6 +8,8 @@ local ReplicatedFirst = game:GetService("ReplicatedFirst")
 -- After deployment, modules are prefixed: GUI.GUI, GUI.ElementFactory, GUI.ValueConverter
 local ElementFactory = require(ReplicatedStorage:WaitForChild("GUI.ElementFactory"))
 local LayoutBuilder = require(ReplicatedStorage:WaitForChild("GUI.LayoutBuilder"))
+local StyleResolver = require(ReplicatedStorage:WaitForChild("GUI.StyleResolver"))
+local ValueConverter = require(ReplicatedStorage:WaitForChild("GUI.ValueConverter"))
 
 local GUI = {
 	-- Internal state
@@ -342,18 +344,73 @@ function GUI:GetLayouts()
 end
 
 --------------------------------------------------------------------------------
--- PHASE 2+ STUBS (implemented in later phases)
+-- DYNAMIC RUNTIME UPDATES (Phase 9)
 --------------------------------------------------------------------------------
 
--- Apply/update class on an element (Phase 9)
-function GUI:SetClass(element, newClass)
-	-- Stub for Phase 9: Dynamic runtime updates
-	element:SetAttribute("guiClass", newClass)
+-- Property name mapping for dynamic style application
+local PROPERTY_MAP = {
+	backgroundColor = "BackgroundColor3",
+	backgroundTransparency = "BackgroundTransparency",
+	textColor = "TextColor3",
+	textSize = "TextSize",
+	borderColor = "BorderColor3",
+	borderSizePixel = "BorderSizePixel",
+	size = "Size",
+	position = "Position",
+	anchorPoint = "AnchorPoint",
+	visible = "Visible",
+	font = "Font",
+	text = "Text",
+	image = "Image",
+	imageColor = "ImageColor3",
+	imageTransparency = "ImageTransparency",
+}
+
+-- Apply a resolved style property to an element
+local function applyStyleProperty(element, key, value)
+	local propertyName = PROPERTY_MAP[key] or ValueConverter.getPropertyName(key)
+	local convertedValue = ValueConverter.convert(propertyName, value)
+
+	pcall(function()
+		element[propertyName] = convertedValue
+	end)
 end
 
--- Add a class to an element (Phase 9)
+-- Recompute and apply styles based on current class/id
+-- @param element: The GuiObject
+-- @param newClass: Optional new class string (uses current if nil)
+function GUI:_reapplyStyles(element, newClass)
+	if not self._styles then
+		return
+	end
+
+	-- Get element type from ClassName
+	local elementType = element.ClassName
+
+	-- Build a minimal definition for style resolution
+	local definition = {
+		type = elementType,
+		class = newClass or element:GetAttribute("guiClass"),
+		id = element:GetAttribute("guiId"),
+	}
+
+	-- Resolve styles with current breakpoint
+	local resolved = StyleResolver.resolve(definition, self._styles, self._currentBreakpoint)
+
+	-- Apply resolved properties to element
+	for key, value in pairs(resolved) do
+		applyStyleProperty(element, key, value)
+	end
+end
+
+-- Apply/update class on an element (replaces all classes)
+function GUI:SetClass(element, newClass)
+	element:SetAttribute("guiClass", newClass)
+	self:_reapplyStyles(element, newClass)
+end
+
+-- Add a class to an element
 function GUI:AddClass(element, className)
-	-- Stub for Phase 9: Dynamic runtime updates
 	local currentClass = element:GetAttribute("guiClass") or ""
 	local classes = {}
 	for class in currentClass:gmatch("%S+") do
@@ -365,12 +422,13 @@ function GUI:AddClass(element, className)
 	for class in pairs(classes) do
 		table.insert(classList, class)
 	end
-	element:SetAttribute("guiClass", table.concat(classList, " "))
+	local newClass = table.concat(classList, " ")
+	element:SetAttribute("guiClass", newClass)
+	self:_reapplyStyles(element, newClass)
 end
 
--- Remove a class from an element (Phase 9)
+-- Remove a class from an element
 function GUI:RemoveClass(element, className)
-	-- Stub for Phase 9: Dynamic runtime updates
 	local currentClass = element:GetAttribute("guiClass") or ""
 	local newClasses = {}
 	for class in currentClass:gmatch("%S+") do
@@ -378,7 +436,9 @@ function GUI:RemoveClass(element, className)
 			table.insert(newClasses, class)
 		end
 	end
-	element:SetAttribute("guiClass", table.concat(newClasses, " "))
+	local newClass = table.concat(newClasses, " ")
+	element:SetAttribute("guiClass", newClass)
+	self:_reapplyStyles(element, newClass)
 end
 
 -- Check if element has a class (utility)
@@ -392,12 +452,21 @@ function GUI:HasClass(element, className)
 	return false
 end
 
--- Toggle a class on an element (Phase 9)
+-- Toggle a class on an element
 function GUI:ToggleClass(element, className)
 	if self:HasClass(element, className) then
 		self:RemoveClass(element, className)
 	else
 		self:AddClass(element, className)
+	end
+end
+
+-- Refresh all tracked elements (useful after breakpoint change if needed)
+function GUI:RefreshStyles()
+	for id, element in pairs(self._elements) do
+		if element and element.Parent then
+			self:_reapplyStyles(element)
+		end
 	end
 end
 

@@ -120,6 +120,11 @@ return {
 			textColor = {120, 120, 120},
 		},
 
+		-- Dynamic class for Phase 9 testing
+		["highlight"] = {
+			backgroundColor = {100, 150, 100},
+		},
+
 		-- Z-index layering (zIndex maps to DisplayOrder for ScreenGui, ZIndex for elements)
 		["overlay"] = {
 			zIndex = 100,

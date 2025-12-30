@@ -92,10 +92,9 @@ return {
 	-- ID styles (applied by id="..." attribute)
 	-- Higher specificity than classes
 	ids = {
-		-- Example ID styles (customize per project)
-		-- ["score-display"] = {
-		--     textSize = 48,
-		--     textColor = {255, 215, 0},
-		-- },
+		-- Test ID for cascade verification
+		["cascade-test"] = {
+			textColor = {0, 255, 0},  -- Green overrides class gold
+		},
 	},
 }

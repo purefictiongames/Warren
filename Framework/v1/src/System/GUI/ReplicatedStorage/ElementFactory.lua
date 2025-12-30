@@ -5,6 +5,7 @@
 -- After deployment, modules are prefixed: GUI.GUI, GUI.ElementFactory, GUI.ValueConverter
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ValueConverter = require(ReplicatedStorage:WaitForChild("GUI.ValueConverter"))
+local StyleResolver = require(ReplicatedStorage:WaitForChild("GUI.StyleResolver"))
 
 local ElementFactory = {}
 
@@ -133,11 +134,52 @@ function ElementFactory.create(definition, styles, guiRef)
 	return element
 end
 
--- Create element with styles applied (for Phase 2+)
+-- Create element with styles applied
+-- Resolves styles in cascade order: base → class → id → inline
 function ElementFactory.createWithStyles(definition, styles, guiRef)
-	-- For Phase 1, just create without style resolution
-	-- Phase 2 will add StyleResolver integration here
-	return ElementFactory.create(definition, styles, guiRef)
+	-- Get the element type
+	local elementType = definition.type
+	if not elementType then
+		warn("ElementFactory: definition missing 'type' field")
+		return nil
+	end
+
+	-- Get the Roblox class name
+	local className = TYPE_MAP[elementType] or elementType
+
+	-- Create the instance
+	local element = Instance.new(className)
+
+	-- Resolve styles using cascade order
+	local resolvedProps = StyleResolver.resolve(definition, styles)
+
+	-- Apply resolved properties to element
+	applyProperties(element, resolvedProps)
+
+	-- Store ID for lookup (if GUI reference provided)
+	if definition.id and guiRef then
+		guiRef._elements[definition.id] = element
+	end
+
+	-- Store class/id attributes on the element for future style updates
+	if definition.class then
+		element:SetAttribute("guiClass", definition.class)
+	end
+	if definition.id then
+		element:SetAttribute("guiId", definition.id)
+	end
+
+	-- Create children recursively (with styles)
+	if definition.children then
+		for _, childDef in ipairs(definition.children) do
+			local child = ElementFactory.createWithStyles(childDef, styles, guiRef)
+			if child then
+				child.Parent = element
+			end
+		end
+	end
+
+	return element
 end
 
 return ElementFactory

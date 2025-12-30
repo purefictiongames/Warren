@@ -18,30 +18,34 @@ System:WaitForStage(System.Stages.READY)
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 local messageTicker = ReplicatedStorage:WaitForChild("MessageTicker.MessageTicker")
+local GUI = require(ReplicatedStorage:WaitForChild("GUI.GUI"))
 
 local FADE_DELAY = 3 -- seconds before fade starts
 local FADE_DURATION = 1 -- seconds for fade animation
 
--- Create ScreenGui
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "MessageTicker.ScreenGui"
-screenGui.ResetOnSpawn = false
-screenGui.DisplayOrder = 10
+-- Create GUI using declarative system
+local screenGui = GUI:Create({
+	type = "ScreenGui",
+	name = "MessageTicker.ScreenGui",
+	resetOnSpawn = false,
+	zIndex = 10,
+	children = {
+		{
+			type = "TextLabel",
+			id = "ticker-message",
+			class = "ticker-text",
+			text = "",
+			size = {1, 0, 0, 50},
+			position = {0, 0, 1, -120},
+			anchorPoint = {0, 1},
+			textTransparency = 1, -- Start invisible
+		}
+	}
+})
 screenGui.Parent = playerGui
 
--- Create message label
-local messageLabel = Instance.new("TextLabel")
-messageLabel.Name = "MessageLabel"
-messageLabel.Size = UDim2.new(1, 0, 0, 50)
-messageLabel.Position = UDim2.new(0, 0, 1, -120) -- Above backpack/toolbar
-messageLabel.AnchorPoint = Vector2.new(0, 1)
-messageLabel.BackgroundTransparency = 1
-messageLabel.Font = Enum.Font.Bangers
-messageLabel.TextSize = 36
-messageLabel.TextColor3 = Color3.fromRGB(255, 170, 0)
-messageLabel.Text = ""
-messageLabel.TextTransparency = 1 -- Start invisible
-messageLabel.Parent = screenGui
+-- Get reference to message label
+local messageLabel = GUI:GetById("ticker-message")
 
 -- Track current fade tween
 local currentTween = nil

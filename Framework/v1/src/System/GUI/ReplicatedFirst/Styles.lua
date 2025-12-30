@@ -125,6 +125,14 @@ return {
 			backgroundColor = {100, 150, 100},
 		},
 
+		-- MessageTicker styles
+		["ticker-text"] = {
+			font = "Bangers",
+			textSize = 36,
+			textColor = {255, 170, 0},
+			backgroundTransparency = 1,
+		},
+
 		-- Z-index layering (zIndex maps to DisplayOrder for ScreenGui, ZIndex for elements)
 		["overlay"] = {
 			zIndex = 100,

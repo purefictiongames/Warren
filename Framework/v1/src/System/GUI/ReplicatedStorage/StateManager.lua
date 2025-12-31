@@ -1,3 +1,13 @@
+--[[
+    Copyright (c) 2025 Adam Stearns / Pure Fiction Records LLC
+
+    This software, its architecture, and associated documentation are proprietary
+    and confidential. All rights reserved.
+
+    Unauthorized copying, modification, distribution, or use of this software,
+    in whole or in part, is strictly prohibited without prior written permission.
+--]]
+
 -- StateManager.ModuleScript
 -- Handles pseudo-class states (:hover, :active, :disabled)
 -- Wires up event handlers and applies/reverts style changes

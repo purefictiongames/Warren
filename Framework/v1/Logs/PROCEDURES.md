@@ -1,3 +1,13 @@
+> **Copyright (c) 2025 Adam Stearns / Pure Fiction Records LLC**
+>
+> This software, its architecture, and associated documentation are proprietary
+> and confidential. All rights reserved.
+>
+> Unauthorized copying, modification, distribution, or use of this software,
+> in whole or in part, is strictly prohibited without prior written permission.
+
+---
+
 # LibPureFiction Framework - Procedures Manual
 
 **Purpose:** Operational guide for Claude instances working on this project
@@ -94,6 +104,49 @@ Prefer declarative configuration (Attributes, Layouts.lua, Styles.lua) over impe
 - WaitForStage makes timing explicit
 - Event names include source prefix
 - No magic or hidden behavior
+
+## 1.5 REQUIRED: Copyright Boilerplate
+
+**Every source file and document MUST include the copyright boilerplate.**
+
+This is a legal requirement, not optional. All new files must have the boilerplate added before commit.
+
+### For Lua Scripts
+
+Add at the very top of every `.lua` file:
+
+```lua
+--[[
+    Copyright (c) 2025 Adam Stearns / Pure Fiction Records LLC
+
+    This software, its architecture, and associated documentation are proprietary
+    and confidential. All rights reserved.
+
+    Unauthorized copying, modification, distribution, or use of this software,
+    in whole or in part, is strictly prohibited without prior written permission.
+--]]
+```
+
+### For Markdown Documents
+
+Add at the very top of every `.md` file:
+
+```markdown
+> **Copyright (c) 2025 Adam Stearns / Pure Fiction Records LLC**
+>
+> This software, its architecture, and associated documentation are proprietary
+> and confidential. All rights reserved.
+>
+> Unauthorized copying, modification, distribution, or use of this software,
+> in whole or in part, is strictly prohibited without prior written permission.
+
+---
+```
+
+### Reference Documents
+
+See `Logs/Copyright Boilerplate.md` for the canonical boilerplate text.
+See `Logs/LibPureFiction — Intellectual Property Statement.md` for full IP policy.
 
 ---
 
@@ -900,6 +953,7 @@ The moment you bypass a system "just this once," you've created inconsistency th
 
 - [ ] Create folder structure
 - [ ] Create init.meta.json with className: "Model"
+- [ ] **Add copyright boilerplate to all new scripts**
 - [ ] Create server script with guard and WaitForStage
 - [ ] Create client script if needed (with guard and WaitForStage)
 - [ ] **Use GUI system for all UI elements**
@@ -914,6 +968,7 @@ The moment you bypass a system "just this once," you've created inconsistency th
 
 ## Pre-Commit Checklist
 
+- [ ] **All new files have copyright boilerplate**
 - [ ] Game boots without errors
 - [ ] Core gameplay loop works
 - [ ] No `print()` or `warn()` calls (use System.Debug)

@@ -1,3 +1,13 @@
+--[[
+    Copyright (c) 2025 Adam Stearns / Pure Fiction Records LLC
+
+    This software, its architecture, and associated documentation are proprietary
+    and confidential. All rights reserved.
+
+    Unauthorized copying, modification, distribution, or use of this software,
+    in whole or in part, is strictly prohibited without prior written permission.
+--]]
+
 -- Layouts.ModuleScript (ReplicatedFirst)
 -- Layout definitions for the GUI system
 -- Defines named screen regions using a row/column grid
@@ -28,7 +38,7 @@ return {
 	["right-sidebar"] = {
 		-- Sidebar sizing/position (applied to ScreenGui container)
 		position = {0.85, 0, 0, 0},  -- Right 15% of screen
-		size = {0.15, 0, 0.4, 0},    -- 15% width, 40% height
+		size = {0.15, 0, 0.34, 0},   -- 15% width, 34% height
 
 		-- Asset-to-region mapping
 		-- Maps ScreenGui names to region IDs

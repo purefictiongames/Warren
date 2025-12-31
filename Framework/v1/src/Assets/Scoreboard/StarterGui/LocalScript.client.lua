@@ -1,3 +1,13 @@
+--[[
+    Copyright (c) 2025 Adam Stearns / Pure Fiction Records LLC
+
+    This software, its architecture, and associated documentation are proprietary
+    and confidential. All rights reserved.
+
+    Unauthorized copying, modification, distribution, or use of this software,
+    in whole or in part, is strictly prohibited without prior written permission.
+--]]
+
 -- Scoreboard.LocalScript (Client)
 -- Score display - creates its own standalone GUI
 
@@ -35,29 +45,34 @@ content.Size = UDim2.new(1, 0, 1, 0)
 content.BackgroundTransparency = 1
 content.Parent = screenGui
 
--- Score elements using GUI system for styling
-local scoreValue = GUI:Create({
-	type = "TextLabel",
-	id = "score-value",
-	class = "score-value",
-	text = "0",
-	size = {1, 0, 0.6, 0},
-	position = {0.5, 0, 0, 0},
-	anchorPoint = {0.5, 0},
+-- Container with shared HUD panel styling
+local container = GUI:Create({
+	type = "Frame",
+	id = "score-container",
+	class = "hud-panel",
+	children = {
+		{
+			type = "TextLabel",
+			id = "score-header",
+			class = "hud-header",
+			text = "SCORE:",
+			size = {1, 0, 0.35, 0},
+			position = {0, 0, 0.05, 0},
+		},
+		{
+			type = "TextLabel",
+			id = "score-value",
+			class = "hud-value",
+			text = "0",
+			size = {1, 0, 0.55, 0},
+			position = {0, 0, 0.4, 0},
+		},
+	},
 })
-scoreValue.Parent = content
+container.Parent = content
 
-local scoreLabel = GUI:Create({
-	type = "TextLabel",
-	id = "score-label",
-	class = "score-label",
-	text = "Waiting...",
-	size = {1, 0, 0.4, 0},
-	position = {0.5, 0, 1, 0},
-	anchorPoint = {0.5, 1},
-	textWrapped = true,
-})
-scoreLabel.Parent = content
+-- Get reference to score value for updates
+local scoreValue = GUI:GetById("score-value")
 
 screenGui.Parent = playerGui
 
@@ -73,14 +88,6 @@ local function updateScore(data)
 	if scoreValue then
 		local displayScore = roundToNearest5(math.floor(data.totalScore))
 		scoreValue.Text = tostring(displayScore)
-	end
-
-	if scoreLabel then
-		if data.submitted then
-			scoreLabel.Text = "Target: " .. tostring(data.targetValue) .. " | You: " .. tostring(math.floor(data.submittedValue or 0))
-		else
-			scoreLabel.Text = "Time's up! Target was: " .. tostring(data.targetValue)
-		end
 	end
 
 	System.Debug:Message("Scoreboard.client", "Score updated - Total:", data.totalScore)

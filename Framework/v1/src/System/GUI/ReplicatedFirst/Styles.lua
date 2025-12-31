@@ -1,3 +1,13 @@
+--[[
+    Copyright (c) 2025 Adam Stearns / Pure Fiction Records LLC
+
+    This software, its architecture, and associated documentation are proprietary
+    and confidential. All rights reserved.
+
+    Unauthorized copying, modification, distribution, or use of this software,
+    in whole or in part, is strictly prohibited without prior written permission.
+--]]
+
 -- Styles.ModuleScript (ReplicatedFirst)
 -- Stylesheet definitions for the GUI system
 -- Loaded earliest for fastest access
@@ -145,25 +155,24 @@ return {
 			backgroundTransparency = 1,
 		},
 
-		-- GlobalTimer styles
-		["timer-text"] = {
-			font = "GothamBold",
-			textSize = 48,
-			textColor = {255, 255, 255},
-			backgroundTransparency = 1,
+		-- Shared HUD panel styles (used by GlobalTimer, Scoreboard, etc.)
+		["hud-panel"] = {
+			size = {0.9, -10, 0.7, 0},
+			backgroundColor = {0, 0, 80},
+			backgroundTransparency = 0.8,
+			cornerRadius = 12,
+			stroke = { color = {255, 255, 255}, thickness = 1 },
 		},
-
-		-- Scoreboard styles
-		["score-value"] = {
-			font = "GothamBold",
+		["hud-header"] = {
+			font = "Bangers",
 			textSize = 36,
-			textColor = {255, 220, 100},
+			textColor = {255, 170, 0},
 			backgroundTransparency = 1,
 		},
-		["score-label"] = {
-			font = "Gotham",
-			textSize = 16,
-			textColor = {200, 200, 200},
+		["hud-value"] = {
+			font = "GothamBlack",
+			textSize = 44,
+			textColor = {255, 255, 255},
 			backgroundTransparency = 1,
 		},
 

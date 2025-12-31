@@ -1,3 +1,13 @@
+--[[
+    Copyright (c) 2025 Adam Stearns / Pure Fiction Records LLC
+
+    This software, its architecture, and associated documentation are proprietary
+    and confidential. All rights reserved.
+
+    Unauthorized copying, modification, distribution, or use of this software,
+    in whole or in part, is strictly prohibited without prior written permission.
+--]]
+
 -- GlobalTimer.LocalScript (Client)
 -- Timer display - creates its own standalone GUI
 
@@ -35,15 +45,34 @@ content.Size = UDim2.new(1, 0, 1, 0)
 content.BackgroundTransparency = 1
 content.Parent = screenGui
 
--- Timer label using GUI system for styling
-local timerLabel = GUI:Create({
-	type = "TextLabel",
-	id = "global-timer",
-	class = "timer-text",
-	text = "--:--",
-	size = {1, 0, 1, 0},
+-- Container with shared HUD panel styling
+local container = GUI:Create({
+	type = "Frame",
+	id = "timer-container",
+	class = "hud-panel",
+	children = {
+		{
+			type = "TextLabel",
+			id = "timer-header",
+			class = "hud-header",
+			text = "TIME:",
+			size = {1, 0, 0.35, 0},
+			position = {0, 0, 0.05, 0},
+		},
+		{
+			type = "TextLabel",
+			id = "global-timer",
+			class = "hud-value",
+			text = "00:00",
+			size = {1, 0, 0.55, 0},
+			position = {0, 0, 0.4, 0},
+		},
+	},
 })
-timerLabel.Parent = content
+container.Parent = content
+
+-- Get reference to timer label for updates
+local timerLabel = GUI:GetById("global-timer")
 
 screenGui.Parent = playerGui
 

@@ -23,40 +23,36 @@ return {
 		phone = 0,       -- < 768px width (fallback)
 	},
 
-	-- Example HUD layout
-	hud = {
+	-- Right sidebar layout for timer and score
+	-- Positions itself in the top-right corner
+	["right-sidebar"] = {
+		-- Sidebar sizing/position (applied to ScreenGui container)
+		position = {0.85, 0, 0, 0},  -- Right 15% of screen
+		size = {0.15, 0, 0.4, 0},    -- 15% width, 40% height
+
+		-- Asset-to-region mapping
+		-- Maps ScreenGui names to region IDs
+		-- The layout will find these ScreenGuis and move their content into regions
+		assets = {
+			["GlobalTimer.ScreenGui"] = "timer",
+			["Scoreboard.ScreenGui"] = "score",
+		},
+
 		rows = {
-			-- Top bar (10% height)
+			-- Timer zone (top half of sidebar)
 			{
-				height = "10%",
+				height = "50%",
 				columns = {
-					{ id = "top-left", width = "30%", xalign = "left", yalign = "center" },
-					{ id = "top-center", width = "40%", xalign = "center", yalign = "center" },
-					{ id = "top-right", width = "30%", xalign = "right", yalign = "center" },
+					{ id = "timer", width = "100%", xalign = "center", yalign = "center" },
 				},
 			},
-			-- Main area (80% height)
+			-- Score zone (bottom half of sidebar)
 			{
-				height = "80%",
+				height = "50%",
 				columns = {
-					{ id = "main", width = "100%" },
-				},
-			},
-			-- Bottom bar (10% height)
-			{
-				height = "10%",
-				columns = {
-					{ id = "bottom-left", width = "30%", xalign = "left", yalign = "center" },
-					{ id = "bottom-center", width = "40%", xalign = "center", yalign = "center" },
-					{ id = "bottom-right", width = "30%", xalign = "right", yalign = "center" },
+					{ id = "score", width = "100%", xalign = "center", yalign = "top" },
 				},
 			},
 		},
 	},
-
-	-- Tablet variant (optional - Phase 5)
-	-- ["hud@tablet"] = { ... },
-
-	-- Phone variant (optional - Phase 5)
-	-- ["hud@phone"] = { ... },
 }

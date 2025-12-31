@@ -1,5 +1,5 @@
 -- GlobalTimer.LocalScript (Client)
--- Listens to TimerUpdate events and updates the HUD countdown display
+-- Timer display - creates its own standalone GUI
 
 -- Guard: Only run if this is the deployed version
 if not script.Name:match("^GlobalTimer%.") then
@@ -13,36 +13,45 @@ local Players = game:GetService("Players")
 local System = require(ReplicatedStorage:WaitForChild("System.System"))
 System:WaitForStage(System.Stages.READY)
 
--- Dependencies (guaranteed to exist after READY stage)
+-- Dependencies
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
-local timerUpdate = ReplicatedStorage:WaitForChild("GlobalTimer.TimerUpdate")
 local GUI = require(ReplicatedStorage:WaitForChild("GUI.GUI"))
+local timerUpdate = ReplicatedStorage:WaitForChild("GlobalTimer.TimerUpdate")
 
--- Create timer GUI
-local screenGui = GUI:Create({
-	type = "ScreenGui",
-	name = "GlobalTimer.ScreenGui",
-	resetOnSpawn = false,
-	zIndex = 5,
-	children = {
-		{
-			type = "TextLabel",
-			id = "timer-label",
-			class = "timer-text",
-			text = "--:--",
-			size = {0, 120, 0, 60},
-			position = {0.5, 0, 0, 10},
-			anchorPoint = {0.5, 0},
-		}
-	}
+--------------------------------------------------------------------------------
+-- CREATE TIMER UI
+--------------------------------------------------------------------------------
+
+-- Create ScreenGui manually (layout system will find and reposition if active)
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "GlobalTimer.ScreenGui"
+screenGui.ResetOnSpawn = false
+
+-- Content frame that layout can move
+local content = Instance.new("Frame")
+content.Name = "Content"
+content.Size = UDim2.new(1, 0, 1, 0)
+content.BackgroundTransparency = 1
+content.Parent = screenGui
+
+-- Timer label using GUI system for styling
+local timerLabel = GUI:Create({
+	type = "TextLabel",
+	id = "global-timer",
+	class = "timer-text",
+	text = "--:--",
+	size = {1, 0, 1, 0},
 })
+timerLabel.Parent = content
+
 screenGui.Parent = playerGui
 
-local timerLabel = GUI:GetById("timer-label")
+--------------------------------------------------------------------------------
+-- TIMER LOGIC
+--------------------------------------------------------------------------------
 
--- Update display
-local function updateDisplay(data)
+local function updateTimer(data)
 	if timerLabel then
 		if data.isRunning then
 			timerLabel.Text = data.formatted
@@ -56,9 +65,6 @@ local function updateDisplay(data)
 	end
 end
 
--- Listen for timer updates
-timerUpdate.OnClientEvent:Connect(updateDisplay)
-
-System.Debug:Message("GlobalTimer.client", "HUD ready")
+timerUpdate.OnClientEvent:Connect(updateTimer)
 
 System.Debug:Message("GlobalTimer.client", "Script loaded")

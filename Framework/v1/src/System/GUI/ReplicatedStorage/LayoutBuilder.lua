@@ -117,10 +117,25 @@ function LayoutBuilder.build(layoutDef, layoutName)
 	-- Container for all layout frames
 	local container = Instance.new("Frame")
 	container.Name = "LayoutContainer"
-	container.Size = UDim2.new(1, 0, 1, 0)
-	container.Position = UDim2.new(0, 0, 0, 0)
 	container.BackgroundTransparency = 1
 	container.BorderSizePixel = 0
+
+	-- Apply custom size if specified, otherwise full screen
+	if layoutDef.size then
+		local s = layoutDef.size
+		container.Size = UDim2.new(s[1] or 1, s[2] or 0, s[3] or 1, s[4] or 0)
+	else
+		container.Size = UDim2.new(1, 0, 1, 0)
+	end
+
+	-- Apply custom position if specified
+	if layoutDef.position then
+		local p = layoutDef.position
+		container.Position = UDim2.new(p[1] or 0, p[2] or 0, p[3] or 0, p[4] or 0)
+	else
+		container.Position = UDim2.new(0, 0, 0, 0)
+	end
+
 	container.Parent = screenGui
 
 	-- Track regions by ID for content assignment

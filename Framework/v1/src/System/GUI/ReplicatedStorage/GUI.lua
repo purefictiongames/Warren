@@ -209,6 +209,9 @@ end
 -- LAYOUT CREATION
 --------------------------------------------------------------------------------
 
+-- Active layouts tracking (layoutName -> { screenGui, regions })
+GUI._activeLayouts = {}
+
 -- Create a layout from a named layout definition
 -- @param layoutName: Name of layout in Layouts.lua (e.g., "hud")
 -- @param content: Table mapping region IDs to content definitions
@@ -242,7 +245,49 @@ function GUI:CreateLayout(layoutName, content)
 	-- Store regions for later access
 	screenGui:SetAttribute("layoutName", layoutName)
 
+	-- Register as active layout
+	self._activeLayouts[layoutName] = {
+		screenGui = screenGui,
+		regions = regions,
+	}
+
 	return screenGui, regions
+end
+
+-- Get a region frame from an active layout
+-- Allows modular assets to place themselves in layout regions
+-- @param layoutName: Name of the active layout
+-- @param regionId: ID of the region within the layout
+-- @return: Frame (region container) or nil if not found
+function GUI:GetRegion(layoutName, regionId)
+	local layout = self._activeLayouts[layoutName]
+	if not layout then
+		return nil
+	end
+	return layout.regions[regionId]
+end
+
+-- Check if a layout is active
+-- @param layoutName: Name of the layout to check
+-- @return: boolean
+function GUI:HasLayout(layoutName)
+	return self._activeLayouts[layoutName] ~= nil
+end
+
+-- Place content into a layout region
+-- Handles alignment from region attributes and applies styles
+-- @param layoutName: Name of the active layout
+-- @param regionId: ID of the region within the layout
+-- @param content: Definition table or Instance to place
+-- @return: The created/placed element, or nil if region not found
+function GUI:PlaceInRegion(layoutName, regionId, content)
+	local region = self:GetRegion(layoutName, regionId)
+	if not region then
+		return nil
+	end
+
+	self:_loadStyles()
+	return LayoutBuilder.assignContent(region, content, self, self._styles)
 end
 
 -- Create a layout from an inline definition (not from Layouts.lua)

@@ -17,22 +17,11 @@
 -- Level 4: Everything with filtering (uses Filter table)
 
 return {
-	Level = 2,  -- Default: System + Subsystems
+	Level = 3,  -- Debug: Assets only (shows all asset debug messages)
 
 	-- Filter table (only used at Level 4)
-	-- Rules processed: enabled checked first, then disabled
-	-- Glob patterns: "*" matches any sequence
 	Filter = {
-		-- Enable specific sources (checked first - if match, ALLOW)
-		enabled = {
-			-- "System.*",        -- All system sources
-			-- "Dispenser",       -- Specific asset
-		},
-
-		-- Disable specific sources (checked second - if match, BLOCK)
-		disabled = {
-			-- "TimedEvaluator",  -- Too verbose
-			-- "ZoneController",  -- Hide zone messages
-		},
+		enabled = {},
+		disabled = {},
 	},
 }

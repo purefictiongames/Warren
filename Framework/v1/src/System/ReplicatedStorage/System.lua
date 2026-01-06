@@ -132,15 +132,21 @@ function System:_loadDebugConfig()
 			local debugConfig = configModule:FindFirstChild("DebugConfig")
 			if debugConfig then
 				return require(debugConfig)
+			else
+				warn("[Debug] DebugConfig not found in ReplicatedFirst.System")
 			end
+		else
+			warn("[Debug] System folder not found in ReplicatedFirst")
 		end
 		return nil
 	end)
 
 	if success and config then
 		self._debugConfig = config
+		print("[Debug] Loaded config, Level =", config.Level)
 	else
 		-- Fallback: Level 2 (System + Subsystems) with no filter
+		warn("[Debug] Using fallback config (Level 2)")
 		self._debugConfig = {
 			Level = 2,
 			Filter = { enabled = {}, disabled = {} }

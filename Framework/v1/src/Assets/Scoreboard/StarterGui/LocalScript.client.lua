@@ -44,6 +44,7 @@ local content = Instance.new("Frame")
 content.Name = "Content"
 content.Size = UDim2.new(1, 0, 1, 0)
 content.BackgroundTransparency = 1
+content.Visible = false -- Hidden by default until RunModes activates
 content.Parent = screenGui
 
 -- Container with shared HUD panel styling
@@ -86,10 +87,13 @@ local runtimeAssets = game.Workspace:WaitForChild("RuntimeAssets")
 local model = runtimeAssets:WaitForChild("Scoreboard")
 
 -- Update visibility based on HUDVisible attribute
+-- NOTE: We control the Content frame's Visible property, not ScreenGui.Enabled,
+-- because the layout system may reparent Content into HUD.ScreenGui.
+-- The Content frame follows our UI whether standalone or in a layout region.
 local function updateVisibility()
 	local visible = model:GetAttribute("HUDVisible")
 	if visible == nil then visible = false end -- Default to hidden until RunModes activates
-	screenGui.Enabled = visible
+	content.Visible = visible
 end
 
 -- Listen for attribute changes

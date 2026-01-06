@@ -61,20 +61,28 @@ local function applyModeToAssets(mode)
 		return
 	end
 
+	System.Debug:Message("Orchestrator", "Applying mode config:", mode)
+
 	for assetName, settings in pairs(config.assets) do
 		local asset = runtimeAssets:FindFirstChild(assetName)
 		if asset then
 			-- Apply active state
 			if settings.active ~= nil then
-				local func = asset:FindFirstChild(settings.active and "Enable" or "Disable")
+				local funcName = settings.active and "Enable" or "Disable"
+				local func = asset:FindFirstChild(funcName)
 				if func then
+					System.Debug:Message("Orchestrator", "Calling", assetName .. "." .. funcName)
 					func:Invoke()
+				else
+					System.Debug:Warn("Orchestrator", "Function not found:", assetName .. "." .. funcName)
 				end
 			end
+		else
+			System.Debug:Warn("Orchestrator", "Asset not found:", assetName)
 		end
 	end
 
-	System.Debug:Message("Orchestrator", "Applied mode config:", mode)
+	System.Debug:Message("Orchestrator", "Finished applying mode config:", mode)
 end
 
 -- Start the game loop (call once when first player enters active mode)

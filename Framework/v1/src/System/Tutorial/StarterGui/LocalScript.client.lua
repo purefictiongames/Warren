@@ -179,6 +179,7 @@ local taskContent = Instance.new("Frame")
 taskContent.Name = "Content"
 taskContent.Size = UDim2.new(1, 0, 1, 0)
 taskContent.BackgroundTransparency = 1
+taskContent.Visible = false -- Hidden by default until tutorial reaches active state
 taskContent.Parent = taskListGui
 
 -- Container for task items (will be rebuilt when tasks change)
@@ -246,8 +247,10 @@ local function rebuildTaskList()
 end
 
 -- Show/hide task list
+-- NOTE: We control taskContent.Visible, not taskListGui.Enabled,
+-- because the layout system may reparent Content into HUD.ScreenGui.
 local function setTaskListVisible(visible)
-	taskListGui.Enabled = visible
+	taskContent.Visible = visible
 end
 
 -- Update task list when task is completed

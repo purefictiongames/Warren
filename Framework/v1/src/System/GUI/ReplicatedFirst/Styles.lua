@@ -186,6 +186,87 @@ return {
 		["tooltip"] = {
 			zIndex = 300,
 		},
+
+		-- Tutorial Popup styles
+		["popup-overlay"] = {
+			backgroundColor = {0, 0, 0},
+			backgroundTransparency = 0.5,
+			zIndex = 200,
+		},
+		["popup-window"] = {
+			backgroundColor = {40, 40, 60},
+			backgroundTransparency = 0.1,
+			cornerRadius = 16,
+			stroke = { color = {100, 100, 150}, thickness = 2 },
+		},
+		["popup-title"] = {
+			font = "Bangers",
+			textSize = 32,
+			textColor = {255, 200, 100},
+			backgroundTransparency = 1,
+		},
+		["popup-body"] = {
+			font = "Gotham",
+			textSize = 18,
+			textColor = {220, 220, 220},
+			backgroundTransparency = 1,
+		},
+		["popup-btn"] = {
+			font = "GothamBold",
+			textSize = 18,
+			backgroundColor = {60, 60, 100},
+			textColor = {255, 255, 255},
+			cornerRadius = 8,
+			backgroundTransparency = 0,
+		},
+		["popup-btn-primary"] = {
+			backgroundColor = {80, 120, 200},
+		},
+		["popup-btn:hover"] = {
+			backgroundColor = {80, 80, 130},
+		},
+		["popup-btn-primary:hover"] = {
+			backgroundColor = {100, 140, 220},
+		},
+
+		-- Tutorial Task list styles
+		["task-panel"] = {
+			backgroundColor = {30, 30, 50},
+			backgroundTransparency = 0.3,
+			cornerRadius = 12,
+			stroke = { color = {80, 80, 120}, thickness = 1 },
+		},
+		["task-header"] = {
+			font = "Bangers",
+			textSize = 24,
+			textColor = {255, 200, 100},
+			backgroundTransparency = 1,
+		},
+		["task-item"] = {
+			font = "Gotham",
+			textSize = 16,
+			textColor = {200, 200, 200},
+			backgroundTransparency = 1,
+		},
+		["task-item-complete"] = {
+			textColor = {100, 200, 100},
+		},
+		["task-checkbox"] = {
+			font = "GothamBold",
+			textSize = 16,
+			textColor = {150, 150, 150},
+			backgroundTransparency = 1,
+		},
+		["task-checkbox-complete"] = {
+			textColor = {100, 200, 100},
+		},
+
+		-- Tutorial Highlight styles
+		["highlight-arrow"] = {
+			textColor = {255, 200, 100},
+			textSize = 48,
+			backgroundTransparency = 1,
+		},
 	},
 
 	-- ID styles (applied by id="..." attribute)

@@ -37,6 +37,7 @@ local scoreUpdate = ReplicatedStorage:WaitForChild("Scoreboard.ScoreUpdate")
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "Scoreboard.ScreenGui"
 screenGui.ResetOnSpawn = false
+screenGui.Enabled = false -- Hidden by default until RunModes activates
 
 -- Content frame that layout can move
 local content = Instance.new("Frame")
@@ -75,6 +76,27 @@ container.Parent = content
 local scoreValue = GUI:GetById("score-value")
 
 screenGui.Parent = playerGui
+
+--------------------------------------------------------------------------------
+-- VISIBILITY CONTROL
+--------------------------------------------------------------------------------
+
+-- Get model reference for HUDVisible attribute
+local runtimeAssets = game.Workspace:WaitForChild("RuntimeAssets")
+local model = runtimeAssets:WaitForChild("Scoreboard")
+
+-- Update visibility based on HUDVisible attribute
+local function updateVisibility()
+	local visible = model:GetAttribute("HUDVisible")
+	if visible == nil then visible = false end -- Default to hidden until RunModes activates
+	screenGui.Enabled = visible
+end
+
+-- Listen for attribute changes
+model:GetAttributeChangedSignal("HUDVisible"):Connect(updateVisibility)
+
+-- Set initial visibility
+updateVisibility()
 
 --------------------------------------------------------------------------------
 -- SCORE LOGIC

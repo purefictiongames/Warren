@@ -143,6 +143,32 @@ stopFunction.OnInvoke = function()
 end
 stopFunction.Parent = model
 
+-- Expose Enable via BindableFunction (for RunModes)
+local enableFunction = Instance.new("BindableFunction")
+enableFunction.Name = "Enable"
+enableFunction.OnInvoke = function()
+	model:SetAttribute("IsEnabled", true)
+	model:SetAttribute("HUDVisible", true)
+	System.Debug:Message("GlobalTimer", "Enabled")
+	return true
+end
+enableFunction.Parent = model
+
+-- Expose Disable via BindableFunction (for RunModes)
+local disableFunction = Instance.new("BindableFunction")
+disableFunction.Name = "Disable"
+disableFunction.OnInvoke = function()
+	stop()  -- Stop timer when disabled
+	model:SetAttribute("IsEnabled", false)
+	model:SetAttribute("HUDVisible", false)
+	System.Debug:Message("GlobalTimer", "Disabled")
+	return true
+end
+disableFunction.Parent = model
+
+-- Initial state attributes (RunModes will set actual values)
+-- Don't set defaults here - let Orchestrator/RunModes be the source of truth
+
 System.Debug:Message("GlobalTimer", "Setup complete")
 
 System.Debug:Message("GlobalTimer", "Script loaded")

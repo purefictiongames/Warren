@@ -9,6 +9,12 @@
       },
       "GUI": {
         "$path": "src/System/GUI/ReplicatedFirst"
+      },
+      "RunModes": {
+        "$path": "src/System/RunModes/ReplicatedFirst"
+      },
+      "Tutorial": {
+        "$path": "src/System/Tutorial/ReplicatedFirst"
       }
     },
 

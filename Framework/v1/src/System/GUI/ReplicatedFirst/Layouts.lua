@@ -33,12 +33,12 @@ return {
 		phone = 0,       -- < 768px width (fallback)
 	},
 
-	-- Right sidebar layout for timer and score
+	-- Right sidebar layout for timer, score, and task list
 	-- Positions itself in the top-right corner
 	["right-sidebar"] = {
 		-- Sidebar sizing/position (applied to ScreenGui container)
 		position = {0.85, 0, 0, 0},  -- Right 15% of screen
-		size = {0.15, 0, 0.34, 0},   -- 15% width, 34% height
+		size = {0.15, 0, 0.55, 0},   -- 15% width, 55% height (increased for tasks)
 
 		-- Asset-to-region mapping
 		-- Maps ScreenGui names to region IDs
@@ -46,21 +46,64 @@ return {
 		assets = {
 			["GlobalTimer.ScreenGui"] = "timer",
 			["Scoreboard.ScreenGui"] = "score",
+			["Tutorial.TaskList"] = "tasks",
 		},
 
 		rows = {
-			-- Timer zone (top half of sidebar)
+			-- Timer zone (top 30% of sidebar)
 			{
-				height = "50%",
+				height = "30%",
 				columns = {
 					{ id = "timer", width = "100%", xalign = "center", yalign = "center" },
 				},
 			},
-			-- Score zone (bottom half of sidebar)
+			-- Score zone (middle 30% of sidebar)
 			{
-				height = "50%",
+				height = "30%",
 				columns = {
 					{ id = "score", width = "100%", xalign = "center", yalign = "top" },
+				},
+			},
+			-- Task list zone (bottom 40% of sidebar)
+			{
+				height = "40%",
+				columns = {
+					{ id = "tasks", width = "100%", xalign = "center", yalign = "top" },
+				},
+			},
+		},
+	},
+
+	-- Tutorial popup layout (centered overlay)
+	["tutorial-popup"] = {
+		position = {0.5, 0, 0.5, 0},
+		size = {0.5, 0, 0.4, 0},
+		anchorPoint = {0.5, 0.5},
+
+		assets = {
+			["Tutorial.Popup"] = "popup",
+		},
+
+		rows = {
+			-- Title zone
+			{
+				height = "20%",
+				columns = {
+					{ id = "title", width = "100%", xalign = "center", yalign = "center" },
+				},
+			},
+			-- Body zone
+			{
+				height = "55%",
+				columns = {
+					{ id = "body", width = "100%", xalign = "center", yalign = "top" },
+				},
+			},
+			-- Buttons zone
+			{
+				height = "25%",
+				columns = {
+					{ id = "buttons", width = "100%", xalign = "center", yalign = "center" },
 				},
 			},
 		},

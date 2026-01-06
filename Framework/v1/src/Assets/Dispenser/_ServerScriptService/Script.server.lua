@@ -124,6 +124,33 @@ local function setupDispenser(model)
 	end
 	resetFunction.Parent = model
 
+	-- Expose Enable via BindableFunction (for RunModes)
+	local enableFunction = Instance.new("BindableFunction")
+	enableFunction.Name = "Enable"
+	enableFunction.OnInvoke = function()
+		prompt.Enabled = true
+		model:SetAttribute("IsEnabled", true)
+		model:SetAttribute("HUDVisible", true)
+		System.Debug:Message("Dispenser", "Enabled")
+		return true
+	end
+	enableFunction.Parent = model
+
+	-- Expose Disable via BindableFunction (for RunModes)
+	local disableFunction = Instance.new("BindableFunction")
+	disableFunction.Name = "Disable"
+	disableFunction.OnInvoke = function()
+		prompt.Enabled = false
+		model:SetAttribute("IsEnabled", false)
+		model:SetAttribute("HUDVisible", false)
+		System.Debug:Message("Dispenser", "Disabled")
+		return true
+	end
+	disableFunction.Parent = model
+
+	-- Initial state attributes (RunModes will set actual values)
+	-- Don't set defaults here - let Orchestrator/RunModes be the source of truth
+
 	System.Debug:Message("Dispenser", "Set up", model.Name, "(DispenseItem:" .. itemType .. ", Capacity:" .. capacity .. ")")
 end
 

@@ -24,6 +24,7 @@ local System = require(ReplicatedStorage:WaitForChild("System.System"))
 System:WaitForStage(System.Stages.SCRIPTS)
 
 -- Dependencies (guaranteed to exist after SCRIPTS stage)
+local runtimeAssets = game.Workspace:WaitForChild("RuntimeAssets")
 local templates = ReplicatedStorage:WaitForChild("Templates")
 local stickTemplate = templates:WaitForChild("RoastingStick")
 local forceItemDrop = ReplicatedStorage:WaitForChild("Backpack.ForceItemDrop")
@@ -120,14 +121,43 @@ local function giveStick(player)
 	System.Debug:Message("RoastingStick", "Gave stick to", player.Name)
 end
 
+-- Track if sticks should be equipped (for RunModes)
+local sticksEnabled = true
+
+-- Remove stick from a player
+local function removeStick(player)
+	local character = player.Character
+	local backpack = player:FindFirstChild("Backpack")
+
+	-- Check character
+	if character then
+		local stick = character:FindFirstChild("RoastingStick")
+		if stick then
+			stick:Destroy()
+			System.Debug:Message("RoastingStick", "Removed stick from", player.Name, "(character)")
+		end
+	end
+
+	-- Check backpack
+	if backpack then
+		local stick = backpack:FindFirstChild("RoastingStick")
+		if stick then
+			stick:Destroy()
+			System.Debug:Message("RoastingStick", "Removed stick from", player.Name, "(backpack)")
+		end
+	end
+end
+
 -- Setup player
 local function setupPlayer(player)
 	player.CharacterAdded:Connect(function()
 		task.wait(0.5)
-		giveStick(player)
+		if sticksEnabled then
+			giveStick(player)
+		end
 	end)
 
-	if player.Character then
+	if player.Character and sticksEnabled then
 		giveStick(player)
 	end
 end
@@ -214,5 +244,43 @@ end)
 Players.PlayerRemoving:Connect(function(player)
 	trackedPlayers[player] = nil
 end)
+
+-- Get model reference for attributes
+local model = runtimeAssets:WaitForChild("RoastingStick")
+
+-- Expose Enable via BindableFunction (for RunModes)
+-- Gives sticks to all players
+local enableFunction = Instance.new("BindableFunction")
+enableFunction.Name = "Enable"
+enableFunction.OnInvoke = function()
+	sticksEnabled = true
+	model:SetAttribute("IsEnabled", true)
+	-- Give sticks to all current players
+	for _, player in ipairs(Players:GetPlayers()) do
+		giveStick(player)
+	end
+	System.Debug:Message("RoastingStick", "Enabled - giving sticks to all players")
+	return true
+end
+enableFunction.Parent = model
+
+-- Expose Disable via BindableFunction (for RunModes)
+-- Removes sticks from all players
+local disableFunction = Instance.new("BindableFunction")
+disableFunction.Name = "Disable"
+disableFunction.OnInvoke = function()
+	sticksEnabled = false
+	model:SetAttribute("IsEnabled", false)
+	-- Remove sticks from all current players
+	for _, player in ipairs(Players:GetPlayers()) do
+		removeStick(player)
+	end
+	System.Debug:Message("RoastingStick", "Disabled - removing sticks from all players")
+	return true
+end
+disableFunction.Parent = model
+
+-- Set initial state
+model:SetAttribute("IsEnabled", true)
 
 System.Debug:Message("RoastingStick", "Script loaded")

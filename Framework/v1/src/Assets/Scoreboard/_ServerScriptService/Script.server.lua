@@ -30,6 +30,16 @@ local runtimeAssets = game.Workspace:WaitForChild("RuntimeAssets")
 local timedEvaluator = runtimeAssets:WaitForChild("TimedEvaluator")
 local anchor = timedEvaluator:WaitForChild("Anchor")
 local evaluationComplete = anchor:WaitForChild("EvaluationComplete")
+local model = runtimeAssets:WaitForChild("Scoreboard")
+
+-- Load RunModes API (lazy - may not exist during initial development)
+local RunModes = nil
+task.spawn(function()
+	local runModesModule = ReplicatedStorage:WaitForChild("RunModes.RunModes", 10)
+	if runModesModule then
+		RunModes = require(runModesModule)
+	end
+end)
 
 -- Track player scores
 local playerScores = {}
@@ -65,18 +75,30 @@ local function onEvaluationComplete(result)
 	if player then
 		score = calculateScore(result)
 
-		-- Update player's total score
-		playerScores[player] = (playerScores[player] or 0) + score
+		-- Check if scoring should be persisted (RunModes integration)
+		local shouldPersist = true
+		if RunModes and not RunModes:IsScoringEnabled(player) then
+			shouldPersist = false
+			System.Debug:Message("Scoreboard", "Practice mode - score not persisted for", player.Name)
+		end
 
-		System.Debug:Message("Scoreboard", player.Name, "scored", score, "points. Total:", playerScores[player])
+		if shouldPersist then
+			-- Update player's total score
+			playerScores[player] = (playerScores[player] or 0) + score
+			System.Debug:Message("Scoreboard", player.Name, "scored", score, "points. Total:", playerScores[player])
+		else
+			-- In practice mode, show score but don't persist
+			System.Debug:Message("Scoreboard", player.Name, "scored", score, "points (practice - not saved)")
+		end
 
-		-- Fire to client
+		-- Fire to client (always show the score)
 		scoreUpdate:FireClient(player, {
 			roundScore = score,
-			totalScore = playerScores[player],
+			totalScore = shouldPersist and playerScores[player] or score,
 			submitted = result.submitted,
 			submittedValue = result.submittedValue,
 			targetValue = result.targetValue,
+			isPractice = not shouldPersist,
 		})
 	else
 		System.Debug:Message("Scoreboard", "Timeout - no submission")
@@ -100,6 +122,31 @@ System.Debug:Message("Scoreboard", "Connected to TimedEvaluator.EvaluationComple
 Players.PlayerRemoving:Connect(function(player)
 	playerScores[player] = nil
 end)
+
+-- Expose Enable via BindableFunction (for RunModes)
+local enableFunction = Instance.new("BindableFunction")
+enableFunction.Name = "Enable"
+enableFunction.OnInvoke = function()
+	model:SetAttribute("IsEnabled", true)
+	model:SetAttribute("HUDVisible", true)
+	System.Debug:Message("Scoreboard", "Enabled")
+	return true
+end
+enableFunction.Parent = model
+
+-- Expose Disable via BindableFunction (for RunModes)
+local disableFunction = Instance.new("BindableFunction")
+disableFunction.Name = "Disable"
+disableFunction.OnInvoke = function()
+	model:SetAttribute("IsEnabled", false)
+	model:SetAttribute("HUDVisible", false)
+	System.Debug:Message("Scoreboard", "Disabled")
+	return true
+end
+disableFunction.Parent = model
+
+-- Initial state attributes (RunModes will set actual values)
+-- Don't set defaults here - let Orchestrator/RunModes be the source of truth
 
 System.Debug:Message("Scoreboard", "Setup complete")
 

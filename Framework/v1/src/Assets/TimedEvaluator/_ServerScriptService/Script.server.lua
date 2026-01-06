@@ -256,8 +256,41 @@ resetFunction.OnInvoke = function()
 end
 resetFunction.Parent = model
 
--- Initial reset on load
-reset()
+-- Expose Enable via BindableFunction (for RunModes)
+local enableFunction = Instance.new("BindableFunction")
+enableFunction.Name = "Enable"
+enableFunction.OnInvoke = function()
+	prompt.Enabled = true
+	model:SetAttribute("IsEnabled", true)
+	model:SetAttribute("HUDVisible", true)
+	-- Reset and start timer when enabled
+	reset()
+	System.Debug:Message("TimedEvaluator", "Enabled")
+	return true
+end
+enableFunction.Parent = model
+
+-- Expose Disable via BindableFunction (for RunModes)
+local disableFunction = Instance.new("BindableFunction")
+disableFunction.Name = "Disable"
+disableFunction.OnInvoke = function()
+	-- Stop timer
+	if timerThread then
+		pcall(function() task.cancel(timerThread) end)
+		timerThread = nil
+	end
+	isRunning = false
+	prompt.Enabled = false
+	model:SetAttribute("IsEnabled", false)
+	model:SetAttribute("HUDVisible", false)
+	System.Debug:Message("TimedEvaluator", "Disabled")
+	return true
+end
+disableFunction.Parent = model
+
+-- Initial state attributes (RunModes will set actual values)
+-- Don't set defaults here - let Orchestrator/RunModes be the source of truth
+-- Don't auto-reset - RunModes will trigger reset when entering active mode
 
 System.Debug:Message("TimedEvaluator", "Setup complete - AcceptType:", acceptType, "EvalTarget:", evalTarget)
 

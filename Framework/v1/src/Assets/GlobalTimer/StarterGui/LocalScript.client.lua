@@ -37,6 +37,7 @@ local timerUpdate = ReplicatedStorage:WaitForChild("GlobalTimer.TimerUpdate")
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "GlobalTimer.ScreenGui"
 screenGui.ResetOnSpawn = false
+screenGui.Enabled = false -- Hidden by default until RunModes activates
 
 -- Content frame that layout can move
 local content = Instance.new("Frame")
@@ -75,6 +76,27 @@ container.Parent = content
 local timerLabel = GUI:GetById("global-timer")
 
 screenGui.Parent = playerGui
+
+--------------------------------------------------------------------------------
+-- VISIBILITY CONTROL
+--------------------------------------------------------------------------------
+
+-- Get model reference for HUDVisible attribute
+local runtimeAssets = game.Workspace:WaitForChild("RuntimeAssets")
+local model = runtimeAssets:WaitForChild("GlobalTimer")
+
+-- Update visibility based on HUDVisible attribute
+local function updateVisibility()
+	local visible = model:GetAttribute("HUDVisible")
+	if visible == nil then visible = false end -- Default to hidden until RunModes activates
+	screenGui.Enabled = visible
+end
+
+-- Listen for attribute changes
+model:GetAttributeChangedSignal("HUDVisible"):Connect(updateVisibility)
+
+-- Set initial visibility
+updateVisibility()
 
 --------------------------------------------------------------------------------
 -- TIMER LOGIC

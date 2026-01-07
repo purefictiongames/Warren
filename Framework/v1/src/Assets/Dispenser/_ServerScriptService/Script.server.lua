@@ -10,6 +10,7 @@
 
 -- Dispenser.Script (Server)
 -- Handles ProximityPrompt interaction and item dispensing
+-- Uses deferred initialization pattern - registers init function, called at ASSETS stage
 
 -- Guard: Only run if this is the deployed version
 if not script.Name:match("^Dispenser%.") then
@@ -22,44 +23,46 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local System = require(ReplicatedStorage:WaitForChild("System.System"))
 System:WaitForStage(System.Stages.SCRIPTS)
 
--- Dependencies (guaranteed to exist after SCRIPTS stage)
-local Dispenser = require(ReplicatedStorage:WaitForChild("Dispenser.ModuleScript"))
-local runtimeAssets = game.Workspace:WaitForChild("RuntimeAssets")
-local model = runtimeAssets:WaitForChild("Dispenser")
+-- Register init function (will be called at ASSETS stage)
+System:RegisterAsset("Dispenser", function()
+	-- Dependencies
+	local Dispenser = require(ReplicatedStorage:WaitForChild("Dispenser.ModuleScript"))
+	local runtimeAssets = game.Workspace:WaitForChild("RuntimeAssets")
+	local model = runtimeAssets:WaitForChild("Dispenser")
 
--- MessageTicker loaded lazily (optional dependency)
-local messageTicker = nil
-task.spawn(function()
-	messageTicker = ReplicatedStorage:WaitForChild("MessageTicker.MessageTicker", 10)
-end)
+	-- MessageTicker loaded lazily (optional dependency)
+	local messageTicker = nil
+	task.spawn(function()
+		messageTicker = ReplicatedStorage:WaitForChild("MessageTicker.MessageTicker", 10)
+	end)
 
--- Create Empty event for Orchestrator to listen to
-local emptyEvent = Instance.new("BindableEvent")
-emptyEvent.Name = "Dispenser.Empty"
-emptyEvent.Parent = ReplicatedStorage
+	-- Create Empty event for Orchestrator to listen to
+	local emptyEvent = Instance.new("BindableEvent")
+	emptyEvent.Name = "Dispenser.Empty"
+	emptyEvent.Parent = ReplicatedStorage
 
--- Store original transparency values for hiding/showing
-local originalTransparencies = {}
-
-local function hideModel(model)
-	for _, part in ipairs(model:GetDescendants()) do
-		if part:IsA("BasePart") then
-			originalTransparencies[part] = part.Transparency
-			part.Transparency = 1
+	-- Hide/show model using VisibleTransparency attribute as source of truth
+	local function hideModel(mdl)
+		for _, part in ipairs(mdl:GetDescendants()) do
+			if part:IsA("BasePart") then
+				-- Store original transparency if not already stored
+				if part:GetAttribute("VisibleTransparency") == nil then
+					part:SetAttribute("VisibleTransparency", part.Transparency)
+				end
+				part.Transparency = 1
+			end
 		end
 	end
-end
 
-local function showModel(model)
-	for _, part in ipairs(model:GetDescendants()) do
-		if part:IsA("BasePart") and originalTransparencies[part] then
-			part.Transparency = originalTransparencies[part]
+	local function showModel(mdl)
+		for _, part in ipairs(mdl:GetDescendants()) do
+			if part:IsA("BasePart") then
+				local visible = part:GetAttribute("VisibleTransparency")
+				part.Transparency = visible or 0
+			end
 		end
 	end
-end
 
--- Set up a dispenser model
-local function setupDispenser(model)
 	-- Get config from model attributes
 	local itemType = model:GetAttribute("DispenseItem") or "Marshmallow"
 	local capacity = model:GetAttribute("Capacity") or 10
@@ -170,12 +173,7 @@ local function setupDispenser(model)
 	end
 	disableFunction.Parent = model
 
-	-- Initial state attributes (RunModes will set actual values)
-	-- Don't set defaults here - let Orchestrator/RunModes be the source of truth
+	System.Debug:Message("Dispenser", "Initialized (DispenseItem:" .. itemType .. ", Capacity:" .. capacity .. ")")
+end)
 
-	System.Debug:Message("Dispenser", "Set up", model.Name, "(DispenseItem:" .. itemType .. ", Capacity:" .. capacity .. ")")
-end
-
-setupDispenser(model)
-
-System.Debug:Message("Dispenser", "Script loaded")
+System.Debug:Message("Dispenser", "Script loaded, init registered")

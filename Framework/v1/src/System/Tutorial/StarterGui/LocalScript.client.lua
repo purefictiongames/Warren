@@ -20,6 +20,7 @@ end
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ReplicatedFirst = game:GetService("ReplicatedFirst")
+local GuiService = game:GetService("GuiService")
 
 -- Wait for boot system
 local System = require(ReplicatedStorage:WaitForChild("System.System"))
@@ -66,25 +67,46 @@ local function createPopup(popupConfig)
 		currentPopup = nil
 	end
 
+	-- Clear GUI selection when closing popup
+	GuiService.SelectedObject = nil
+
 	if not popupConfig then
 		return
+	end
+
+	-- Find the primary button (for GUI selection)
+	local primaryButtonId = nil
+	for _, btn in ipairs(popupConfig.buttons or {}) do
+		if btn.primary then
+			primaryButtonId = btn.id
+			break
+		end
+	end
+	-- Fall back to first button if no primary specified
+	if not primaryButtonId and popupConfig.buttons and #popupConfig.buttons > 0 then
+		primaryButtonId = popupConfig.buttons[1].id
 	end
 
 	-- Build button children with unique IDs for later wiring
 	local buttonChildren = {}
 	local buttonConfigs = {} -- Store button configs for wiring
+	local primaryElementId = nil
 	for i, btn in ipairs(popupConfig.buttons or {}) do
 		local buttonClass = btn.primary and "popup-btn popup-btn-primary" or "popup-btn"
 		local buttonId = "popup-btn-" .. btn.id
+		local isPrimary = btn.primary or (i == 1 and not primaryButtonId)
+		if isPrimary then
+			primaryElementId = buttonId
+		end
 		table.insert(buttonChildren, {
 			type = "TextButton",
 			id = buttonId,
 			class = buttonClass,
 			text = btn.text,
-			size = { 0, 120, 0, 40 },
-			position = { 0, (i - 1) * 130, 0, 0 },
+			size = { 0, 140, 0, 40 },
+			position = { 0, (i - 1) * 150, 0, 0 },
 		})
-		table.insert(buttonConfigs, { elementId = buttonId, buttonId = btn.id })
+		table.insert(buttonConfigs, { elementId = buttonId, buttonId = btn.id, isPrimary = isPrimary })
 	end
 
 	-- Create popup using GUI system
@@ -148,17 +170,31 @@ local function createPopup(popupConfig)
 	if currentPopup then
 		currentPopup.Parent = playerGui
 
-		-- Wire up button click events manually (GUI system doesn't support events field)
+		-- Wire up button events and select primary button for gamepad
+		local primaryButton = nil
 		for _, btnConfig in ipairs(buttonConfigs) do
 			local button = GUI:GetById(btnConfig.elementId)
 			if button then
-				button.MouseButton1Click:Connect(function()
+				-- Use Activated event - fires for mouse click, touch tap, AND gamepad A when selected
+				button.Activated:Connect(function()
+					System.Debug:Message("Tutorial Client", "Button activated:", btnConfig.buttonId)
 					tutorialCommand:FireServer({
 						action = "button_click",
 						buttonId = btnConfig.buttonId,
 					})
 				end)
+
+				-- Track primary button for selection
+				if btnConfig.isPrimary then
+					primaryButton = button
+				end
 			end
+		end
+
+		-- Select primary button for gamepad navigation
+		if primaryButton then
+			GuiService.SelectedObject = primaryButton
+			System.Debug:Message("Tutorial Client", "Selected button for gamepad:", primaryButton.Name)
 		end
 	end
 end
@@ -268,19 +304,24 @@ rebuildTaskList()
 -- Handle state changes
 local function onStateChanged(oldState, newState)
 	currentState = newState
+	System.Debug:Message("Tutorial Client", "State changed:", oldState, "->", newState)
 
 	-- Hide popup for non-popup states
 	if currentPopup then
 		currentPopup:Destroy()
 		currentPopup = nil
+		GuiService.SelectedObject = nil
 	end
 
 	-- Show appropriate popup
 	if newState == "welcome" then
+		System.Debug:Message("Tutorial Client", "Creating welcome popup")
 		createPopup(config.welcome)
 	elseif newState == "rules" then
+		System.Debug:Message("Tutorial Client", "Creating rules popup")
 		createPopup(config.rules)
 	elseif newState == "mode_select" then
+		System.Debug:Message("Tutorial Client", "Creating mode_select popup")
 		createPopup(config.modeSelect)
 	elseif newState == "find_camper" then
 		-- No popup - server will send MessageTicker hint
@@ -295,8 +336,6 @@ local function onStateChanged(oldState, newState)
 	elseif newState == "completed" or newState == "inactive" then
 		setTaskListVisible(false)
 	end
-
-	System.Debug:Message("Tutorial Client", "State changed:", oldState, "->", newState)
 end
 
 -- Listen for server commands

@@ -312,15 +312,112 @@ Things that fell out naturally from the architecture:
 
 ---
 
+---
+
+### Day 7+ (Jan 7, 2026) - RunModes, Tutorial & Input System
+
+**Sessions 17-18**
+
+**Major Success: Per-Player Game States (RunModes)**
+
+Introduced a per-player state machine for game modes:
+- **standby** - Player exploring, game loop inactive
+- **practice** - Game active with guidance, scores don't persist
+- **play** - Full game, scores persist, badges awarded
+
+This required significant architectural changes:
+- New boot stages: `SYNC → EVENTS → MODULES → SCRIPTS → ASSETS → ORCHESTRATE → READY`
+- Deferred initialization pattern: Assets register init functions via `System:RegisterAsset()`, called at ASSETS stage
+- Orchestrator waits for ORCHESTRATE stage, applies mode config to all assets
+
+**Bug Fixes Required by RunModes:**
+
+1. **TimedEvaluator model not appearing** - Transparency-based hide/show was fragile. Created `VisibleTransparency` attribute pattern: store original transparency in attribute, restore from it when showing.
+
+2. **Game loop not ending** - Added `endGame()` to Orchestrator that transitions all active players back to standby when GlobalTimer expires or Dispenser empties.
+
+3. **Tutorial task list persisting** - Tutorial state wasn't reset when returning to standby. Added RunModes.ModeChanged listener to reset tutorial.
+
+4. **RoastingStick equipped on spawn** - Refactored to deferred init pattern, starts disabled, Orchestrator enables when entering practice/play.
+
+5. **Gamepad/Enter support for popups** - Initial approach used ContextActionService with priority hacking to compete with ProximityPrompts. Replaced with `GuiService.SelectedObject` - the native Roblox way to handle modal UI focus.
+
+**New Pattern: GuiService for Modal Input**
+
+```lua
+-- When popup opens
+GuiService.SelectedObject = primaryButton
+
+-- Use Activated event (fires for mouse, touch, AND gamepad A when selected)
+button.Activated:Connect(function()
+    -- Handle click/tap/gamepad
+end)
+
+-- When popup closes
+GuiService.SelectedObject = nil
+```
+
+**Architecture Insight: Input Management**
+
+Discovered that input control needs to be coupled with game state (RunModes) at the system level:
+- Standby: ProximityPrompts active, game controls disabled
+- Practice/Play: Game controls active, certain prompts disabled
+- Modal open: All world interaction paused, only modal input active
+
+---
+
+## Planned Refactor: Input & State Management
+
+The RunModes work surfaced architectural gaps. Planned improvements:
+
+### 1. Centralized Input Manager
+- Input state tied to RunModes config
+- Modal system that captures focus and disables world interaction
+- ProximityPrompt enable/disable coordinated with mode changes
+
+```lua
+RunModesConfig = {
+    standby = {
+        assets = { ... },
+        input = {
+            proximityPrompts = { "Camper" },
+            gameControls = false,
+        }
+    },
+    practice = {
+        assets = { ... },
+        input = {
+            proximityPrompts = {},
+            gameControls = true,
+        }
+    }
+}
+```
+
+### 2. Visibility Pattern Standardization
+- All assets use `VisibleTransparency` attribute for hide/show
+- Extract into shared utility or System method
+
+### 3. Asset Enable/Disable Protocol
+- Standardize `Enable()` / `Disable()` BindableFunctions
+- Clear contract for what each does (visibility, state, input)
+
+### 4. Modal System
+- Dedicated modal layer above game UI
+- Automatically disables world input when modal active
+- GuiService selection management built-in
+
+---
+
 ## Statistics
 
-- **Session Logs Written:** 16
-- **Commits:** ~25
-- **Lua Files:** 37
-- **Assets Built:** 9
+- **Session Logs Written:** 18
+- **Commits:** ~30
+- **Lua Files:** 40+
+- **Assets Built:** 11 (added Camper, Tutorial)
 - **Templates Built:** 2
-- **System Modules Built:** 3
-- **Lines of Code:** ~3,500 (estimate)
+- **System Modules Built:** 4 (added RunModes)
+- **Lines of Code:** ~4,500 (estimate)
 - **Debug Calls Migrated:** 97
-- **Major Pivots:** 3
+- **Major Pivots:** 4 (added RunModes refactor)
 - **Days to Working Game Loop:** 2

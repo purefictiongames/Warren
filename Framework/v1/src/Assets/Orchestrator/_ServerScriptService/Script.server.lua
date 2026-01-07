@@ -19,14 +19,14 @@ end
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
--- Wait for boot system
+-- Wait for boot system - ORCHESTRATE stage means all assets are initialized
 local System = require(ReplicatedStorage:WaitForChild("System.System"))
-System:WaitForStage(System.Stages.SCRIPTS)
+System:WaitForStage(System.Stages.ORCHESTRATE)
 
 -- Load RunModes API
 local RunModes = require(ReplicatedStorage:WaitForChild("RunModes.RunModes"))
 
--- Dependencies (guaranteed to exist after SCRIPTS stage)
+-- Dependencies (guaranteed to exist after ORCHESTRATE stage - all asset inits called)
 local runtimeAssets = game.Workspace:WaitForChild("RuntimeAssets")
 
 -- Get GlobalTimer controls
@@ -128,35 +128,37 @@ end
 
 roundComplete.Event:Connect(onRoundComplete)
 
--- Full reset function (shared by multiple triggers)
-local function fullReset(reason)
-	-- Only reset if game is running
+-- End game and return all active players to standby
+local function endGame(reason)
 	if not gameRunning then return end
 
-	System.Debug:Message("Orchestrator", reason, "- resetting all assets")
+	System.Debug:Message("Orchestrator", "Game ending:", reason)
 
-	-- Delay to let players see result
-	task.wait(3)
+	-- Stop the game loop first
+	stopGameLoop()
 
-	-- Check again after delay (game might have stopped)
-	if not gameRunning then return end
+	-- Brief delay to let players see final state
+	task.wait(2)
 
-	-- Reset all assets and restart timer
-	dispenserReset:Invoke()
-	timedEvaluatorReset:Invoke()
-	globalTimerStart:Invoke()
+	-- Transition all active players back to standby
+	for _, player in ipairs(game.Players:GetPlayers()) do
+		if RunModes:IsGameActive(player) then
+			System.Debug:Message("Orchestrator", "Returning", player.Name, "to standby")
+			RunModes:SetMode(player, RunModes.Modes.STANDBY)
+		end
+	end
 
-	System.Debug:Message("Orchestrator", "New round started")
+	System.Debug:Message("Orchestrator", "Game ended - players returned to standby")
 end
 
--- Listen for GlobalTimer expiration
+-- Listen for GlobalTimer expiration - ends the game
 timerExpired.Event:Connect(function()
-	fullReset("GlobalTimer expired")
+	endGame("GlobalTimer expired")
 end)
 
--- Listen for Dispenser empty
+-- Listen for Dispenser empty - ends the game
 dispenserEmpty.Event:Connect(function()
-	fullReset("Dispenser empty")
+	endGame("Dispenser empty")
 end)
 
 -- Listen for RunModes changes

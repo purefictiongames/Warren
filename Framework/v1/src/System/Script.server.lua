@@ -168,8 +168,19 @@ System:_setStage(System.Stages.EVENTS)
 -- Fire MODULES stage (all modules deployed and requireable)
 System:_setStage(System.Stages.MODULES)
 
--- Fire SCRIPTS stage (server scripts can now initialize)
+-- Fire SCRIPTS stage (server scripts load and register their init functions)
 System:_setStage(System.Stages.SCRIPTS)
+
+-- Yield to allow all asset scripts to run and register
+-- This ensures all RegisterAsset calls complete before ASSETS stage
+task.wait()
+
+-- Fire ASSETS stage and initialize all registered assets
+System:_setStage(System.Stages.ASSETS)
+System:_initializeAssets()
+
+-- Fire ORCHESTRATE stage (Orchestrator applies initial mode config)
+System:_setStage(System.Stages.ORCHESTRATE)
 
 -- Fire READY stage (full boot complete)
 System:_setStage(System.Stages.READY)

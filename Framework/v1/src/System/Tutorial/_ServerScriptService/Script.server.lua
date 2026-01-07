@@ -243,4 +243,27 @@ Players.PlayerRemoving:Connect(function(player)
 	Tutorial:_removePlayer(player)
 end)
 
+-- Listen for RunModes changes - reset tutorial when returning to standby
+task.spawn(function()
+	local modeChanged = ReplicatedStorage:WaitForChild("RunModes.ModeChanged", 10)
+	if modeChanged then
+		modeChanged.Event:Connect(function(data)
+			local player = data.player
+			local newMode = data.newMode
+
+			-- When player returns to standby, reset tutorial to inactive
+			if newMode == RunModes.Modes.STANDBY then
+				local currentState = playerStates[player]
+				-- Only reset if they were in an active game state
+				if currentState == Tutorial.States.PRACTICE or currentState == Tutorial.States.PLAYING then
+					setState(player, Tutorial.States.INACTIVE)
+					playerTasks[player] = {} -- Clear completed tasks
+					System.Debug:Message("Tutorial", player.Name, "returned to standby - tutorial reset")
+				end
+			end
+		end)
+		System.Debug:Message("Tutorial", "Connected to RunModes.ModeChanged")
+	end
+end)
+
 System.Debug:Message("Tutorial", "Script loaded")

@@ -30,7 +30,7 @@ return {
 		standby = {
 			assets = {
 				Dispenser = { active = false, visible = false },
-				RoastingStick = { equipped = false },
+				RoastingStick = { active = false },
 				GlobalTimer = { active = false, visible = false },
 				Scoreboard = { active = false, visible = false },
 				TimedEvaluator = { active = false, visible = false },
@@ -46,15 +46,16 @@ return {
             PRACTICE MODE
             Game loop is active with tutorial guidance.
             All assets enabled, but scores are not persisted.
+            Camper hidden - TimedEvaluator takes its place.
         --]]
 		practice = {
 			assets = {
 				Dispenser = { active = true, visible = true },
-				RoastingStick = { equipped = true },
+				RoastingStick = { active = true },
 				GlobalTimer = { active = true, visible = true },
 				Scoreboard = { active = true, visible = true },
 				TimedEvaluator = { active = true, visible = true },
-				Camper = { active = true, behavior = "evaluator" },
+				Camper = { active = false },
 			},
 			scoring = {
 				persist = false,
@@ -65,15 +66,16 @@ return {
 		--[[
             PLAY MODE
             Full game experience with score persistence and badges.
+            Camper hidden - TimedEvaluator takes its place.
         --]]
 		play = {
 			assets = {
 				Dispenser = { active = true, visible = true },
-				RoastingStick = { equipped = true },
+				RoastingStick = { active = true },
 				GlobalTimer = { active = true, visible = true },
 				Scoreboard = { active = true, visible = true },
 				TimedEvaluator = { active = true, visible = true },
-				Camper = { active = true, behavior = "evaluator" },
+				Camper = { active = false },
 			},
 			scoring = {
 				persist = true,

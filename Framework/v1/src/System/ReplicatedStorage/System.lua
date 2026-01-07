@@ -18,17 +18,20 @@ local RunService = game:GetService("RunService")
 local System = {
 	-- Boot stages (in order)
 	Stages = {
-		SYNC    = 1,  -- Assets cloned to RuntimeAssets, folders extracted
-		EVENTS  = 2,  -- All BindableEvents/RemoteEvents created and registered
-		MODULES = 3,  -- ModuleScripts deployed and requireable
-		SCRIPTS = 4,  -- Server scripts can run
-		READY   = 5,  -- Full boot complete, clients can interact
+		SYNC        = 1,  -- Assets cloned to RuntimeAssets, folders extracted
+		EVENTS      = 2,  -- All BindableEvents/RemoteEvents created and registered
+		MODULES     = 3,  -- ModuleScripts deployed and requireable
+		SCRIPTS     = 4,  -- Server scripts load, assets register init functions
+		ASSETS      = 5,  -- All registered asset init() functions called
+		ORCHESTRATE = 6,  -- Orchestrator applies initial mode config
+		READY       = 7,  -- Full boot complete, clients can interact
 	},
 
 	-- Internal state
 	_currentStage = 0,
 	_stageEvent = nil,  -- BindableEvent for stage transitions
 	_isClient = RunService:IsClient(),
+	_registeredAssets = {},  -- [name] = { init = fn, initialized = bool }
 }
 
 -- Initialize event reference (called lazily on first use)
@@ -94,6 +97,74 @@ function System:_setStage(stage)
 	if self._stageEvent then
 		self._stageEvent:Fire(stage)
 	end
+end
+
+--------------------------------------------------------------------------------
+-- ASSET REGISTRATION (Deferred Initialization Pattern)
+--------------------------------------------------------------------------------
+
+--[[
+    Register an asset's init function for deferred initialization.
+    Called by asset scripts during SCRIPTS stage.
+    Init functions are called during ASSETS stage.
+
+    @param name string - Asset name (e.g., "Dispenser", "GlobalTimer")
+    @param initFn function - Initialization function that creates Enable/Disable/etc.
+--]]
+function System:RegisterAsset(name, initFn)
+	if self._registeredAssets[name] then
+		System.Debug:Warn("System", "Asset already registered:", name)
+		return
+	end
+
+	self._registeredAssets[name] = {
+		init = initFn,
+		initialized = false,
+	}
+
+	System.Debug:Message("System", "Asset registered:", name)
+end
+
+--[[
+    Initialize all registered assets.
+    Called by System.Script during ASSETS stage.
+--]]
+function System:_initializeAssets()
+	local count = 0
+	for name, asset in pairs(self._registeredAssets) do
+		if not asset.initialized then
+			System.Debug:Message("System", "Initializing asset:", name)
+			local success, err = pcall(asset.init)
+			if success then
+				asset.initialized = true
+				count = count + 1
+			else
+				System.Debug:Warn("System", "Asset init failed:", name, "-", err)
+			end
+		end
+	end
+	System.Debug:Message("System", "Initialized", count, "assets")
+end
+
+--[[
+    Check if an asset is registered.
+    @param name string - Asset name
+    @return boolean
+--]]
+function System:IsAssetRegistered(name)
+	return self._registeredAssets[name] ~= nil
+end
+
+--[[
+    Get list of registered asset names.
+    @return table - Array of asset names
+--]]
+function System:GetRegisteredAssets()
+	local names = {}
+	for name in pairs(self._registeredAssets) do
+		table.insert(names, name)
+	end
+	return names
 end
 
 -- Internal: Update stage from client ping-pong response

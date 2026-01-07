@@ -40,6 +40,26 @@ if targetMin == nil or targetMin <= 0 then targetMin = 10 end
 if targetMax == nil or targetMax <= 0 then targetMax = 100 end
 if targetMin > targetMax then targetMin, targetMax = targetMax, targetMin end
 
+-- Store original transparency values for hiding/showing
+local originalTransparencies = {}
+
+local function hideModel(mdl)
+	for _, part in ipairs(mdl:GetDescendants()) do
+		if part:IsA("BasePart") then
+			originalTransparencies[part] = part.Transparency
+			part.Transparency = 1
+		end
+	end
+end
+
+local function showModel(mdl)
+	for _, part in ipairs(mdl:GetDescendants()) do
+		if part:IsA("BasePart") and originalTransparencies[part] then
+			part.Transparency = originalTransparencies[part]
+		end
+	end
+end
+
 -- Find components
 local anchor = model:FindFirstChild("Anchor")
 if not anchor then
@@ -260,6 +280,7 @@ resetFunction.Parent = model
 local enableFunction = Instance.new("BindableFunction")
 enableFunction.Name = "Enable"
 enableFunction.OnInvoke = function()
+	showModel(model)
 	prompt.Enabled = true
 	model:SetAttribute("IsEnabled", true)
 	model:SetAttribute("HUDVisible", true)
@@ -280,6 +301,7 @@ disableFunction.OnInvoke = function()
 		timerThread = nil
 	end
 	isRunning = false
+	hideModel(model)
 	prompt.Enabled = false
 	model:SetAttribute("IsEnabled", false)
 	model:SetAttribute("HUDVisible", false)

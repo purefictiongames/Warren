@@ -38,6 +38,26 @@ local emptyEvent = Instance.new("BindableEvent")
 emptyEvent.Name = "Dispenser.Empty"
 emptyEvent.Parent = ReplicatedStorage
 
+-- Store original transparency values for hiding/showing
+local originalTransparencies = {}
+
+local function hideModel(model)
+	for _, part in ipairs(model:GetDescendants()) do
+		if part:IsA("BasePart") then
+			originalTransparencies[part] = part.Transparency
+			part.Transparency = 1
+		end
+	end
+end
+
+local function showModel(model)
+	for _, part in ipairs(model:GetDescendants()) do
+		if part:IsA("BasePart") and originalTransparencies[part] then
+			part.Transparency = originalTransparencies[part]
+		end
+	end
+end
+
 -- Set up a dispenser model
 local function setupDispenser(model)
 	-- Get config from model attributes
@@ -128,6 +148,7 @@ local function setupDispenser(model)
 	local enableFunction = Instance.new("BindableFunction")
 	enableFunction.Name = "Enable"
 	enableFunction.OnInvoke = function()
+		showModel(model)
 		prompt.Enabled = true
 		model:SetAttribute("IsEnabled", true)
 		model:SetAttribute("HUDVisible", true)
@@ -140,6 +161,7 @@ local function setupDispenser(model)
 	local disableFunction = Instance.new("BindableFunction")
 	disableFunction.Name = "Disable"
 	disableFunction.OnInvoke = function()
+		hideModel(model)
 		prompt.Enabled = false
 		model:SetAttribute("IsEnabled", false)
 		model:SetAttribute("HUDVisible", false)

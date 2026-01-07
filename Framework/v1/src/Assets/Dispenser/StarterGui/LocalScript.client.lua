@@ -83,6 +83,7 @@ local billboardGui = GUI:Create({
 
 -- Set adornee (can't be done in declarative table - needs reference)
 billboardGui.Adornee = anchor
+billboardGui.Enabled = false -- Hidden by default until RunModes activates
 billboardGui.Parent = playerGui
 
 -- Get reference to count label
@@ -93,10 +94,19 @@ local function updateDisplay()
 	countLabel.Text = tostring(remaining)
 end
 
--- Initial update
+-- Visibility control based on HUDVisible attribute
+local function updateVisibility()
+	local visible = model:GetAttribute("HUDVisible")
+	if visible == nil then visible = false end
+	billboardGui.Enabled = visible
+end
+
+-- Initial updates
 updateDisplay()
+updateVisibility()
 
 -- Listen for changes
 model:GetAttributeChangedSignal("Remaining"):Connect(updateDisplay)
+model:GetAttributeChangedSignal("HUDVisible"):Connect(updateVisibility)
 
 System.Debug:Message("Dispenser.client", "Display ready")

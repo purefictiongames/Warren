@@ -131,6 +131,7 @@ local billboardGui = GUI:Create({
 
 -- Set adornee (needs runtime reference)
 billboardGui.Adornee = anchor
+billboardGui.Enabled = false -- Hidden by default until RunModes activates
 billboardGui.Parent = playerGui
 
 -- Get references
@@ -188,12 +189,21 @@ local function updateToastPreview()
 	previewPart.Color = getColorForToastLevel(targetValue)
 end
 
+-- Visibility control based on HUDVisible attribute
+local function updateVisibility()
+	local visible = model:GetAttribute("HUDVisible")
+	if visible == nil then visible = false end
+	billboardGui.Enabled = visible
+end
+
 -- Initial updates
 updateSatisfactionDisplay()
 updateToastPreview()
+updateVisibility()
 
 -- Listen for changes
 model:GetAttributeChangedSignal("Satisfaction"):Connect(updateSatisfactionDisplay)
 model:GetAttributeChangedSignal("TargetValue"):Connect(updateToastPreview)
+model:GetAttributeChangedSignal("HUDVisible"):Connect(updateVisibility)
 
 System.Debug:Message("TimedEvaluator.client", "Display ready")

@@ -10,8 +10,8 @@
 
 # LibPureFiction Framework - System Reference
 
-**Version:** 1.0
-**Last Updated:** December 30, 2025
+**Version:** 2.0
+**Last Updated:** January 8, 2026
 
 A comprehensive technical reference for the LibPureFiction Roblox game framework.
 
@@ -25,7 +25,7 @@ A comprehensive technical reference for the LibPureFiction Roblox game framework
 4. [System Module API](#4-system-module-api)
 5. [Asset Development](#5-asset-development)
 6. [Template Development](#6-template-development)
-7. [GUI System](#7-gui-system)
+7. [Unified Styling System](#7-unified-styling-system)
 8. [Subsystems](#8-subsystems)
 9. [Event Patterns](#9-event-patterns)
 10. [Debug System](#10-debug-system)
@@ -61,7 +61,9 @@ In Roblox Studio: Connect to Rojo, then Play.
 | Debug config | `src/System/ReplicatedFirst/DebugConfig.lua` |
 | Assets | `src/Assets/<AssetName>/` |
 | Templates | `src/Templates/<TemplateName>/` |
-| GUI system | `src/System/GUI/` |
+| Styling system | `src/System/GUI/` |
+| Styles config | `src/System/GUI/ReplicatedFirst/Styles.lua` |
+| Layouts config | `src/System/GUI/ReplicatedFirst/Layouts.lua` |
 
 ---
 
@@ -107,7 +109,7 @@ After extraction:
 2. Players.CharacterAutoLoads = false (prevent spawning)
 3. System bootstraps itself and child modules
 4. System deploys Assets to RuntimeAssets
-5. Boot stages fire in order: SYNC -> EVENTS -> MODULES -> SCRIPTS -> READY
+5. Boot stages fire in order: SYNC -> EVENTS -> MODULES -> SCRIPTS -> ASSETS -> ORCHESTRATE -> READY
 6. Players.CharacterAutoLoads = true, spawn waiting players
 ```
 
@@ -129,11 +131,13 @@ Client ─── RemoteEvent ────> Server
 
 ```lua
 System.Stages = {
-    SYNC    = 1,  -- Assets cloned to RuntimeAssets, folders extracted
-    EVENTS  = 2,  -- All BindableEvents/RemoteEvents created
-    MODULES = 3,  -- ModuleScripts deployed and requireable
-    SCRIPTS = 4,  -- Server scripts can run
-    READY   = 5,  -- Full boot complete, clients can interact
+    SYNC        = 1,  -- Assets cloned to RuntimeAssets, folders extracted
+    EVENTS      = 2,  -- All BindableEvents/RemoteEvents created
+    MODULES     = 3,  -- ModuleScripts deployed and requireable
+    SCRIPTS     = 4,  -- Server scripts can run
+    ASSETS      = 5,  -- Asset init functions called
+    ORCHESTRATE = 6,  -- Orchestrator applies initial mode
+    READY       = 7,  -- Full boot complete, clients can interact
 }
 ```
 
@@ -212,11 +216,13 @@ Client: READY -> Server (confirmation)
 ## 4.1 Stage Constants
 
 ```lua
-System.Stages.SYNC    -- 1
-System.Stages.EVENTS  -- 2
-System.Stages.MODULES -- 3
-System.Stages.SCRIPTS -- 4
-System.Stages.READY   -- 5
+System.Stages.SYNC        -- 1
+System.Stages.EVENTS      -- 2
+System.Stages.MODULES     -- 3
+System.Stages.SCRIPTS     -- 4
+System.Stages.ASSETS      -- 5
+System.Stages.ORCHESTRATE -- 6
+System.Stages.READY       -- 7
 ```
 
 ## 4.2 Stage Methods
@@ -358,6 +364,9 @@ end
 |-----------|------|---------|
 | Config values | string/number | Asset configuration |
 | State values | number | Current state (auto-replicates to clients) |
+| `StyleClass` | string | Space-separated style classes for positioning |
+| `StyleId` | string | Unique style ID (optional, defaults to Name) |
+| `AllowScale` | boolean | Allow style system to scale this part |
 
 ## 5.5 Exposing Control Functions
 
@@ -380,7 +389,26 @@ local resetFn = model:WaitForChild("Reset")
 resetFn:Invoke()
 ```
 
-## 5.6 Complete Server Script Example
+## 5.6 Asset Positioning with Styles
+
+Assets can be positioned declaratively using the styling system:
+
+```lua
+-- In asset server script, after model is deployed
+local GUI = require(ReplicatedStorage:WaitForChild("GUI.GUI"))
+
+-- Set style class on the model
+model:SetAttribute("StyleClass", "Camper Camper1")
+
+-- Apply transform styles (position, rotation from Styles.lua)
+GUI:StyleAsset(model)
+
+System.Debug:Message("Camper", "Positioned via style system")
+```
+
+See [Section 7: Unified Styling System](#7-unified-styling-system) for details.
+
+## 5.7 Complete Server Script Example
 
 ```lua
 -- Dispenser.Script (Server)
@@ -425,6 +453,11 @@ resetFn.OnInvoke = function()
     return true
 end
 resetFn.Parent = model
+
+-- Apply positioning styles (optional)
+local GUI = require(ReplicatedStorage:WaitForChild("GUI.GUI"))
+model:SetAttribute("StyleClass", "Dispenser")
+GUI:StyleAsset(model)
 
 System.Debug:Message("Dispenser", "Setup complete")
 ```
@@ -499,20 +532,26 @@ end
 
 ---
 
-# 7. GUI System
+# 7. Unified Styling System
 
 **Location:** `src/System/GUI/`
 
-## 7.1 System Structure
+The styling system provides a single declarative language for styling both GUI elements and 3D assets (Models, Parts, Attachments). Same selectors, same cascade rules, different property domains.
+
+## 7.1 System Architecture
 
 ```
 System/GUI/
 ├── ReplicatedFirst/
 │   ├── Layouts.lua             # Layout definitions
-│   └── Styles.lua              # Style definitions
+│   └── Styles.lua              # Style definitions (GUI + Asset)
 ├── ReplicatedStorage/
 │   ├── GUI.lua                 # Main API
-│   ├── ElementFactory.lua      # Element creation
+│   ├── DomainAdapter.lua       # Adapter interface
+│   ├── GuiAdapter.lua          # GUI domain handler
+│   ├── AssetAdapter.lua        # Asset domain handler (transforms)
+│   ├── StyleEngine.lua         # Unified style resolution
+│   ├── ElementFactory.lua      # GUI element creation
 │   ├── LayoutBuilder.lua       # Layout construction
 │   ├── StyleResolver.lua       # Style cascade
 │   ├── StateManager.lua        # State binding
@@ -521,11 +560,26 @@ System/GUI/
     └── Script.client.lua       # Client initialization
 ```
 
+### Domain Adapters
+
+The system uses **domain adapters** to apply styles to different instance types:
+
+- **GuiAdapter**: Handles GuiObject properties (Size, Position, TextColor, etc.)
+- **AssetAdapter**: Handles 3D transform properties (position, rotation, scale, etc.)
+
+Both domains share:
+- Same selector syntax (type, `.class`, `#id`)
+- Same cascade order (base → class → id → inline)
+- Same value syntax (`{x, y, z}` arrays)
+- Same style resolution algorithm
+
 ## 7.2 GUI API Reference
 
 **Access:** `require(ReplicatedStorage:WaitForChild("GUI.GUI"))`
 
-### GUI:Create(definition)
+### GUI Element Creation
+
+#### GUI:Create(definition)
 
 Create a single GUI element from a declarative definition.
 
@@ -540,7 +594,7 @@ local label = GUI:Create({
 label.Parent = screenGui
 ```
 
-### GUI:CreateMany(definitions)
+#### GUI:CreateMany(definitions)
 
 Create multiple elements at once.
 
@@ -551,7 +605,9 @@ local elements = GUI:CreateMany({
 })
 ```
 
-### GUI:CreateLayout(layoutName, content)
+### Layout Management
+
+#### GUI:CreateLayout(layoutName, content)
 
 Create a layout from Layouts.lua definition.
 
@@ -563,7 +619,7 @@ local screenGui, regions = GUI:CreateLayout("right-sidebar", {
 screenGui.Parent = playerGui
 ```
 
-### GUI:GetRegion(layoutName, regionId)
+#### GUI:GetRegion(layoutName, regionId)
 
 Get a region Frame from an active layout.
 
@@ -572,7 +628,7 @@ local timerRegion = GUI:GetRegion("right-sidebar", "timer")
 myElement.Parent = timerRegion
 ```
 
-### GUI:PlaceInRegion(layoutName, regionId, content)
+#### GUI:PlaceInRegion(layoutName, regionId, content)
 
 Place content into a layout region with proper alignment.
 
@@ -580,7 +636,9 @@ Place content into a layout region with proper alignment.
 GUI:PlaceInRegion("right-sidebar", "timer", myLabel)
 ```
 
-### GUI:SetClass(element, className)
+### Runtime Style Manipulation (GUI)
+
+#### GUI:SetClass(element, className)
 
 Replace all classes on an element.
 
@@ -588,7 +646,7 @@ Replace all classes on an element.
 GUI:SetClass(label, "warning-text")
 ```
 
-### GUI:AddClass(element, className)
+#### GUI:AddClass(element, className)
 
 Add a class to an element.
 
@@ -596,7 +654,7 @@ Add a class to an element.
 GUI:AddClass(label, "highlighted")
 ```
 
-### GUI:RemoveClass(element, className)
+#### GUI:RemoveClass(element, className)
 
 Remove a class from an element.
 
@@ -604,7 +662,7 @@ Remove a class from an element.
 GUI:RemoveClass(label, "highlighted")
 ```
 
-### GUI:HasClass(element, className)
+#### GUI:HasClass(element, className)
 
 Check if element has a specific class.
 
@@ -614,7 +672,7 @@ if GUI:HasClass(label, "active") then
 end
 ```
 
-### GUI:ToggleClass(element, className)
+#### GUI:ToggleClass(element, className)
 
 Toggle a class on/off.
 
@@ -622,7 +680,46 @@ Toggle a class on/off.
 GUI:ToggleClass(button, "selected")
 ```
 
-## 7.3 Definition Properties
+### Asset Styling (NEW)
+
+#### GUI:StyleAsset(asset, inlineStyles)
+
+Apply styles to a single 3D asset (Model, BasePart, Attachment).
+
+```lua
+local GUI = require(ReplicatedStorage:WaitForChild("GUI.GUI"))
+local model = workspace.RuntimeAssets.Dispenser
+
+-- Set style class via attribute
+model:SetAttribute("StyleClass", "Dispenser")
+
+-- Apply styles from Styles.lua
+GUI:StyleAsset(model)
+
+-- Or with inline style overrides
+GUI:StyleAsset(model, {
+    position = {5, 0, 10},  -- Override X, Z position
+})
+```
+
+**Reads from attributes:**
+- `StyleClass` - Space-separated class names
+- `StyleId` - Unique ID (optional, defaults to instance Name)
+
+#### GUI:StyleAssetTree(rootAsset, inlineStyles)
+
+Apply styles to an entire asset tree (root + all descendants).
+
+```lua
+-- Style model and all child parts
+GUI:StyleAssetTree(model)
+```
+
+Each descendant gets its own style resolution based on its `StyleClass` and `StyleId` attributes.
+
+## 7.3 Style Definition Properties
+
+### GUI Properties
 
 ```lua
 {
@@ -632,12 +729,19 @@ GUI:ToggleClass(button, "selected")
 
     -- Direct properties (lowercase mapped to Roblox properties)
     text = "Hello",
-    textColor = Color3.new(1, 1, 1),
-    backgroundColor = "#FF0000",     -- Hex colors supported
+    textColor = {255, 255, 255},     -- Color3 as RGB 0-255
+    backgroundColor = {20, 20, 20},
+    textSize = 24,
+    font = "GothamBold",             -- Font name as string
     size = { 0, 100, 0, 50 },        -- UDim2 as array
     position = { 0.5, 0, 0.5, 0 },
     anchorPoint = { 0.5, 0.5 },      -- Vector2 as array
-    font = "GothamBold",             -- Font name as string
+
+    -- UI modifiers (create child instances)
+    cornerRadius = 12,               -- Creates UICorner
+    stroke = { color = {255,255,255}, thickness = 2 },  -- Creates UIStroke
+    padding = { all = 8 },           -- Creates UIPadding
+    listLayout = { direction = "Vertical" },  -- Creates UIListLayout
 
     -- Children
     children = {
@@ -646,44 +750,227 @@ GUI:ToggleClass(button, "selected")
 }
 ```
 
+### Asset Properties (NEW)
+
+```lua
+{
+    -- Transform properties (for Models, BaseParts, Attachments)
+    position = {x, y, z},       -- Vector3: world position offset
+    rotation = {x, y, z},       -- Vector3: rotation in DEGREES
+    pivot = CFrame,             -- Explicit pivot CFrame (advanced)
+    offset = {x, y, z},         -- Vector3: local space offset after rotation
+    scale = {x, y, z},          -- Vector3 or number: scale multiplier
+
+    -- Note: Scale requires AllowScale=true attribute on BasePart
+}
+```
+
 ## 7.4 Styles.lua Structure
 
 ```lua
 return {
-    -- Base styles for element types
+    -- Base styles applied to all elements of a type
     base = {
+        -- GUI base styles
         TextLabel = {
-            backgroundColor = "transparent",
-            textColor = "#FFFFFF",
-            font = "Gotham",
+            backgroundTransparency = 1,
+            font = "SourceSans",
+            textColor = {255, 255, 255},
         },
         Frame = {
-            backgroundColor = "#000000",
-            backgroundTransparency = 0.5,
+            backgroundTransparency = 0.1,
+            backgroundColor = {30, 30, 30},
+        },
+
+        -- Asset base styles (NEW)
+        Model = {
+            -- Defaults for all models
+        },
+        BasePart = {
+            -- Defaults for all parts
         },
     },
 
     -- Class styles (like CSS classes)
     classes = {
+        -- GUI classes
         ["hud-text"] = {
             textSize = 24,
             font = "GothamBold",
         },
-        ["warning"] = {
-            textColor = "#FF0000",
+
+        -- Asset classes (NEW)
+        ["Camper"] = {
+            position = {0, 0.5, 0},  -- Y=0.5 studs above ground
+        },
+        ["Camper1"] = {
+            rotation = {0, 0, 0},     -- Face north (0 degrees)
+        },
+        ["Camper2"] = {
+            rotation = {0, 90, 0},    -- Face east (90 degrees)
+        },
+        ["Dispenser"] = {
+            position = {0, 1, 0},     -- Y=1 stud above ground
+            rotation = {0, 0, 0},
+        },
+        ["Crate"] = {
+            scale = {1.2, 1.2, 1.2},  -- 120% size (requires AllowScale attribute)
         },
     },
 
     -- ID styles (highest specificity)
     ids = {
-        ["score-display"] = {
-            textSize = 36,
+        ["main-dispenser"] = {
+            position = {10, 2, 5},    -- Specific position override
         },
     },
 }
 ```
 
-## 7.5 Layouts.lua Structure
+## 7.5 Value Conversion Reference
+
+The system automatically converts array syntax to Roblox types:
+
+### GUI Value Types
+
+| Input | Converts To | Example |
+|-------|-------------|---------|
+| `{s, o, s, o}` | `UDim2` | `{0.5, 0, 0.5, 0}` |
+| `{r, g, b}` | `Color3` | `{255, 170, 0}` (0-255 range) |
+| `{x, y}` | `Vector2` | `{0.5, 0.5}` |
+| `"FontName"` | `Enum.Font` | `"GothamBold"` |
+| `"Left"` | Alignment Enum | `"Center"`, `"Right"` |
+
+### Asset Value Types (NEW)
+
+| Property | Input | Converts To | Notes |
+|----------|-------|-------------|-------|
+| `position` | `{x, y, z}` | `Vector3` | World position offset |
+| `rotation` | `{x, y, z}` | `Vector3` | **Degrees** (converted to radians internally) |
+| `offset` | `{x, y, z}` | `Vector3` | Local space translation |
+| `scale` | `{x, y, z}` or `n` | `Vector3` | Uniform: `1.5`, Non-uniform: `{2, 1, 2}` |
+| `pivot` | `CFrame` | `CFrame` | Explicit pivot (advanced) |
+
+## 7.6 Transform Composition Rules
+
+When multiple transform properties are specified, they're applied in this order:
+
+1. **Base CFrame**: Start from current transform (or explicit `pivot`)
+2. **Position**: Apply world position offset (`+position`)
+3. **Rotation**: Apply rotation (`* CFrame.Angles(...)`)
+4. **Offset**: Apply local space translation (`* CFrame.new(offset)`)
+5. **Scale**: Apply to BasePart.Size (separate, idempotent)
+
+Example:
+
+```lua
+["WeaponRack"] = {
+    position = {10, 0, 5},    -- Move to (10, 0, 5)
+    rotation = {0, 45, 0},    -- Rotate 45° around Y axis
+    offset = {0, 0, -2},      -- Move 2 studs forward in local space
+}
+```
+
+## 7.7 Scaling System
+
+Asset scaling is **opt-in** for safety:
+
+1. Set `AllowScale = true` attribute on the BasePart in Studio
+2. Define `scale` property in styles
+3. System stores baseline size in `__StyleBaseSize` attribute
+4. Repeated applications are idempotent (always compute from baseline)
+
+```lua
+-- In Styles.lua
+["Crate"] = {
+    scale = 1.5,  -- Uniform 150% scale
+}
+
+-- Or non-uniform
+["FlatPlatform"] = {
+    scale = {2, 0.5, 2},  -- Wide and flat
+}
+```
+
+**Warning:** If `AllowScale` attribute is not set, scale will be blocked with a debug warning.
+
+## 7.8 Selector Matching
+
+Both GUI and Asset domains use the same selector syntax:
+
+### Type Selector
+
+Matches by `ClassName`:
+
+```lua
+base = {
+    TextLabel = { ... },  -- All TextLabels
+    Model = { ... },      -- All Models
+    BasePart = { ... },   -- All BaseParts
+}
+```
+
+### Class Selector
+
+Matches by `guiClass` (GUI) or `StyleClass` (Asset) attribute:
+
+```lua
+classes = {
+    ["hud-text"] = { ... },  -- Elements with class "hud-text"
+    ["Camper"] = { ... },    -- Assets with class "Camper"
+}
+```
+
+Space-separated classes apply in order:
+
+```lua
+-- Attribute: StyleClass = "Camper Camper1"
+-- Applies: base.Model → classes.Camper → classes.Camper1
+```
+
+### ID Selector
+
+Matches by `guiId` (GUI) or `StyleId` (Asset) attribute:
+
+```lua
+ids = {
+    ["main-dispenser"] = { ... },  -- Element/Asset with id="main-dispenser"
+}
+```
+
+For assets, `StyleId` defaults to instance `Name` if not set.
+
+## 7.9 Cascade Order (Specificity)
+
+Styles are resolved in this order (later overrides earlier):
+
+1. **Base** (by type)
+2. **Classes** (in order from attribute string)
+3. **ID**
+4. **Inline** (passed to StyleAsset/Create)
+
+Example:
+
+```lua
+-- Styles.lua
+base = {
+    Model = { position = {0, 0, 0} }
+}
+classes = {
+    ["Camper"] = { position = {0, 1, 0} },
+    ["Camper1"] = { rotation = {0, 0, 0} }
+}
+ids = {
+    ["special-camper"] = { position = {5, 1, 0} }
+}
+
+-- Asset with: StyleClass = "Camper Camper1", StyleId = "special-camper"
+-- Final computed style:
+--   position = {5, 1, 0}      (from ID, highest specificity)
+--   rotation = {0, 0, 0}      (from class Camper1)
+```
+
+## 7.10 Layouts.lua Structure
 
 ```lua
 return {
@@ -714,12 +1001,13 @@ return {
 }
 ```
 
-## 7.6 Asset Integration Pattern
+## 7.11 GUI Asset Integration Pattern
 
 Assets create standalone ScreenGuis with a `Content` wrapper:
 
 ```lua
 -- In asset's LocalScript
+local GUI = require(ReplicatedStorage:WaitForChild("GUI.GUI"))
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "GlobalTimer.ScreenGui"
 
@@ -729,14 +1017,45 @@ content.Size = UDim2.new(1, 0, 1, 0)
 content.BackgroundTransparency = 1
 content.Parent = screenGui
 
--- Create GUI elements
-local timerLabel = GUI:Create({ ... })
+-- Create GUI elements using style system
+local timerLabel = GUI:Create({
+    type = "TextLabel",
+    class = "hud-value",
+    text = "0:00",
+})
 timerLabel.Parent = content
 
 screenGui.Parent = playerGui
 ```
 
 The GUI system watches for these and repositions `Content` into layout regions.
+
+## 7.12 Complete Asset Styling Example
+
+```lua
+-- Camper.Script (Server)
+if not script.Name:match("^Camper%.") then return end
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local System = require(ReplicatedStorage:WaitForChild("System.System"))
+System:WaitForStage(System.Stages.SCRIPTS)
+
+local GUI = require(ReplicatedStorage:WaitForChild("GUI.GUI"))
+local runtimeAssets = workspace:WaitForChild("RuntimeAssets")
+local model = runtimeAssets:WaitForChild("Camper")
+
+-- Set up asset functionality
+local prompt = model.Anchor.ProximityPrompt
+prompt.Triggered:Connect(function(player)
+    -- Handle interaction
+end)
+
+-- Apply declarative positioning via style system
+model:SetAttribute("StyleClass", "Camper Camper1")  -- Position + rotation
+GUI:StyleAsset(model)
+
+System.Debug:Message("Camper", "Initialized and positioned")
+```
 
 ---
 
@@ -793,6 +1112,118 @@ end)
 local forceDrop = ReplicatedStorage:WaitForChild("Backpack.ForceItemDrop")
 forceDrop:Fire({ player = player, item = item })
 ```
+
+## 8.3 RunModes Subsystem
+
+**Location:** `src/System/RunModes/`
+
+Per-player game mode state machine.
+
+### Modes
+
+- **standby** - Player exploring, game inactive
+- **practice** - Game active with guidance, scores don't persist
+- **play** - Full game, scores persist, badges awarded
+
+### Configuration
+
+`RunModesConfig.lua` defines asset and input behavior per mode:
+
+```lua
+{
+    standby = {
+        assets = {
+            Camper = { active = true },
+            Dispenser = { active = false },
+            -- ...
+        },
+        input = {
+            prompts = { "Camper" },
+            gameControls = false,
+        },
+    },
+    practice = {
+        assets = {
+            RoastingStick = { active = true },
+            Dispenser = { active = true },
+            -- ...
+        },
+        input = {
+            prompts = { "Dispenser", "TimedEvaluator" },
+            gameControls = true,
+        },
+    },
+}
+```
+
+### API
+
+```lua
+local RunModes = require(ReplicatedStorage:WaitForChild("RunModes.RunModes"))
+
+-- Get player's current mode
+local mode = RunModes:GetMode(player)  -- "standby", "practice", "play"
+
+-- Set player's mode
+RunModes:SetMode(player, "practice")
+
+-- Listen for mode changes
+local modeChanged = ReplicatedStorage:WaitForChild("RunModes.ModeChanged")
+modeChanged.Event:Connect(function(player, newMode, oldMode)
+    -- React to mode change
+end)
+```
+
+## 8.4 Input Subsystem
+
+**Location:** `src/System/Input/`
+
+Manages per-player input state (ProximityPrompts, modals).
+
+### Features
+
+- Per-player allowed ProximityPrompts (controlled by RunModes config)
+- Modal stack tracking (disables world input when modal active)
+- Server-authoritative state with client synchronization
+
+### API
+
+```lua
+-- Server-side: Check if prompt should be active
+local InputManager = require(ReplicatedStorage:WaitForChild("Input.InputManager"))
+if InputManager:IsPromptAllowed(player, "Dispenser") then
+    -- Activate prompt for this player
+end
+
+-- Server-side: Push/pop modals
+local pushModal = ReplicatedStorage:WaitForChild("Input.PushModal")
+pushModal:Invoke(player, "tutorial-popup")
+
+local popModal = ReplicatedStorage:WaitForChild("Input.PopModal")
+popModal:Invoke(player, "tutorial-popup")
+```
+
+## 8.5 Tutorial Subsystem
+
+**Location:** `src/System/Tutorial/`
+
+Guides new players through game mechanics.
+
+### States
+
+- `inactive` - Not started
+- `completed` - Already finished tutorial
+- `rules` - Showing rules popup
+- `mode_select` - Choosing practice/play mode
+- `practice` - In practice mode with task list
+
+### Integration
+
+- Listens to Camper interaction to start tutorial
+- Uses Modal system for popups
+- Tracks task completion
+- Transitions players to practice mode
+- Resets when returning to standby
 
 ---
 
@@ -982,11 +1413,12 @@ Framework/v1/
 ├── default.project.json
 ├── wally.toml
 ├── .gitignore
-├── ARCHITECTURE.md
-├── README.md
-├── PROJECT_JOURNAL.md
-├── SYSTEM_REFERENCE.md
-├── Logs/                           # Session logs
+├── Logs/                           # Documentation and session logs
+│   ├── SYSTEM_REFERENCE.md         # This file
+│   ├── PROCEDURES.md               # Operational procedures
+│   ├── STYLING_SYSTEM.md           # Comprehensive styling guide
+│   ├── PROJECT_JOURNAL.md          # Development history
+│   └── SESSION_*.md                # Session-specific logs
 │
 └── src/
     ├── Assets/
@@ -1001,61 +1433,14 @@ Framework/v1/
     │   │       └── Script.server.lua
     │   │
     │   ├── GlobalTimer/
-    │   │   ├── init.meta.json
-    │   │   ├── ReplicatedStorage/
-    │   │   │   ├── TimerUpdate/init.meta.json
-    │   │   │   └── TimerExpired/init.meta.json
-    │   │   ├── StarterGui/
-    │   │   │   └── LocalScript.client.lua
-    │   │   └── _ServerScriptService/
-    │   │       └── Script.server.lua
-    │   │
-    │   ├── LeaderBoard/
-    │   │   ├── init.meta.json
-    │   │   ├── Billboard.rbxm
-    │   │   └── _ServerScriptService/
-    │   │       └── Script.server.lua
-    │   │
-    │   ├── MessageTicker/
-    │   │   ├── init.meta.json
-    │   │   ├── ReplicatedStorage/
-    │   │   │   └── MessageTicker/init.meta.json
-    │   │   └── StarterGui/
-    │   │       └── LocalScript.client.lua
-    │   │
-    │   ├── Orchestrator/
-    │   │   ├── init.meta.json
-    │   │   └── _ServerScriptService/
-    │   │       └── Script.server.lua
-    │   │
-    │   ├── RoastingStick/
-    │   │   ├── init.meta.json
-    │   │   └── _ServerScriptService/
-    │   │       └── Script.server.lua
-    │   │
     │   ├── Scoreboard/
-    │   │   ├── init.meta.json
-    │   │   ├── ReplicatedStorage/
-    │   │   │   ├── ScoreUpdate.rbxm
-    │   │   │   └── RoundComplete/init.meta.json
-    │   │   ├── StarterGui/
-    │   │   │   └── LocalScript.client.lua
-    │   │   └── _ServerScriptService/
-    │   │       └── Script.server.lua
-    │   │
     │   ├── TimedEvaluator/
-    │   │   ├── init.meta.json
-    │   │   ├── Anchor.rbxm
-    │   │   ├── StarterGui/
-    │   │   │   └── LocalScript.client.lua
-    │   │   └── _ServerScriptService/
-    │   │       └── Script.server.lua
-    │   │
-    │   └── ZoneController/
-    │       ├── init.meta.json
-    │       ├── Zone.rbxm
-    │       └── _ServerScriptService/
-    │           └── Script.server.lua
+    │   ├── ZoneController/
+    │   ├── Orchestrator/
+    │   ├── Camper/
+    │   ├── LeaderBoard/
+    │   ├── MessageTicker/
+    │   └── RoastingStick/
     │
     ├── Templates/
     │   ├── Marshmallow/
@@ -1077,6 +1462,7 @@ Framework/v1/
     │   │
     │   ├── ReplicatedStorage/
     │   │   ├── System.lua              # Stage API + Debug
+    │   │   ├── Visibility.lua          # Visibility utilities
     │   │   ├── BootStage/init.meta.json
     │   │   └── ClientBoot/init.meta.json
     │   │
@@ -1101,18 +1487,56 @@ Framework/v1/
     │   │   └── _ServerScriptService/
     │   │       └── Script.server.lua
     │   │
+    │   ├── RunModes/
+    │   │   ├── init.meta.json
+    │   │   ├── ReplicatedFirst/
+    │   │   │   └── RunModesConfig.lua
+    │   │   ├── ReplicatedStorage/
+    │   │   │   ├── RunModes.lua
+    │   │   │   ├── ModeChanged/init.meta.json
+    │   │   │   └── ModeRequest/init.meta.json
+    │   │   └── _ServerScriptService/
+    │   │       └── Script.server.lua
+    │   │
+    │   ├── Input/
+    │   │   ├── init.meta.json
+    │   │   ├── ReplicatedStorage/
+    │   │   │   ├── InputManager.lua
+    │   │   │   ├── StateChanged/init.meta.json (RemoteEvent)
+    │   │   │   ├── PushModalRemote/init.meta.json
+    │   │   │   ├── PopModalRemote/init.meta.json
+    │   │   │   ├── PushModal/init.meta.json (BindableFunction)
+    │   │   │   ├── PopModal/init.meta.json (BindableFunction)
+    │   │   │   └── IsPromptAllowed/init.meta.json (BindableFunction)
+    │   │   ├── StarterPlayerScripts/
+    │   │   │   └── Script.client.lua
+    │   │   └── _ServerScriptService/
+    │   │       └── Script.server.lua
+    │   │
+    │   ├── Tutorial/
+    │   │   ├── init.meta.json
+    │   │   ├── StarterGui/
+    │   │   │   └── LocalScript.client.lua
+    │   │   └── _ServerScriptService/
+    │   │       └── Script.server.lua
+    │   │
     │   └── GUI/
     │       ├── init.meta.json
     │       ├── ReplicatedFirst/
     │       │   ├── Layouts.lua
     │       │   └── Styles.lua
     │       ├── ReplicatedStorage/
-    │       │   ├── GUI.lua
+    │       │   ├── GUI.lua              # Main API
+    │       │   ├── DomainAdapter.lua    # Adapter interface
+    │       │   ├── GuiAdapter.lua       # GUI domain
+    │       │   ├── AssetAdapter.lua     # Asset domain (NEW)
+    │       │   ├── StyleEngine.lua      # Unified resolution (NEW)
     │       │   ├── ElementFactory.lua
     │       │   ├── LayoutBuilder.lua
     │       │   ├── StyleResolver.lua
     │       │   ├── StateManager.lua
-    │       │   └── ValueConverter.lua
+    │       │   ├── ValueConverter.lua
+    │       │   └── Modal.lua
     │       └── StarterPlayerScripts/
     │           └── Script.client.lua
     │
@@ -1146,7 +1570,14 @@ mkdir -p src/Assets/MyAsset/{ReplicatedStorage,StarterGui,_ServerScriptService}
 
 5. Create client script if needed (with guards)
 
-6. Test with full gameplay loop
+6. Apply positioning styles (optional):
+```lua
+local GUI = require(ReplicatedStorage:WaitForChild("GUI.GUI"))
+model:SetAttribute("StyleClass", "MyAsset")
+GUI:StyleAsset(model)
+```
+
+7. Test with full gameplay loop
 
 ## 13.2 Creating Events Between Assets
 
@@ -1278,6 +1709,57 @@ light.Parent = preview
 viewportFrame.Parent = parentFrame
 ```
 
+## 13.8 Declarative Asset Positioning (NEW)
+
+Position multiple assets in a circular arrangement:
+
+```lua
+-- In Styles.lua
+classes = {
+    ["CircleFormation"] = {
+        position = {0, 0, 0},  -- Center position
+    },
+    ["North"] = { rotation = {0, 0, 0} },
+    ["East"] = { rotation = {0, 90, 0} },
+    ["South"] = { rotation = {0, 180, 0} },
+    ["West"] = { rotation = {0, 270, 0} },
+}
+
+-- In asset server scripts
+local GUI = require(ReplicatedStorage:WaitForChild("GUI.GUI"))
+
+-- Position campers in circle
+local camper1 = runtimeAssets.Camper1
+camper1:SetAttribute("StyleClass", "CircleFormation North")
+GUI:StyleAsset(camper1, { position = {0, 0, -10} })  -- Inline override for radius
+
+local camper2 = runtimeAssets.Camper2
+camper2:SetAttribute("StyleClass", "CircleFormation East")
+GUI:StyleAsset(camper2, { position = {10, 0, 0} })
+```
+
+## 13.9 Idempotent Scaling (NEW)
+
+Scale parts safely with repeated applications:
+
+```lua
+-- Set AllowScale attribute in Studio first!
+part:SetAttribute("AllowScale", true)
+
+-- In Styles.lua
+classes = {
+    ["LargeCrate"] = {
+        scale = 1.5,  -- 150% size
+    },
+}
+
+-- In asset script
+local GUI = require(ReplicatedStorage:WaitForChild("GUI.GUI"))
+part:SetAttribute("StyleClass", "LargeCrate")
+GUI:StyleAsset(part)
+-- Applying multiple times won't drift - always 1.5x baseline
+```
+
 ---
 
 # Appendix A: Asset Quick Reference
@@ -1293,6 +1775,7 @@ viewportFrame.Parent = parentFrame
 | LeaderBoard | Yes | No | - | `RoundComplete`, `TimerExpired`, `Dispenser.Empty` |
 | RoastingStick | Yes | No | - | `Backpack.ItemAdded` |
 | MessageTicker | No | Yes | - | - |
+| Camper | Yes | No | - | `RunModes.ModeChanged` |
 
 ---
 
@@ -1312,6 +1795,8 @@ viewportFrame.Parent = parentFrame
 | `GlobalTimer.TimerExpired` | BindableEvent | GlobalTimer | - |
 | `GlobalTimer.TimerUpdate` | RemoteEvent | GlobalTimer | `{timeRemaining, formatted, isRunning}` |
 | `MessageTicker.MessageTicker` | RemoteEvent | Any | `message` (string) |
+| `RunModes.ModeChanged` | BindableEvent | RunModes | `{player, newMode, oldMode}` |
+| `Input.StateChanged` | RemoteEvent | Input | `{allowedPrompts, modalStack}` |
 
 ---
 
@@ -1319,6 +1804,9 @@ viewportFrame.Parent = parentFrame
 
 | Asset | Attribute | Type | Purpose |
 |-------|-----------|------|---------|
+| **All Assets** | `StyleClass` | string | Space-separated style classes (NEW) |
+| **All Assets** | `StyleId` | string | Unique style ID (NEW, optional) |
+| **BaseParts** | `AllowScale` | boolean | Allow style system scaling (NEW) |
 | Dispenser | `DispenseItem` | string | Template name to clone |
 | Dispenser | `Capacity` | number | Max items |
 | Dispenser | `Remaining` | number | Current count (state) |
@@ -1335,3 +1823,38 @@ viewportFrame.Parent = parentFrame
 | GlobalTimer | `CountdownStart` | number | Duration in M.SS format |
 | GlobalTimer | `TimeRemaining` | number | Current seconds (state) |
 | Marshmallow | `ToastLevel` | number | Cooking progress (state) |
+
+---
+
+# Appendix D: Style Property Reference (NEW)
+
+## GUI Properties
+
+| Property | Type | Example | Roblox Property |
+|----------|------|---------|-----------------|
+| `size` | UDim2 array | `{0.5, 0, 0.5, 0}` | `Size` |
+| `position` | UDim2 array | `{0.5, 0, 0.5, 0}` | `Position` |
+| `anchorPoint` | Vector2 array | `{0.5, 0.5}` | `AnchorPoint` |
+| `backgroundColor` | Color3 array | `{20, 20, 20}` | `BackgroundColor3` |
+| `textColor` | Color3 array | `{255, 255, 255}` | `TextColor3` |
+| `textSize` | number | `24` | `TextSize` |
+| `font` | string | `"GothamBold"` | `Font` (enum) |
+| `text` | string | `"Hello"` | `Text` |
+| `visible` | boolean | `true` | `Visible` |
+| `cornerRadius` | number/UDim | `12` | UICorner child |
+| `stroke` | table | `{color={255,255,255}, thickness=2}` | UIStroke child |
+| `padding` | number/table | `8` or `{all=8}` | UIPadding child |
+
+## Asset Properties (NEW)
+
+| Property | Type | Example | Notes |
+|----------|------|---------|-------|
+| `position` | Vector3 array | `{10, 2, 5}` | World position offset (studs) |
+| `rotation` | Vector3 array | `{0, 90, 0}` | Rotation in **degrees** (XYZ) |
+| `pivot` | CFrame | `CFrame.new(...)` | Explicit pivot (advanced) |
+| `offset` | Vector3 array | `{0, 0, -2}` | Local space translation |
+| `scale` | number or Vector3 | `1.5` or `{2, 1, 2}` | Requires `AllowScale=true` |
+
+---
+
+**End of System Reference**

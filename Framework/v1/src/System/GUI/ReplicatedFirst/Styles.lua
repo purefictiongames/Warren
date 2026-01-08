@@ -22,6 +22,7 @@
 return {
 	-- Base styles applied to all elements of a type
 	base = {
+		-- GUI Base Styles
 		TextLabel = {
 			backgroundTransparency = 1,
 			font = "SourceSans",
@@ -42,6 +43,14 @@ return {
 		},
 		ImageButton = {
 			backgroundTransparency = 1,
+		},
+
+		-- Asset Base Styles (3D objects)
+		Model = {
+			-- Default styles for all models (if any)
+		},
+		BasePart = {
+			-- Default styles for all parts (if any)
 		},
 	},
 
@@ -266,6 +275,62 @@ return {
 			textColor = {255, 200, 100},
 			textSize = 48,
 			backgroundTransparency = 1,
+		},
+
+		--------------------------------------------------------------------------------
+		-- ASSET STYLING (3D Objects)
+		-- Transform properties: position {x,y,z}, rotation {x,y,z} degrees, scale
+		--------------------------------------------------------------------------------
+
+		-- Example: Position assets above baseplate
+		["SpawnPoint"] = {
+			position = {0, 12, 0},  -- Y=12 studs above origin
+			rotation = {0, 90, 0},  -- Face east (90 degrees)
+		},
+
+		-- Example: Camper positioning (circular arrangement around fire)
+		["Camper"] = {
+			position = {0, 0.5, 0},  -- Slight Y offset above ground
+		},
+		["Camper1"] = {
+			rotation = {0, 0, 0},     -- North
+		},
+		["Camper2"] = {
+			rotation = {0, 90, 0},    -- East
+		},
+		["Camper3"] = {
+			rotation = {0, 180, 0},   -- South
+		},
+		["Camper4"] = {
+			rotation = {0, 270, 0},   -- West
+		},
+
+		-- Example: Dispenser positioning
+		["Dispenser"] = {
+			position = {0, 1, 0},     -- 1 stud above ground
+			rotation = {0, 0, 0},     -- Face forward
+		},
+
+		-- Example: TimedEvaluator positioning
+		["TimedEvaluator"] = {
+			position = {0, 0.5, 0},
+			rotation = {0, 45, 0},    -- Angled for visibility
+		},
+
+		-- Example: Scalable crate (requires AllowScale attribute on parts)
+		["Crate"] = {
+			scale = {1.2, 1.2, 1.2},  -- 120% size (uniform)
+		},
+		["CrateLarge"] = {
+			scale = {1.5, 1.5, 1.5},  -- 150% size
+		},
+		["CrateSmall"] = {
+			scale = {0.75, 0.75, 0.75},  -- 75% size
+		},
+
+		-- Example: Non-uniform scaling
+		["FlatPlatform"] = {
+			scale = {2, 0.5, 2},      -- Wide and flat (requires AllowScale)
 		},
 	},
 

@@ -409,15 +409,185 @@ RunModesConfig = {
 
 ---
 
+---
+
+### Day 8 (Jan 8, 2026) - Input & Visibility System Refactor
+
+**Session 19**
+
+**Major Success: Centralized Input Management**
+
+Completed comprehensive 4-phase architectural refactor addressing gaps identified in RunModes work:
+
+**Phase 1: Visibility Utility Module**
+- Extracted duplicated visibility code from Dispenser, TimedEvaluator, and Camper
+- Created `System/ReplicatedStorage/Visibility.lua` with `hideModel()`/`showModel()`
+- Uses `VisibleTransparency` attribute pattern for state preservation
+
+**Phase 2: Enable/Disable Protocol Standardization**
+- Fixed critical bug in TimedEvaluator: `Enable()` was calling `reset()`, causing duplicate timers
+- Standardized Enable/Disable semantics across all assets
+- Clear separation: Enable/Disable controls visibility, RunModes controls behavior
+
+**Phase 3: InputManager Subsystem**
+- Created `System/Input` subsystem with per-player state tracking
+- Integrated with RunModes configuration:
+```lua
+standby = {
+    input = { prompts = { "Camper" }, gameControls = false }
+}
+```
+- Server-to-server BindableFunctions for internal coordination
+- Client-to-server RemoteEvents for UI interactions
+- Pattern: Assets query `InputManager:IsPromptAllowed(player, assetName)` to check state
+
+**Phase 4: Reusable Modal System**
+- Built `System/GUI/ReplicatedStorage/Modal.lua` for all dialog UI
+- Quick helpers: `Modal.Alert()`, `Modal.Confirm()`
+- Automatic gamepad navigation via `GuiService.SelectedObject`
+- Integrated with InputManager for prompt blocking during modals
+- Refactored Tutorial popups to use Modal system (deleted 100+ lines of duplicate UI code)
+
+**Critical Bug Fixes:**
+
+1. **BindableFunction vs RemoteEvent Confusion**
+   - Initial implementation tried to invoke server BindableFunctions from client (doesn't work)
+   - Solution: Separate communication channels
+     - BindableFunctions: Server-to-server only
+     - RemoteEvents: Client-to-server messaging
+   - This distinction is now documented in PROCEDURES.md
+
+2. **RunModesConfig Path Resolution**
+   - `ReplicatedFirst:WaitForChild("RunModesConfig")` infinite yielded
+   - Root cause: Config isn't extracted during boot, lives in ServerScriptService.System hierarchy
+   - Fixed with correct path traversal
+
+**Architecture Win: Separation of Concerns**
+- Modal system owns UI lifecycle, delegates input state to InputManager
+- InputManager doesn't know about UI, only tracks state
+- Both systems work independently and gracefully degrade if the other is missing
+
+---
+
+### Day 9 (Jan 8, 2026) - Unified Styling System
+
+**Session 20**
+
+**Major Success: Single Declarative Language for GUI + 3D Assets**
+
+Extended the CSS-like GUI styling system to also handle 3D asset positioning and transforms. This eliminated all hardcoded `CFrame` and `PivotTo` calls in favor of declarative styles in Styles.lua.
+
+**System Architecture: Domain Adapters**
+
+Created adapter pattern to unify styling across domains:
+- **DomainAdapter.lua** - Interface definition
+- **GuiAdapter.lua** - Handles GUI properties (TextSize, BackgroundColor, etc.)
+- **AssetAdapter.lua** - Handles 3D transforms (position, rotation, scale, etc.)
+- **StyleEngine.lua** - Unified resolution engine works for both domains
+
+**Transform Properties (Arrays Auto-Convert):**
+```lua
+["Camper1"] = {
+    position = {10, 0.5, -5},     -- Vector3
+    rotation = {0, 45, 0},         -- Degrees (converted to radians internally)
+    pivot = {0, 0, 0},             -- Pivot offset
+    offset = {0, 2, 0},            -- Position offset
+    scale = {1.2, 1.2, 1.2},       -- Requires AllowScale attribute
+}
+```
+
+**Key Design Decisions:**
+
+1. **Rotation in Degrees (Not Radians)**
+   - More intuitive for designers: `{0, 90, 0}` instead of `{0, 1.5708, 0}`
+   - Converted to radians internally by ValueConverter
+
+2. **Opt-In Scaling with Idempotency**
+   - Scale requires `AllowScale` attribute on BaseParts (prevents accidental geometry destruction)
+   - Stores baseline size in `__StyleBaseSize` attribute
+   - Always scales from baseline to prevent drift on repeated applications
+
+3. **Transform Composition Order**
+   - Deterministic: base position → rotation → offset → scale
+   - Pivot point controls rotation center
+   - Consistent behavior across Models, BaseParts, and Attachments
+
+4. **Same Cascade Rules as GUI**
+   - base → class → id → inline
+   - Responsive breakpoints work (`@tablet`, `@phone`)
+   - Runtime updates supported
+
+**New Public APIs:**
+```lua
+GUI:StyleAsset(asset, inlineStyles)      -- Style single asset
+GUI:StyleAssetTree(rootAsset, inlineStyles)  -- Style asset + descendants
+```
+
+**Implementation Phases:**
+
+**Phase 1: Domain Abstraction**
+- Created DomainAdapter interface
+- Extracted GUI logic into GuiAdapter
+- Built AssetAdapter with transform handling
+- Extended ValueConverter with asset-specific conversions
+
+**Phase 2: Unified Resolution**
+- Created StyleEngine with domain-agnostic resolution
+- Modified GUI.lua to expose asset styling APIs
+- Extended Styles.lua with asset styling examples
+
+**Technical Wins:**
+
+1. **No Breaking Changes** - GUI system continues to work exactly as before
+2. **Clean Separation** - Domain adapters isolate property handling logic
+3. **Single Source of Truth** - All positioning in Styles.lua, not scattered in scripts
+4. **Testable** - Styling is data, not imperative code
+
+**Testing:**
+- System booted cleanly on first attempt
+- No errors in game logs
+- All existing game mechanics continued to function
+- Asset styling examples validated
+
+**Documentation Updated:**
+- SYSTEM_REFERENCE.md → v2.0 (1860 lines) with complete asset styling documentation
+- PROCEDURES.md → Added Section 10.7 "Asset Positioning and Styling" + 4 new pitfalls
+- STYLING_SYSTEM.md → New comprehensive guide (2500+ lines) covering both domains
+
+**What This Enables:**
+
+Before:
+```lua
+-- Hardcoded in script
+camper1.PivotTo(CFrame.new(10, 0.5, -5) * CFrame.Angles(0, math.rad(45), 0))
+```
+
+After:
+```lua
+-- In Styles.lua
+["Camper1"] = {
+    position = {10, 0.5, -5},
+    rotation = {0, 45, 0},
+}
+
+-- In script (no positioning logic)
+GUI:StyleAsset(camper1)
+```
+
+This pattern extends to all game assets: Dispensers, TimedEvaluators, spawn points, props, etc.
+
+---
+
 ## Statistics
 
-- **Session Logs Written:** 18
-- **Commits:** ~30
-- **Lua Files:** 40+
-- **Assets Built:** 11 (added Camper, Tutorial)
+- **Session Logs Written:** 20
+- **Commits:** ~35
+- **Lua Files:** 48+
+- **Assets Built:** 11
 - **Templates Built:** 2
-- **System Modules Built:** 4 (added RunModes)
-- **Lines of Code:** ~4,500 (estimate)
+- **System Modules Built:** 6 (added Input, Visibility)
+- **Lines of Code:** ~5,500 (estimate)
 - **Debug Calls Migrated:** 97
-- **Major Pivots:** 4 (added RunModes refactor)
+- **Major Pivots:** 5 (added Input/Visibility refactor, Unified Styling)
 - **Days to Working Game Loop:** 2
+- **Documentation Pages:** 3 (SYSTEM_REFERENCE, PROCEDURES, STYLING_SYSTEM)

@@ -20,6 +20,8 @@ local ElementFactory = require(ReplicatedStorage:WaitForChild("GUI.ElementFactor
 local LayoutBuilder = require(ReplicatedStorage:WaitForChild("GUI.LayoutBuilder"))
 local StyleResolver = require(ReplicatedStorage:WaitForChild("GUI.StyleResolver"))
 local ValueConverter = require(ReplicatedStorage:WaitForChild("GUI.ValueConverter"))
+local StyleEngine = require(ReplicatedStorage:WaitForChild("GUI.StyleEngine"))
+local AssetAdapter = require(ReplicatedStorage:WaitForChild("GUI.AssetAdapter"))
 
 local GUI = {
 	-- Internal state
@@ -523,6 +525,51 @@ function GUI:RefreshStyles()
 			self:_reapplyStyles(element)
 		end
 	end
+end
+
+--------------------------------------------------------------------------------
+-- ASSET STYLING (Phase 2: Unified Style System)
+--------------------------------------------------------------------------------
+
+-- Apply styles to a single asset (Model, BasePart, Attachment)
+-- @param asset: The Roblox instance to style
+-- @param inlineStyles: Optional table of inline style overrides
+-- Reads StyleClass and StyleId from attributes
+function GUI:StyleAsset(asset, inlineStyles)
+	if not asset then
+		return
+	end
+
+	self:_loadStyles()
+
+	-- Use StyleEngine with AssetAdapter
+	StyleEngine.ApplyNode(
+		asset,
+		self._styles,
+		AssetAdapter,
+		self._currentBreakpoint,
+		inlineStyles
+	)
+end
+
+-- Apply styles to an entire asset tree (root + descendants)
+-- @param rootAsset: Root asset instance to start from
+-- @param inlineStyles: Optional inline styles for root only
+function GUI:StyleAssetTree(rootAsset, inlineStyles)
+	if not rootAsset then
+		return
+	end
+
+	self:_loadStyles()
+
+	-- Use StyleEngine with AssetAdapter
+	StyleEngine.ApplyTree(
+		rootAsset,
+		self._styles,
+		AssetAdapter,
+		self._currentBreakpoint,
+		inlineStyles
+	)
 end
 
 return GUI

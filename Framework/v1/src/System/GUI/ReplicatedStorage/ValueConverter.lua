@@ -149,6 +149,36 @@ function ValueConverter.toVector3(value)
 	return nil
 end
 
+-- Convert rotation degrees to radians Vector3 (for asset transforms)
+function ValueConverter.toRotationRadians(value)
+	local vec = ValueConverter.toVector3(value)
+	if vec then
+		return Vector3.new(
+			math.rad(vec.X),
+			math.rad(vec.Y),
+			math.rad(vec.Z)
+		)
+	end
+	return nil
+end
+
+-- Convert scale value (single number for uniform, or Vector3 for non-uniform)
+function ValueConverter.toScaleValue(value)
+	if type(value) == "number" then
+		return Vector3.new(value, value, value)  -- Uniform scale
+	end
+	return ValueConverter.toVector3(value)  -- Non-uniform scale
+end
+
+-- Convert explicit CFrame (advanced use for pivot)
+function ValueConverter.toCFrame(value)
+	if typeof(value) == "CFrame" then
+		return value
+	end
+	-- Future: could support {position = {...}, rotation = {...}} table format
+	return nil
+end
+
 -- Convert a 3-element array to Color3 (assumes RGB 0-255)
 function ValueConverter.toColor3(value)
 	if typeof(value) == "Color3" then

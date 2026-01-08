@@ -47,7 +47,9 @@ This is the most important principle in this codebase. When we build an abstract
 |--------|----------|-----------|
 | GUI Creation | `GUI:Create()` | `Instance.new("TextLabel")` for UI |
 | Layouts | `Layouts.lua` config + `GUI:CreateLayout()` | Manual positioning in code |
-| Styles | `Styles.lua` classes | Inline property assignment |
+| Styles (GUI) | `Styles.lua` classes | Inline property assignment |
+| Styles (Assets) | `Styles.lua` + `GUI:StyleAsset()` | Manual CFrame/position setting |
+| Asset Positioning | Declarative via `StyleClass` attribute | Hardcoded `Model:PivotTo()` calls |
 | Debug Output | `System.Debug:Message()` | `print()` or `warn()` |
 | Boot Sequencing | `System:WaitForStage()` | Raw `WaitForChild()` chains |
 | Events | Folder-based event creation | `Instance.new("BindableEvent")` inline |
@@ -65,6 +67,8 @@ This is the most important principle in this codebase. When we build an abstract
 If you find yourself writing:
 - `Instance.new("TextLabel")` for UI → STOP, use `GUI:Create()`
 - `element.TextColor3 = Color3.new(...)` → STOP, use `Styles.lua` class
+- `model:PivotTo(CFrame.new(...))` → STOP, use `GUI:StyleAsset()` with `Styles.lua`
+- `part.CFrame = CFrame.new(...)` for positioning → STOP, use declarative styles
 - `print("something")` → STOP, use `System.Debug:Message()`
 - `UDim2.new(...)` scattered in code → STOP, define in Layouts.lua
 
@@ -316,10 +320,27 @@ For medium/high complexity: Create a plan, confirm with user before implementing
    end
 
    setupAssetName(model)
+
+   -- Apply declarative positioning (if asset has world presence)
+   local GUI = require(ReplicatedStorage:WaitForChild("GUI.GUI"))
+   model:SetAttribute("StyleClass", "AssetName")  -- Define in Styles.lua
+   GUI:StyleAsset(model)
+
    System.Debug:Message("AssetName", "Setup complete")
    ```
 
-4. **Create Client Script if Needed - USING GUI SYSTEM**
+4. **Define Asset Positioning in Styles.lua**
+   ```lua
+   -- In src/System/GUI/ReplicatedFirst/Styles.lua
+   classes = {
+       ["AssetName"] = {
+           position = {x, y, z},  -- World position in studs
+           rotation = {x, y, z},  -- Rotation in degrees
+       },
+   }
+   ```
+
+5. **Create Client Script if Needed - USING GUI SYSTEM**
    ```lua
    -- AssetName.LocalScript (Client)
 
@@ -361,13 +382,13 @@ For medium/high complexity: Create a plan, confirm with user before implementing
    screenGui.Parent = playerGui
    ```
 
-5. **Test Incrementally**
+6. **Test Incrementally**
    - Verify Rojo syncs the asset
    - Verify boot completes
    - Verify asset functions
    - Test full gameplay loop
 
-6. **Commit Individually**
+7. **Commit Individually**
    - One commit per asset
    - Clear commit message describing what the asset does
 
@@ -778,6 +799,57 @@ label.TextSize = 24
 label.Font = Enum.Font.GothamBold
 ```
 
+## 10.7 Asset Positioning and Styling
+
+```lua
+-- CORRECT - Declarative positioning via style system
+local GUI = require(ReplicatedStorage:WaitForChild("GUI.GUI"))
+
+-- Define in Styles.lua first:
+-- classes = {
+--     ["Camper"] = {
+--         position = {0, 0.5, 0},
+--         rotation = {0, 90, 0},
+--     },
+-- }
+
+-- Then apply in asset script:
+model:SetAttribute("StyleClass", "Camper Camper1")
+GUI:StyleAsset(model)
+
+-- WRONG - Manual positioning
+model:PivotTo(CFrame.new(10, 0, 5) * CFrame.Angles(0, math.rad(90), 0))
+```
+
+### Asset Transform Properties
+
+| Property | Type | Example | Purpose |
+|----------|------|---------|---------|
+| `position` | `{x, y, z}` | `{10, 2, 5}` | World position offset (studs) |
+| `rotation` | `{x, y, z}` | `{0, 90, 0}` | Rotation in **degrees** |
+| `offset` | `{x, y, z}` | `{0, 0, -2}` | Local space translation |
+| `scale` | `n` or `{x,y,z}` | `1.5` | Requires `AllowScale=true` attribute |
+
+### Scaling Safety
+
+```lua
+-- In Studio: Set AllowScale attribute on BasePart first
+part:SetAttribute("AllowScale", true)
+
+-- In Styles.lua:
+["LargeCrate"] = {
+    scale = 1.5,  -- 150% size (uniform)
+}
+-- OR
+["FlatPlatform"] = {
+    scale = {2, 0.5, 2},  -- Non-uniform: wide and flat
+}
+
+-- Then apply:
+part:SetAttribute("StyleClass", "LargeCrate")
+GUI:StyleAsset(part)
+```
+
 ---
 
 # 11. Common Pitfalls
@@ -848,6 +920,30 @@ end)
 **Pitfall:** Setting `element.TextColor3 = ...` directly instead of using classes.
 
 **Prevention:** Define style in `Styles.lua`, apply via `class` in definition.
+
+## 11.11 Manual Asset Positioning
+
+**Pitfall:** Hardcoding `model:PivotTo(CFrame.new(...))` or `part.CFrame = ...` in asset scripts.
+
+**Prevention:** Define position/rotation in `Styles.lua`, apply via `GUI:StyleAsset()`.
+
+## 11.12 Forgetting AllowScale Attribute
+
+**Pitfall:** Defining `scale` in styles but part doesn't scale, no visible error.
+
+**Prevention:** Set `AllowScale = true` attribute on BasePart in Studio before applying scale styles. Check Output for warnings.
+
+## 11.13 Applying Scale to Models
+
+**Pitfall:** Trying to scale a Model instance (not currently supported).
+
+**Prevention:** Only apply `scale` to BaseParts. For models, scale individual parts or adjust in Studio.
+
+## 11.14 Rotation in Radians
+
+**Pitfall:** Using `math.rad()` values in style definitions.
+
+**Prevention:** Style system expects **degrees**. Use `{0, 90, 0}` not `{0, 1.57, 0}`.
 
 ---
 
@@ -957,9 +1053,12 @@ The moment you bypass a system "just this once," you've created inconsistency th
 - [ ] Create server script with guard and WaitForStage
 - [ ] Create client script if needed (with guard and WaitForStage)
 - [ ] **Use GUI system for all UI elements**
-- [ ] **Use Styles.lua for all styling**
+- [ ] **Use Styles.lua for all styling (GUI and asset positioning)**
+- [ ] **Define asset position/rotation in Styles.lua**
+- [ ] **Apply positioning with GUI:StyleAsset()**
 - [ ] **Use System.Debug for all logging**
 - [ ] Export .rbxm for physical components
+- [ ] Set AllowScale attribute if using scale styles
 - [ ] Create events via folder structure
 - [ ] Test boot completes
 - [ ] Test asset functionality
@@ -974,6 +1073,8 @@ The moment you bypass a system "just this once," you've created inconsistency th
 - [ ] No `print()` or `warn()` calls (use System.Debug)
 - [ ] No `Instance.new()` for UI (use GUI:Create)
 - [ ] No inline styling (use Styles.lua classes)
+- [ ] No manual asset positioning (use GUI:StyleAsset)
+- [ ] Asset transforms defined in Styles.lua
 - [ ] Debug messages use System.Debug API
 - [ ] File names follow conventions
 - [ ] Commit message is descriptive
@@ -991,10 +1092,12 @@ The moment you bypass a system "just this once," you've created inconsistency th
 Before writing code, ask:
 
 - [ ] Am I using `Instance.new()` for UI? → Use `GUI:Create()` instead
-- [ ] Am I setting properties directly? → Use style classes instead
+- [ ] Am I setting GUI properties directly? → Use style classes instead
+- [ ] Am I using `model:PivotTo()` or `part.CFrame = ...`? → Use `GUI:StyleAsset()` instead
+- [ ] Am I hardcoding asset positions/rotations? → Define in Styles.lua instead
 - [ ] Am I using `print()`? → Use `System.Debug:Message()` instead
 - [ ] Am I using `Instance.new("BindableEvent")`? → Use folder structure instead
-- [ ] Am I hardcoding positions/sizes? → Use Layouts.lua instead
+- [ ] Am I hardcoding GUI positions/sizes? → Use Layouts.lua instead
 - [ ] Am I waiting with WaitForChild chains? → Use `WaitForStage()` instead
 
 If you answered yes to any: STOP and use the established system.

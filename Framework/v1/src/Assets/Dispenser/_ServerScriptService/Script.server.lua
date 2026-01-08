@@ -27,6 +27,7 @@ System:WaitForStage(System.Stages.SCRIPTS)
 System:RegisterAsset("Dispenser", function()
 	-- Dependencies
 	local Dispenser = require(ReplicatedStorage:WaitForChild("Dispenser.ModuleScript"))
+	local Visibility = require(ReplicatedStorage:WaitForChild("System.Visibility"))
 	local runtimeAssets = game.Workspace:WaitForChild("RuntimeAssets")
 	local model = runtimeAssets:WaitForChild("Dispenser")
 
@@ -40,28 +41,6 @@ System:RegisterAsset("Dispenser", function()
 	local emptyEvent = Instance.new("BindableEvent")
 	emptyEvent.Name = "Dispenser.Empty"
 	emptyEvent.Parent = ReplicatedStorage
-
-	-- Hide/show model using VisibleTransparency attribute as source of truth
-	local function hideModel(mdl)
-		for _, part in ipairs(mdl:GetDescendants()) do
-			if part:IsA("BasePart") then
-				-- Store original transparency if not already stored
-				if part:GetAttribute("VisibleTransparency") == nil then
-					part:SetAttribute("VisibleTransparency", part.Transparency)
-				end
-				part.Transparency = 1
-			end
-		end
-	end
-
-	local function showModel(mdl)
-		for _, part in ipairs(mdl:GetDescendants()) do
-			if part:IsA("BasePart") then
-				local visible = part:GetAttribute("VisibleTransparency")
-				part.Transparency = visible or 0
-			end
-		end
-	end
 
 	-- Get config from model attributes
 	local itemType = model:GetAttribute("DispenseItem") or "Marshmallow"
@@ -151,7 +130,7 @@ System:RegisterAsset("Dispenser", function()
 	local enableFunction = Instance.new("BindableFunction")
 	enableFunction.Name = "Enable"
 	enableFunction.OnInvoke = function()
-		showModel(model)
+		Visibility.showModel(model)
 		prompt.Enabled = true
 		model:SetAttribute("IsEnabled", true)
 		model:SetAttribute("HUDVisible", true)
@@ -164,7 +143,7 @@ System:RegisterAsset("Dispenser", function()
 	local disableFunction = Instance.new("BindableFunction")
 	disableFunction.Name = "Disable"
 	disableFunction.OnInvoke = function()
-		hideModel(model)
+		Visibility.hideModel(model)
 		prompt.Enabled = false
 		model:SetAttribute("IsEnabled", false)
 		model:SetAttribute("HUDVisible", false)

@@ -28,6 +28,7 @@ System:WaitForStage(System.Stages.READY)
 
 -- Load dependencies
 local GUI = require(ReplicatedStorage:WaitForChild("GUI.GUI"))
+local Modal = require(ReplicatedStorage:WaitForChild("GUI.Modal"))
 local tutorialCommand = ReplicatedStorage:WaitForChild("Tutorial.TutorialCommand")
 
 -- Load config
@@ -59,7 +60,7 @@ local currentState = "inactive"
 local currentPopup = nil
 local completedTasks = {}
 
--- Create popup window
+-- Create popup window using Modal system
 local function createPopup(popupConfig)
 	-- Remove existing popup
 	if currentPopup then
@@ -67,136 +68,40 @@ local function createPopup(popupConfig)
 		currentPopup = nil
 	end
 
-	-- Clear GUI selection when closing popup
-	GuiService.SelectedObject = nil
-
 	if not popupConfig then
 		return
 	end
 
-	-- Find the primary button (for GUI selection)
-	local primaryButtonId = nil
-	for _, btn in ipairs(popupConfig.buttons or {}) do
-		if btn.primary then
-			primaryButtonId = btn.id
-			break
-		end
-	end
-	-- Fall back to first button if no primary specified
-	if not primaryButtonId and popupConfig.buttons and #popupConfig.buttons > 0 then
-		primaryButtonId = popupConfig.buttons[1].id
-	end
-
-	-- Build button children with unique IDs for later wiring
-	local buttonChildren = {}
-	local buttonConfigs = {} -- Store button configs for wiring
-	local primaryElementId = nil
+	-- Convert config buttons to Modal button format
+	local modalButtons = {}
 	for i, btn in ipairs(popupConfig.buttons or {}) do
-		local buttonClass = btn.primary and "popup-btn popup-btn-primary" or "popup-btn"
-		local buttonId = "popup-btn-" .. btn.id
-		local isPrimary = btn.primary or (i == 1 and not primaryButtonId)
-		if isPrimary then
-			primaryElementId = buttonId
-		end
-		table.insert(buttonChildren, {
-			type = "TextButton",
-			id = buttonId,
-			class = buttonClass,
-			text = btn.text,
-			size = { 0, 140, 0, 40 },
-			position = { 0, (i - 1) * 150, 0, 0 },
+		local isPrimary = btn.primary or (i == 1)
+		table.insert(modalButtons, {
+			id = btn.id,
+			label = btn.text,
+			primary = isPrimary,
+			closeOnClick = false, -- We handle closing manually after server confirms
+			callback = function(buttonId)
+				System.Debug:Message("Tutorial Client", "Button activated:", buttonId)
+				tutorialCommand:FireServer({
+					action = "button_click",
+					buttonId = buttonId,
+				})
+			end,
 		})
-		table.insert(buttonConfigs, { elementId = buttonId, buttonId = btn.id, isPrimary = isPrimary })
 	end
 
-	-- Create popup using GUI system
-	currentPopup = GUI:Create({
-		type = "ScreenGui",
-		name = "Tutorial.Popup",
-		displayOrder = 200,
-		resetOnSpawn = false,
-		children = {
-			-- Dark overlay
-			{
-				type = "Frame",
-				class = "popup-overlay",
-				size = { 1, 0, 1, 0 },
-				position = { 0, 0, 0, 0 },
-			},
-			-- Popup window
-			{
-				type = "Frame",
-				class = "popup-window",
-				size = { 0.5, 0, 0.4, 0 },
-				position = { 0.5, 0, 0.5, 0 },
-				anchorPoint = { 0.5, 0.5 },
-				children = {
-					-- Title
-					{
-						type = "TextLabel",
-						class = "popup-title",
-						text = popupConfig.title or "",
-						size = { 0.9, 0, 0.15, 0 },
-						position = { 0.5, 0, 0.08, 0 },
-						anchorPoint = { 0.5, 0 },
-						textXAlignment = "Center",
-					},
-					-- Body
-					{
-						type = "TextLabel",
-						class = "popup-body",
-						text = popupConfig.body or "",
-						size = { 0.85, 0, 0.5, 0 },
-						position = { 0.5, 0, 0.25, 0 },
-						anchorPoint = { 0.5, 0 },
-						textXAlignment = "Left",
-						textYAlignment = "Top",
-						textWrapped = true,
-					},
-					-- Buttons container
-					{
-						type = "Frame",
-						class = "transparent",
-						size = { 0.8, 0, 0.2, 0 },
-						position = { 0.5, 0, 0.8, 0 },
-						anchorPoint = { 0.5, 0 },
-						children = buttonChildren,
-					},
-				},
-			},
-		},
+	-- Create modal using Modal system
+	currentPopup = Modal.new({
+		id = "tutorial-popup",
+		title = popupConfig.title,
+		body = popupConfig.body,
+		buttons = modalButtons,
+		width = 500,
 	})
+	currentPopup:Show()
 
-	if currentPopup then
-		currentPopup.Parent = playerGui
-
-		-- Wire up button events and select primary button for gamepad
-		local primaryButton = nil
-		for _, btnConfig in ipairs(buttonConfigs) do
-			local button = GUI:GetById(btnConfig.elementId)
-			if button then
-				-- Use Activated event - fires for mouse click, touch tap, AND gamepad A when selected
-				button.Activated:Connect(function()
-					System.Debug:Message("Tutorial Client", "Button activated:", btnConfig.buttonId)
-					tutorialCommand:FireServer({
-						action = "button_click",
-						buttonId = btnConfig.buttonId,
-					})
-				end)
-
-				-- Track primary button for selection
-				if btnConfig.isPrimary then
-					primaryButton = button
-				end
-			end
-		end
-
-		-- Select primary button for gamepad navigation
-		if primaryButton then
-			GuiService.SelectedObject = primaryButton
-			System.Debug:Message("Tutorial Client", "Selected button for gamepad:", primaryButton.Name)
-		end
-	end
+	System.Debug:Message("Tutorial Client", "Created popup with Modal system")
 end
 
 --------------------------------------------------------------------------------
@@ -306,11 +211,10 @@ local function onStateChanged(oldState, newState)
 	currentState = newState
 	System.Debug:Message("Tutorial Client", "State changed:", oldState, "->", newState)
 
-	-- Hide popup for non-popup states
+	-- Hide popup for non-popup states (Modal handles GuiService cleanup internally)
 	if currentPopup then
 		currentPopup:Destroy()
 		currentPopup = nil
-		GuiService.SelectedObject = nil
 	end
 
 	-- Show appropriate popup

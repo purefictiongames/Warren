@@ -27,6 +27,7 @@ System:WaitForStage(System.Stages.SCRIPTS)
 -- Register init function (will be called at ASSETS stage)
 System:RegisterAsset("TimedEvaluator", function()
 	-- Dependencies
+	local Visibility = require(ReplicatedStorage:WaitForChild("System.Visibility"))
 	local forceItemPickup = ReplicatedStorage:WaitForChild("Backpack.ForceItemPickup")
 	local runtimeAssets = game.Workspace:WaitForChild("RuntimeAssets")
 	local model = runtimeAssets:WaitForChild("TimedEvaluator")
@@ -42,28 +43,6 @@ System:RegisterAsset("TimedEvaluator", function()
 	if targetMin == nil or targetMin <= 0 then targetMin = 10 end
 	if targetMax == nil or targetMax <= 0 then targetMax = 100 end
 	if targetMin > targetMax then targetMin, targetMax = targetMax, targetMin end
-
-	-- Hide/show model using VisibleTransparency attribute as source of truth
-	local function hideModel(mdl)
-		for _, part in ipairs(mdl:GetDescendants()) do
-			if part:IsA("BasePart") then
-				-- Store original transparency if not already stored
-				if part:GetAttribute("VisibleTransparency") == nil then
-					part:SetAttribute("VisibleTransparency", part.Transparency)
-				end
-				part.Transparency = 1
-			end
-		end
-	end
-
-	local function showModel(mdl)
-		for _, part in ipairs(mdl:GetDescendants()) do
-			if part:IsA("BasePart") then
-				local visible = part:GetAttribute("VisibleTransparency")
-				part.Transparency = visible or 0
-			end
-		end
-	end
 
 	-- Find components
 	local anchor = model:FindFirstChild("Anchor")
@@ -282,15 +261,14 @@ System:RegisterAsset("TimedEvaluator", function()
 	resetFunction.Parent = model
 
 	-- Expose Enable via BindableFunction (for RunModes)
+	-- NOTE: Enable does NOT call reset() - Orchestrator calls Reset() explicitly when starting game loop
 	local enableFunction = Instance.new("BindableFunction")
 	enableFunction.Name = "Enable"
 	enableFunction.OnInvoke = function()
-		showModel(model)
+		Visibility.showModel(model)
 		prompt.Enabled = true
 		model:SetAttribute("IsEnabled", true)
 		model:SetAttribute("HUDVisible", true)
-		-- Reset and start timer when enabled
-		reset()
 		System.Debug:Message("TimedEvaluator", "Enabled")
 		return true
 	end
@@ -306,7 +284,7 @@ System:RegisterAsset("TimedEvaluator", function()
 			timerThread = nil
 		end
 		isRunning = false
-		hideModel(model)
+		Visibility.hideModel(model)
 		prompt.Enabled = false
 		model:SetAttribute("IsEnabled", false)
 		model:SetAttribute("HUDVisible", false)

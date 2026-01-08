@@ -36,6 +36,11 @@ return {
 				TimedEvaluator = { active = false, visible = false },
 				Camper = { active = true, behavior = "tutorial" },
 			},
+			input = {
+				-- Only Camper prompt enabled in standby
+				prompts = { "Camper" },
+				gameControls = false,
+			},
 			scoring = {
 				persist = false,
 				badges = false,
@@ -57,6 +62,11 @@ return {
 				TimedEvaluator = { active = true, visible = true },
 				Camper = { active = false },
 			},
+			input = {
+				-- Game prompts enabled in practice
+				prompts = { "Dispenser", "TimedEvaluator" },
+				gameControls = true,
+			},
 			scoring = {
 				persist = false,
 				badges = false,
@@ -76,6 +86,11 @@ return {
 				Scoreboard = { active = true, visible = true },
 				TimedEvaluator = { active = true, visible = true },
 				Camper = { active = false },
+			},
+			input = {
+				-- Game prompts enabled in play
+				prompts = { "Dispenser", "TimedEvaluator" },
+				gameControls = true,
 			},
 			scoring = {
 				persist = true,

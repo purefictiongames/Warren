@@ -26,31 +26,10 @@ System:WaitForStage(System.Stages.SCRIPTS)
 -- Register init function (will be called at ASSETS stage)
 System:RegisterAsset("Camper", function()
 	-- Dependencies
+	local Visibility = require(ReplicatedStorage:WaitForChild("System.Visibility"))
 	local runtimeAssets = game.Workspace:WaitForChild("RuntimeAssets")
 	local model = runtimeAssets:WaitForChild("Camper")
 	local interactEvent = ReplicatedStorage:WaitForChild("Camper.Interact")
-
-	-- Hide/show model using VisibleTransparency attribute as source of truth
-	local function hideModel(mdl)
-		for _, part in ipairs(mdl:GetDescendants()) do
-			if part:IsA("BasePart") then
-				-- Store original transparency if not already stored
-				if part:GetAttribute("VisibleTransparency") == nil then
-					part:SetAttribute("VisibleTransparency", part.Transparency)
-				end
-				part.Transparency = 1
-			end
-		end
-	end
-
-	local function showModel(mdl)
-		for _, part in ipairs(mdl:GetDescendants()) do
-			if part:IsA("BasePart") then
-				local visible = part:GetAttribute("VisibleTransparency")
-				part.Transparency = visible or 0
-			end
-		end
-	end
 
 	-- Find Anchor (contains ProximityPrompt)
 	local anchor = model:FindFirstChild("Anchor")
@@ -87,7 +66,7 @@ System:RegisterAsset("Camper", function()
 	local enableFunction = Instance.new("BindableFunction")
 	enableFunction.Name = "Enable"
 	enableFunction.OnInvoke = function()
-		showModel(model)
+		Visibility.showModel(model)
 		prompt.Enabled = true
 		model:SetAttribute("IsEnabled", true)
 		System.Debug:Message("Camper", "Enabled")
@@ -99,7 +78,7 @@ System:RegisterAsset("Camper", function()
 	local disableFunction = Instance.new("BindableFunction")
 	disableFunction.Name = "Disable"
 	disableFunction.OnInvoke = function()
-		hideModel(model)
+		Visibility.hideModel(model)
 		prompt.Enabled = false
 		model:SetAttribute("IsEnabled", false)
 		System.Debug:Message("Camper", "Disabled")

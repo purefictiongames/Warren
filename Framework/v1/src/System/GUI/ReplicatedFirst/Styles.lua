@@ -152,6 +152,20 @@ return {
 			backgroundTransparency = 1,
 		},
 
+		-- Countdown timer styles (ready/set/go sequence)
+		["countdown-text"] = {
+			font = "Bangers",
+			textSize = 72,
+			textColor = {255, 170, 0},
+			backgroundTransparency = 1,
+		},
+		["countdown-number"] = {
+			font = "Bangers",
+			textSize = 120,
+			textColor = {255, 170, 0},
+			backgroundTransparency = 1,
+		},
+
 		-- Dispenser styles
 		["dispenser-frame"] = {
 			backgroundColor = {255, 255, 255},
@@ -183,6 +197,20 @@ return {
 			textSize = 44,
 			textColor = {255, 255, 255},
 			backgroundTransparency = 1,
+		},
+
+		-- Screen transitions
+		["transition-fade"] = {
+			backgroundColor = {0, 0, 0},
+			duration = 0.5,
+		},
+		["transition-fade-slow"] = {
+			backgroundColor = {0, 0, 0},
+			duration = 1.0,
+		},
+		["transition-white"] = {
+			backgroundColor = {255, 255, 255},
+			duration = 0.5,
 		},
 
 		-- Z-index layering (zIndex maps to DisplayOrder for ScreenGui, ZIndex for elements)
@@ -290,7 +318,7 @@ return {
 
 		-- Example: Camper positioning (circular arrangement around fire)
 		["Camper"] = {
-			position = {0, 0.5, 0},  -- Slight Y offset above ground
+			position = {0, 0, 0},  -- Grounded on baseplate
 		},
 		["Camper1"] = {
 			rotation = {0, 0, 0},     -- North
@@ -313,7 +341,7 @@ return {
 
 		-- Example: TimedEvaluator positioning
 		["TimedEvaluator"] = {
-			position = {0, 0.5, 0},
+			position = {0, 0, 0},     -- Grounded on baseplate
 			rotation = {0, 45, 0},    -- Angled for visibility
 		},
 

@@ -10,32 +10,110 @@
 
 -- Visibility.lua (ReplicatedStorage)
 -- Shared visibility utilities for model hide/show
--- Uses VisibleTransparency attribute as source of truth for original transparency values
+-- Handles:
+--   BaseParts: Transparency, CanCollide, CanTouch
+--   Decals/Textures: Transparency
+--   Particles/Fire/Smoke/Sparkles: Enabled
+--   Lights: Enabled
+--   Sounds: Playing state
+-- Uses attributes to store original values for restoration
 
 local Visibility = {}
 
---- Hide all BaseParts in a model by setting transparency to 1
---- Stores original transparency in VisibleTransparency attribute for later restoration
+--- Hide all visual/audio elements in a model
+--- Stores original values in attributes for later restoration
 ---@param model Instance The model to hide
 function Visibility.hideModel(model)
-	for _, part in ipairs(model:GetDescendants()) do
-		if part:IsA("BasePart") then
-			-- Store original transparency if not already stored
-			if part:GetAttribute("VisibleTransparency") == nil then
-				part:SetAttribute("VisibleTransparency", part.Transparency)
+	for _, descendant in ipairs(model:GetDescendants()) do
+		if descendant:IsA("BasePart") then
+			-- Store original values if not already stored
+			if descendant:GetAttribute("VisibleTransparency") == nil then
+				descendant:SetAttribute("VisibleTransparency", descendant.Transparency)
 			end
-			part.Transparency = 1
+			if descendant:GetAttribute("VisibleCanCollide") == nil then
+				descendant:SetAttribute("VisibleCanCollide", descendant.CanCollide)
+			end
+			if descendant:GetAttribute("VisibleCanTouch") == nil then
+				descendant:SetAttribute("VisibleCanTouch", descendant.CanTouch)
+			end
+			descendant.Transparency = 1
+			descendant.CanCollide = false
+			descendant.CanTouch = false
+
+		elseif descendant:IsA("Decal") or descendant:IsA("Texture") then
+			if descendant:GetAttribute("VisibleTransparency") == nil then
+				descendant:SetAttribute("VisibleTransparency", descendant.Transparency)
+			end
+			descendant.Transparency = 1
+
+		elseif descendant:IsA("ParticleEmitter") or descendant:IsA("Fire")
+			or descendant:IsA("Smoke") or descendant:IsA("Sparkles") then
+			if descendant:GetAttribute("VisibleEnabled") == nil then
+				descendant:SetAttribute("VisibleEnabled", descendant.Enabled)
+			end
+			descendant.Enabled = false
+
+		elseif descendant:IsA("Light") then
+			if descendant:GetAttribute("VisibleEnabled") == nil then
+				descendant:SetAttribute("VisibleEnabled", descendant.Enabled)
+			end
+			descendant.Enabled = false
+
+		elseif descendant:IsA("Sound") then
+			-- Store original state
+			if descendant:GetAttribute("VisiblePlaying") == nil then
+				descendant:SetAttribute("VisiblePlaying", descendant.Playing or descendant.Looped)
+			end
+			if descendant:GetAttribute("VisibleVolume") == nil then
+				descendant:SetAttribute("VisibleVolume", descendant.Volume)
+			end
+			if descendant:GetAttribute("VisibleSpeed") == nil then
+				descendant:SetAttribute("VisibleSpeed", descendant.PlaybackSpeed)
+			end
+			-- Silence completely: stop, mute, and freeze
+			descendant:Stop()
+			descendant.Playing = false
+			descendant.Volume = 0
+			descendant.PlaybackSpeed = 0
 		end
 	end
 end
 
---- Show all BaseParts in a model by restoring from VisibleTransparency attribute
+--- Show all visual/audio elements in a model by restoring from stored attributes
 ---@param model Instance The model to show
 function Visibility.showModel(model)
-	for _, part in ipairs(model:GetDescendants()) do
-		if part:IsA("BasePart") then
-			local visible = part:GetAttribute("VisibleTransparency")
-			part.Transparency = visible or 0
+	for _, descendant in ipairs(model:GetDescendants()) do
+		if descendant:IsA("BasePart") then
+			local visible = descendant:GetAttribute("VisibleTransparency")
+			local canCollide = descendant:GetAttribute("VisibleCanCollide")
+			local canTouch = descendant:GetAttribute("VisibleCanTouch")
+			descendant.Transparency = visible or 0
+			descendant.CanCollide = canCollide ~= nil and canCollide or true
+			descendant.CanTouch = canTouch ~= nil and canTouch or true
+
+		elseif descendant:IsA("Decal") or descendant:IsA("Texture") then
+			local visible = descendant:GetAttribute("VisibleTransparency")
+			descendant.Transparency = visible or 0
+
+		elseif descendant:IsA("ParticleEmitter") or descendant:IsA("Fire")
+			or descendant:IsA("Smoke") or descendant:IsA("Sparkles") then
+			local enabled = descendant:GetAttribute("VisibleEnabled")
+			descendant.Enabled = enabled ~= nil and enabled or true
+
+		elseif descendant:IsA("Light") then
+			local enabled = descendant:GetAttribute("VisibleEnabled")
+			descendant.Enabled = enabled ~= nil and enabled or true
+
+		elseif descendant:IsA("Sound") then
+			-- Restore all properties before playing
+			local volume = descendant:GetAttribute("VisibleVolume")
+			local speed = descendant:GetAttribute("VisibleSpeed")
+			descendant.Volume = volume or 0.5
+			descendant.PlaybackSpeed = speed or 1
+			local wasPlaying = descendant:GetAttribute("VisiblePlaying")
+			if wasPlaying then
+				descendant:Play()
+			end
 		end
 	end
 end

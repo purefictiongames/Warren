@@ -63,6 +63,12 @@ System:RegisterAsset(assetName, function()
 		return
 	end
 
+	-- Configure Anchor: non-collideable (set attribute so showModel keeps it that way)
+	anchor.CanCollide = false
+	anchor:SetAttribute("VisibleCanCollide", false)
+	anchor.CanTouch = false
+	anchor:SetAttribute("VisibleCanTouch", false)
+
 	-- Configure mesh from MeshName attribute
 	local meshName = model:GetAttribute("MeshName")
 	if meshName then
@@ -73,8 +79,19 @@ System:RegisterAsset(assetName, function()
 			mesh.Anchored = true
 			-- Hide anchor, mesh is the visual
 			anchor.Transparency = 1
+			-- Mesh should also be non-collideable to prevent player getting stuck
+			mesh.CanCollide = false
+			mesh:SetAttribute("VisibleCanCollide", false)
 		else
 			System.Debug:Warn(assetName, "Mesh not found:", meshName)
+		end
+	end
+
+	-- Make all parts in the model non-collideable (picnic table, etc.)
+	for _, part in ipairs(model:GetDescendants()) do
+		if part:IsA("BasePart") then
+			part.CanCollide = false
+			part:SetAttribute("VisibleCanCollide", false)
 		end
 	end
 

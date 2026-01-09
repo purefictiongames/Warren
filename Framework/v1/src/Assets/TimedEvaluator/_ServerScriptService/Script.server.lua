@@ -61,6 +61,31 @@ System:RegisterAsset(assetName, function()
 		return
 	end
 
+	-- Configure Anchor: invisible, non-collideable, but interactable
+	-- Set attributes so Visibility.showModel() knows to keep these values
+	anchor.Transparency = 1
+	anchor:SetAttribute("VisibleTransparency", 1)
+	anchor.CanCollide = false
+	anchor:SetAttribute("VisibleCanCollide", false)
+	anchor.CanTouch = false
+	anchor:SetAttribute("VisibleCanTouch", false)
+
+	-- Ground the model: move it down so its base sits at Y=0
+	local minY = math.huge
+	for _, part in ipairs(model:GetDescendants()) do
+		if part:IsA("BasePart") then
+			local bottomY = part.Position.Y - (part.Size.Y / 2)
+			if bottomY < minY then
+				minY = bottomY
+			end
+		end
+	end
+	if minY ~= math.huge and minY > 0 then
+		-- Model is floating - drop it to ground
+		model:PivotTo(model:GetPivot() - Vector3.new(0, minY, 0))
+		System.Debug:Message(assetName, "Grounded model, dropped by", minY, "studs")
+	end
+
 	local prompt = anchor:FindFirstChild("ProximityPrompt")
 	if not prompt then
 		System.Debug:Warn(assetName, "No ProximityPrompt found in Anchor")

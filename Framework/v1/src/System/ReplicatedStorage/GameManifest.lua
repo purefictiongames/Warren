@@ -19,14 +19,15 @@ return {
 	assets = {
 		{ use = "Dispenser", as = "MarshmallowBag" },
 		{ use = "Camper", as = "Camper" },
-		{ use = "GlobalTimer", as = "GlobalTimer" },
+		{ use = "GlobalTimer", as = "PlayTimer" },
+		{ use = "GlobalTimer", as = "CountdownTimer" },
 		{ use = "Scoreboard", as = "Scoreboard" },
 		{ use = "TimedEvaluator", as = "TimedEvaluator" },
 		{ use = "Orchestrator", as = "Orchestrator" },
 		{ use = "RoastingStick", as = "RoastingStick" },
 		{ use = "LeaderBoard", as = "LeaderBoard" },
 		{ use = "MessageTicker", as = "MessageTicker" },
-		{ use = "ZoneController", as = "ZoneController" },
+		{ use = "ZoneController", as = "Campfire" },
 	},
 
 	-- Event wiring
@@ -34,7 +35,8 @@ return {
 	-- Connects Output events to Input events for black box communication
 	wiring = {
 		-- Asset Outputs → Orchestrator Input
-		{ from = "GlobalTimer.Output", to = "Orchestrator.Input" },
+		{ from = "PlayTimer.Output", to = "Orchestrator.Input" },
+		{ from = "CountdownTimer.Output", to = "Orchestrator.Input" },
 		{ from = "MarshmallowBag.Output", to = "Orchestrator.Input" },
 		{ from = "Scoreboard.Output", to = "Orchestrator.Input" },
 

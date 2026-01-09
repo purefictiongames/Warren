@@ -15,6 +15,9 @@
       },
       "Tutorial": {
         "$path": "src/System/Tutorial/ReplicatedFirst"
+      },
+      "Camera": {
+        "$path": "src/System/Camera/ReplicatedFirst"
       }
     },
 

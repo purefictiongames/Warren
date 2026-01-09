@@ -9,7 +9,9 @@
 --]]
 
 -- assetName.Script (Server)
--- Global round timer - counts down and fires events for HUD and Orchestrator
+-- Configurable timer - supports two modes:
+--   "duration" (default): Game timer counting down from M:SS (e.g., PlayTimer)
+--   "sequence": Pre-game countdown with text sequence (e.g., CountdownTimer)
 -- Uses deferred initialization pattern - registers init function, called at ASSETS stage
 
 -- Guard: Only run if this is the deployed version (has dot in name)
@@ -42,6 +44,41 @@ System:RegisterAsset(assetName, function()
 
 	-- TimerUpdate is still a custom RemoteEvent for client updates (keep for now)
 	local timerUpdate = ReplicatedStorage:WaitForChild(assetName .. ".TimerUpdate")
+
+	--------------------------------------------------------------------------------
+	-- MODE DETECTION
+	--------------------------------------------------------------------------------
+
+	-- Auto-detect mode from asset name if not explicitly set
+	local timerMode = model:GetAttribute("TimerMode")
+	if timerMode == nil then
+		if assetName:match("Countdown") then
+			timerMode = "sequence"
+			-- Set defaults for sequence mode
+			if not model:GetAttribute("TextSequence") then
+				model:SetAttribute("TextSequence", "ready...,set...,go!")
+			end
+			if not model:GetAttribute("CountdownStart") then
+				model:SetAttribute("CountdownStart", 0.03) -- 3 seconds
+			end
+		else
+			timerMode = "duration"
+		end
+		model:SetAttribute("TimerMode", timerMode)
+	end
+
+	-- Parse text sequence for sequence mode
+	local textSequence = {}
+	local textSequenceRaw = model:GetAttribute("TextSequence") or ""
+	for text in textSequenceRaw:gmatch("[^,]+") do
+		table.insert(textSequence, text:match("^%s*(.-)%s*$")) -- trim whitespace
+	end
+
+	System.Debug:Message(assetName, "Timer mode:", timerMode)
+
+	--------------------------------------------------------------------------------
+	-- COUNTDOWN PARSING
+	--------------------------------------------------------------------------------
 
 	-- Parse CountdownStart attribute (M.SS format where SS must be 00-59)
 	local function parseCountdown(value)
@@ -87,11 +124,23 @@ System:RegisterAsset(assetName, function()
 
 	-- Broadcast time update to all clients
 	local function broadcastUpdate()
-		timerUpdate:FireAllClients({
+		local data = {
 			timeRemaining = timeRemaining,
-			formatted = formatTime(timeRemaining),
 			isRunning = isRunning,
-		})
+		}
+
+		if timerMode == "sequence" then
+			-- Sequence mode: show just the number and text from sequence
+			data.formatted = tostring(timeRemaining)
+			-- Map remaining time to sequence text (3→index 1, 2→index 2, 1→index 3)
+			local index = totalSeconds - timeRemaining + 1
+			data.sequenceText = textSequence[index] or ""
+		else
+			-- Duration mode: show M:SS format
+			data.formatted = formatTime(timeRemaining)
+		end
+
+		timerUpdate:FireAllClients(data)
 	end
 
 	-- Start the countdown

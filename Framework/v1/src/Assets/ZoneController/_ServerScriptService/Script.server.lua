@@ -12,8 +12,15 @@
 -- Event-driven zone detection with tick-based method invocation
 -- Scans entities for a matching callback method and calls it while in zone
 
--- Guard: Only run if this is the deployed version
-if not script.Name:match("^ZoneController%.") then
+-- Guard: Only run if this is the deployed version (has dot in name)
+if not script.Name:match("%.") then
+	return
+end
+
+-- Extract asset name from script name (e.g., "Campfire.Script" → "Campfire")
+local assetName = script.Name:match("^(.+)%.")
+if not assetName then
+	warn("[ZoneController.Script] Could not extract asset name from script.Name:", script.Name)
 	return
 end
 
@@ -26,8 +33,13 @@ local System = require(ReplicatedStorage:WaitForChild("System.System"))
 System:WaitForStage(System.Stages.SCRIPTS)
 
 -- Dependencies (guaranteed to exist after SCRIPTS stage)
+local Visibility = require(ReplicatedStorage:WaitForChild("System.Visibility"))
 local runtimeAssets = game.Workspace:WaitForChild("RuntimeAssets")
-local model = runtimeAssets:WaitForChild("ZoneController")
+local model = runtimeAssets:WaitForChild(assetName)
+local inputEvent = ReplicatedStorage:WaitForChild(assetName .. ".Input")
+
+-- Active state - when false, zone detection is disabled
+local isActive = false
 
 -- Deep search for instances that have a BindableFunction child with the method name
 local function findMethodInTree(root, methodName, isPlayer)
@@ -95,20 +107,31 @@ local function setupZoneController(zoneModel)
 	local tickRate = zoneModel:GetAttribute("TickRate") or 0.5
 
 	if not matchCallback then
-		System.Debug:Warn("ZoneController", "No MatchCallback attribute set on", zoneModel.Name)
+		System.Debug:Warn(assetName, "No MatchCallback attribute set on", zoneModel.Name)
 		return
 	end
 
 	-- Find Zone part
 	local zone = zoneModel:FindFirstChild("Zone")
 	if not zone then
-		System.Debug:Warn("ZoneController", "No Zone part found in", zoneModel.Name)
+		System.Debug:Warn(assetName, "No Zone part found in", zoneModel.Name)
 		return
 	end
 
 	-- Ensure zone is configured correctly
+	-- Set attributes so showModel() keeps these values
 	zone.CanCollide = false
+	zone:SetAttribute("VisibleCanCollide", false)
 	zone.CanTouch = true
+	zone:SetAttribute("VisibleCanTouch", true)
+
+	-- Make all parts in the model non-collideable (campfire visuals, etc.)
+	for _, part in ipairs(zoneModel:GetDescendants()) do
+		if part:IsA("BasePart") then
+			part.CanCollide = false
+			part:SetAttribute("VisibleCanCollide", false)
+		end
+	end
 
 	-- Attendance table: entityRoot -> { instances = {instance -> true}, callbacks = {instance -> callback} }
 	local attendance = {}
@@ -122,19 +145,20 @@ local function setupZoneController(zoneModel)
 		attendance[entityRoot] = {
 			entityType = entityType
 		}
-		System.Debug:Message("ZoneController", "Entity entered zone")
+		System.Debug:Message(assetName, "Entity entered zone")
 	end
 
 	-- Handle entity leaving zone (called when touch count reaches 0)
 	local function onEntityExit(entityRoot)
 		if attendance[entityRoot] then
-			System.Debug:Message("ZoneController", "Entity left zone")
+			System.Debug:Message(assetName, "Entity left zone")
 			attendance[entityRoot] = nil
 		end
 	end
 
 	-- Zone touch events - use counting for reliable entry/exit detection
 	zone.Touched:Connect(function(hit)
+		if not isActive then return end
 		local entityRoot, entityType = getEntityRoot(hit)
 		if entityRoot then
 			touchCounts[entityRoot] = (touchCounts[entityRoot] or 0) + 1
@@ -147,6 +171,7 @@ local function setupZoneController(zoneModel)
 	end)
 
 	zone.TouchEnded:Connect(function(hit)
+		if not isActive then return end
 		local entityRoot, entityType = getEntityRoot(hit)
 		if entityRoot and touchCounts[entityRoot] then
 			touchCounts[entityRoot] = touchCounts[entityRoot] - 1
@@ -162,6 +187,7 @@ local function setupZoneController(zoneModel)
 	-- Tick loop - call methods on all attended instances
 	local lastTick = 0
 	RunService.Heartbeat:Connect(function(deltaTime)
+		if not isActive then return end
 		lastTick = lastTick + deltaTime
 
 		if lastTick < tickRate then
@@ -193,16 +219,83 @@ local function setupZoneController(zoneModel)
 						callback:Invoke(state)
 					end)
 					if not success then
-						System.Debug:Alert("ZoneController", "Error calling", matchCallback, "on", instance.Name, "-", err)
+						System.Debug:Alert(assetName, "Error calling", matchCallback, "on", instance.Name, "-", err)
 					end
 				end
 			end
 		end
 	end)
 
-	System.Debug:Message("ZoneController", "Set up", zoneModel.Name, "(MatchCallback:", matchCallback, ", TickRate:", tickRate, ")")
+	System.Debug:Message(assetName, "Set up", zoneModel.Name, "(MatchCallback:", matchCallback, ", TickRate:", tickRate, ")")
+
+	-- Return zone and attendance for enable/disable to clear state
+	return zone, attendance, touchCounts
 end
 
-setupZoneController(model)
+local zone, attendance, touchCounts = setupZoneController(model)
 
-System.Debug:Message("ZoneController", "Script loaded")
+-- Command handlers
+local function handleEnable()
+	Visibility.showModel(model)
+	-- Force all parts to be non-collideable (override showModel's restore)
+	for _, part in ipairs(model:GetDescendants()) do
+		if part:IsA("BasePart") then
+			part.CanCollide = false
+		end
+	end
+	isActive = true
+	model:SetAttribute("IsEnabled", true)
+	System.Debug:Message(assetName, "Enabled")
+	return true
+end
+
+local function handleDisable()
+	Visibility.hideModel(model)
+	isActive = false
+	-- Clear any entities currently in zone
+	if attendance then
+		for k in pairs(attendance) do
+			attendance[k] = nil
+		end
+	end
+	if touchCounts then
+		for k in pairs(touchCounts) do
+			touchCounts[k] = nil
+		end
+	end
+	model:SetAttribute("IsEnabled", false)
+	System.Debug:Message(assetName, "Disabled")
+	return true
+end
+
+-- Listen on Input for commands from Orchestrator
+inputEvent.Event:Connect(function(message)
+	if not message or type(message) ~= "table" then
+		return
+	end
+
+	if message.command == "enable" then
+		handleEnable()
+	elseif message.command == "disable" then
+		handleDisable()
+	else
+		System.Debug:Warn(assetName, "Unknown command:", message.command)
+	end
+end)
+
+-- Expose Enable/Disable via BindableFunction (backward compatibility)
+local enableFunction = Instance.new("BindableFunction")
+enableFunction.Name = "Enable"
+enableFunction.OnInvoke = handleEnable
+enableFunction.Parent = model
+
+local disableFunction = Instance.new("BindableFunction")
+disableFunction.Name = "Disable"
+disableFunction.OnInvoke = handleDisable
+disableFunction.Parent = model
+
+-- Set initial state (starts disabled, Orchestrator will enable when game starts)
+-- Call handleDisable to actually hide the model and stop sounds
+handleDisable()
+
+System.Debug:Message(assetName, "Script loaded")

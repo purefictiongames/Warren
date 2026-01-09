@@ -44,7 +44,7 @@ return {
 		-- Maps ScreenGui names to region IDs
 		-- The layout will find these ScreenGuis and move their content into regions
 		assets = {
-			["GlobalTimer.ScreenGui"] = "timer",
+			["PlayTimer.ScreenGui"] = "timer",
 			["Scoreboard.ScreenGui"] = "score",
 			["Tutorial.TaskList"] = "tasks",
 		},

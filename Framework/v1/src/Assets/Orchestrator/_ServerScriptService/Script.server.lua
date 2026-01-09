@@ -34,12 +34,66 @@ System:WaitForStage(System.Stages.ORCHESTRATE)
 -- Load RunModes API
 local RunModes = require(ReplicatedStorage:WaitForChild("RunModes.RunModes"))
 
+-- Load Transition API
+local Transition = require(ReplicatedStorage:WaitForChild("GUI.Transition"))
+local transitionEvents = Transition:GetEvents()
+
 -- Get standardized events (created by bootstrap)
 local inputEvent = ReplicatedStorage:WaitForChild(assetName .. ".Input")
 local outputEvent = ReplicatedStorage:WaitForChild(assetName .. ".Output")
 
+-- Input modal functions (for locking prompts during countdown)
+local pushModal = ReplicatedStorage:WaitForChild("Input.PushModal")
+local popModal = ReplicatedStorage:WaitForChild("Input.PopModal")
+
 -- Track if game loop is running
 local gameRunning = false
+
+-- Track pending mode changes (player -> { newMode, oldMode })
+local pendingModeChange = {}
+
+-- Track if we're waiting for countdown to complete before starting game
+local awaitingCountdown = false
+local countdownPlayer = nil -- Player waiting for countdown to complete
+local savedMovement = nil -- { walkSpeed, jumpPower } to restore after countdown
+
+-- Freeze player movement (for countdown)
+local function freezePlayer(player)
+	local character = player.Character
+	if not character then return end
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not humanoid then return end
+
+	-- Save current values
+	savedMovement = {
+		walkSpeed = humanoid.WalkSpeed,
+		jumpPower = humanoid.JumpPower,
+	}
+
+	-- Freeze
+	humanoid.WalkSpeed = 0
+	humanoid.JumpPower = 0
+	System.Debug:Message(assetName, "Froze player movement for", player.Name)
+end
+
+-- Unfreeze player movement (after countdown)
+local function unfreezePlayer(player)
+	local character = player.Character
+	if not character then return end
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not humanoid then return end
+
+	-- Restore saved values or use defaults
+	if savedMovement then
+		humanoid.WalkSpeed = savedMovement.walkSpeed
+		humanoid.JumpPower = savedMovement.jumpPower
+		savedMovement = nil
+	else
+		humanoid.WalkSpeed = 16 -- Default
+		humanoid.JumpPower = 50 -- Default
+	end
+	System.Debug:Message(assetName, "Unfroze player movement for", player.Name)
+end
 
 -- Apply mode configuration to all assets
 -- Reads config and sends enable/disable commands via Output
@@ -77,7 +131,7 @@ local function startGameLoop()
 	-- Send reset commands to assets
 	outputEvent:Fire({ target = "MarshmallowBag", command = "reset" })
 	outputEvent:Fire({ target = "TimedEvaluator", command = "reset" })
-	outputEvent:Fire({ target = "GlobalTimer", command = "start" })
+	outputEvent:Fire({ target = "PlayTimer", command = "start" })
 end
 
 -- Stop the game loop
@@ -85,8 +139,8 @@ local function stopGameLoop()
 	if not gameRunning then return end
 	gameRunning = false
 
-	-- Send stop command to GlobalTimer
-	outputEvent:Fire({ target = "GlobalTimer", command = "stop" })
+	-- Send stop command to PlayTimer
+	outputEvent:Fire({ target = "PlayTimer", command = "stop" })
 
 	System.Debug:Message(assetName, "Stopped game loop")
 end
@@ -114,10 +168,8 @@ local function endGame(reason)
 	-- Stop the game loop first
 	stopGameLoop()
 
-	-- Brief delay to let players see final state
-	task.wait(2)
-
 	-- Transition all active players back to standby
+	-- The transition system handles the visual flow (fade out, apply mode, fade in)
 	for _, player in ipairs(game.Players:GetPlayers()) do
 		if RunModes:IsGameActive(player) then
 			System.Debug:Message(assetName, "Returning", player.Name, "to standby")
@@ -143,8 +195,22 @@ inputEvent.Event:Connect(function(message)
 	end
 
 	if action == "timerExpired" then
-		-- GlobalTimer expired - end the game
-		endGame("GlobalTimer expired")
+		-- Determine which timer expired based on game state
+		if awaitingCountdown then
+			-- CountdownTimer finished - unfreeze player, unlock prompts, start game
+			awaitingCountdown = false
+			if countdownPlayer then
+				unfreezePlayer(countdownPlayer)
+				popModal:Invoke(countdownPlayer, "countdown")
+				System.Debug:Message(assetName, "Countdown complete - unfroze and unlocked", countdownPlayer.Name)
+				countdownPlayer = nil
+			end
+			System.Debug:Message(assetName, "Countdown complete - starting game")
+			startGameLoop()
+		else
+			-- PlayTimer expired - end the game
+			endGame("PlayTimer expired")
+		end
 
 	elseif action == "dispenserEmpty" then
 		-- Dispenser (MarshmallowBag) is empty - end the game
@@ -162,16 +228,53 @@ inputEvent.Event:Connect(function(message)
 
 		System.Debug:Message(assetName, "Mode changed for", player.Name, ":", oldMode, "->", newMode)
 
-		-- Apply mode config to assets
+		-- Store pending mode change and start transition
+		pendingModeChange[player] = { newMode = newMode, oldMode = oldMode }
+		Transition:Start(player, "fade", { class = "transition-fade" })
+
+	else
+		System.Debug:Warn(assetName, "Unknown action:", action)
+	end
+end)
+
+--------------------------------------------------------------------------------
+-- TRANSITION HANDLERS
+--------------------------------------------------------------------------------
+
+-- When screen is covered (black), apply mode changes while hidden
+if transitionEvents.Covered then
+	transitionEvents.Covered.Event:Connect(function(data)
+		local player = data.player
+		local pending = pendingModeChange[player]
+
+		if not pending then
+			System.Debug:Warn(assetName, "TransitionCovered but no pending mode change for", player.Name)
+			Transition:Reveal(player)
+			return
+		end
+
+		local newMode = pending.newMode
+
+		System.Debug:Message(assetName, "Screen covered for", player.Name, "- applying mode:", newMode)
+
+		-- Apply mode config to assets while screen is black
 		applyModeToAssets(newMode)
 
-		-- Start game loop if entering active mode
+		-- Mark that we need to start countdown when transition completes (if entering active mode)
 		if RunModes:IsGameActive(player) and not gameRunning then
-			startGameLoop()
+			awaitingCountdown = true
+			System.Debug:Message(assetName, "Will start countdown after transition reveals")
 		end
 
 		-- Check if anyone is still in active mode
 		if not RunModes:IsGameActive(player) then
+			-- Player returning to standby - clear countdown state
+			awaitingCountdown = false
+			if countdownPlayer then
+				popModal:Invoke(countdownPlayer, "countdown")
+				countdownPlayer = nil
+			end
+
 			local anyActive = false
 			for _, p in ipairs(game.Players:GetPlayers()) do
 				if RunModes:IsGameActive(p) then
@@ -187,10 +290,30 @@ inputEvent.Event:Connect(function(message)
 			end
 		end
 
-	else
-		System.Debug:Warn(assetName, "Unknown action:", action)
-	end
-end)
+		-- Reveal the new scene
+		Transition:Reveal(player)
+	end)
+end
+
+-- When transition is complete, start countdown if needed
+if transitionEvents.Complete then
+	transitionEvents.Complete.Event:Connect(function(data)
+		local player = data.player
+		pendingModeChange[player] = nil
+
+		-- Start countdown timer if we're entering active mode
+		if awaitingCountdown then
+			System.Debug:Message(assetName, "Transition complete - starting countdown for", player.Name)
+			countdownPlayer = player
+			-- Freeze player and lock prompts during countdown
+			freezePlayer(player)
+			pushModal:Invoke(player, "countdown")
+			outputEvent:Fire({ target = "CountdownTimer", command = "start" })
+		else
+			System.Debug:Message(assetName, "Transition complete for", player.Name)
+		end
+	end)
+end
 
 -- Apply initial standby mode to all assets (game doesn't auto-start)
 applyModeToAssets(RunModes.Modes.STANDBY)

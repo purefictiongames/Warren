@@ -578,16 +578,285 @@ This pattern extends to all game assets: Dispensers, TimedEvaluators, spawn poin
 
 ---
 
+## Future Refactor Considerations
+
+### Alternative Asset Visibility Approach: Reparenting
+
+Currently, asset visibility is managed by `Visibility.hideModel()` which sets `Transparency = 1`, `CanCollide = false`, and `CanTouch = false` on all BaseParts, storing original values in attributes for restoration.
+
+**Alternative approach:** Move inactive assets out of Workspace entirely (to ServerStorage or a hidden container).
+
+**Pros:**
+- Simpler - no attribute tracking for multiple properties
+- Zero rendering cost (geometry not even culled)
+- Zero physics cost (completely out of simulation)
+- Clean mental model: in Workspace = active, out = inactive
+
+**Cons:**
+- Script references using `workspace.RuntimeAssets:FindFirstChild()` would fail when asset is inactive
+- Need to decide storage location (ServerStorage hides from clients, breaking client scripts)
+- Moving large models has network/replication cost
+- Event listeners (Touched, etc.) need cleanup/restore logic
+
+**Hybrid option:** Keep model structure in Workspace, but reparent physical `Anchor` parts in/out of a hidden container. References to the model stay valid, but physical presence is toggled entirely.
+
+**Current decision:** Keep visibility-based approach for now. Revisit if property tracking becomes unwieldy or if performance profiling shows invisible geometry causing issues.
+
+### Known Bug: Camper/TimedEvaluator Floating Above Baseplate
+
+**Status:** Deferred - low priority
+
+**Symptom:** Camper and TimedEvaluator models float slightly above the baseplate instead of sitting flush on Y=0.
+
+**Attempted fixes:**
+- Set Anchor CanCollide=false (in case collision was pushing them up)
+- Set position Y=0 in Styles.lua (was 0.5)
+- Added grounding code to calculate model bounds and drop to Y=0
+
+**Possible causes:**
+- Model pivot point not at base
+- .rbxm export has models at non-zero Y
+- Styling system applying transforms after grounding code runs
+- Anchor part size/position affecting model pivot
+
+**Workaround:** Manually adjust model positions in Roblox Studio and re-export .rbxm files with correct base positioning.
+
+### Known Bug: ZoneController (Campfire) Sound Still Plays When Hidden
+
+**Status:** Deferred - low priority
+
+**Symptom:** The campfire crackling sound continues to play even when the ZoneController is hidden in standby mode.
+
+**Attempted fixes:**
+- Stop sound with `:Stop()`
+- Set `Volume = 0`
+- Set `PlaybackSpeed = 0`
+- Set `Playing = false`
+- Call `handleDisable()` at init to hide immediately
+
+**Possible causes:**
+- Sound may not be a descendant of the model (external to Zone.rbxm)
+- Sound may be triggered by a separate script or SoundService
+- Sound may be set to auto-play in .rbxm before scripts run
+- Roblox replication/timing issue with sound properties
+
+**Workaround:** Manually disable or remove the sound from the Zone.rbxm in Roblox Studio, or move sound control to a separate script that explicitly manages campfire audio.
+
+### Future Refactor: Unified Asset State System with Pseudo-Class Styles
+
+**Status:** Planned - medium priority
+
+**Problem:** Currently handling asset active/inactive visibility with ad-hoc fixes across multiple assets:
+- Visibility.hideModel/showModel manages Transparency, CanCollide, CanTouch, particles, lights, sounds
+- Each asset manually sets `VisibleCanCollide = false` attributes to prevent collision restore
+- Some assets need brute-force overrides after showModel (e.g., Campfire forcing CanCollide = false)
+- Dispenser, Camper, TimedEvaluator, ZoneController all have slightly different approaches
+
+**Proposed Solution:** Integrate asset state into the styling system with pseudo-class-like syntax:
+
+```lua
+-- In Styles.lua
+["Campfire"] = {
+    position = {0, 0, 0},
+    rotation = {0, 0, 0},
+},
+["Campfire:inactive"] = {
+    visible = false,
+    collideable = false,
+    touchable = false,
+    particles = false,
+    sounds = false,
+    lights = false,
+},
+["Campfire:active"] = {
+    visible = true,
+    collideable = false,  -- Always non-collideable, even when active
+    touchable = true,     -- Zone needs touch detection
+    particles = true,
+    sounds = true,
+    lights = true,
+},
+```
+
+**Benefits:**
+- Declarative configuration per asset
+- No more ad-hoc attribute setting in asset scripts
+- Consistent behavior across all assets
+- Easy to see/modify asset states in one place
+- Could extend to other states (`:hover`, `:selected`, etc.)
+
+**Implementation considerations:**
+- StyleEngine needs state-aware selector matching
+- Assets need to declare their current state
+- Orchestrator or RunModes triggers state changes
+- AssetAdapter applies state-specific styles
+
+---
+
+---
+
+### Day 10 (Jan 9, 2026) - Transitions, Countdown & Isometric Camera
+
+**Sessions 21-22**
+
+**Major Success: Screen Transition System**
+
+Implemented fade-to-black screen transitions for mode changes, creating a polished experience when entering/exiting gameplay:
+
+- **Server Module:** `GUI/ReplicatedStorage/Transition.lua` - API with `Start()`, `Reveal()`, `GetEvents()`
+- **Client Script:** `GUI/StarterPlayerScripts/Transition.client.lua` - Handles fade tweens, fires milestone events
+- **Event Flow:** Start → fade to black → Covered (server notified) → mode changes applied → Reveal → fade in → Complete
+
+**Integration with Orchestrator:**
+- Mode changes trigger transition before applying new mode config
+- Assets enable/disable while screen is black (invisible to player)
+- Smooth visual flow: fade out → switch scene → fade in
+
+**Technical Challenge: Naming Conflicts**
+Initial attempt created both `Transition.lua` (ModuleScript) and `Transition/` (folder for events) - same name conflict. Resolved by:
+- Module stays as `GUI.Transition`
+- Events use `GUI.TransitionEvent`, `GUI.TransitionCovered`, etc.
+- Bootstrap dot-notation handles deployment correctly
+
+---
+
+**Major Success: CountdownTimer via Template Reuse**
+
+Extended GlobalTimer template to support two deployment modes:
+- **PlayTimer** (existing): HUD sidebar, M:SS format, game duration
+- **CountdownTimer** (new): Centered fullscreen, "ready.../set.../go!" with 3/2/1
+
+**Attribute-Based Configuration:**
+```lua
+-- Auto-detected from asset name containing "Countdown"
+TimerMode = "sequence"     -- vs "duration"
+TextSequence = "ready...,set...,go!"
+CountdownStart = 0.03      -- 3 seconds (M.SS format)
+```
+
+**Server Changes (GlobalTimer):**
+- Auto-detect mode from asset name
+- Parse comma-separated TextSequence
+- Broadcast includes `sequenceText` field for sequence mode
+
+**Client Changes (GlobalTimer):**
+- Create different UI based on mode
+- Sequence mode: centered container with stacked text/number labels
+- Duration mode: existing HUD panel (unchanged)
+
+**New Styles Added:**
+```lua
+["countdown-text"] = { font = "Bangers", textSize = 72, textColor = {255, 170, 0} },
+["countdown-number"] = { font = "Bangers", textSize = 120, textColor = {255, 170, 0} },
+```
+
+---
+
+**Player Freeze During Countdown**
+
+Added racing-game style freeze: player cannot move or interact until countdown completes.
+
+**Orchestrator Changes:**
+- `freezePlayer(player)`: Save WalkSpeed/JumpPower, set both to 0
+- `unfreezePlayer(player)`: Restore saved values
+- `pushModal:Invoke(player, "countdown")`: Lock prompts during countdown
+- Flow: TransitionComplete → freeze + lock → CountdownTimer starts → timerExpired → unfreeze + unlock → game begins
+
+---
+
+**Major Success: Isometric Camera System**
+
+Added fixed overhead camera for gameplay that switches during transitions:
+
+**New System Module: `System/Camera/`**
+- `ReplicatedFirst/CameraConfig.lua` - Camera angles, buffer, mode mapping
+- `StarterPlayerScripts/Script.client.lua` - Camera controller
+
+**Dynamic Positioning:**
+Camera automatically frames the play area:
+1. Find MarshmallowBag and Campfire models
+2. Calculate center point between them
+3. Add buffer (20 studs each side)
+4. Position camera at 60° down angle, high enough to see everything
+
+**Integration with Transition System:**
+- Transition.client creates `Camera.TransitionCovered` BindableEvent
+- Fires when screen is fully black
+- Camera.client listens, switches camera while hidden
+- Screen reveals with new camera already in place
+
+**Camera Modes:**
+- `standby`: Free camera (CameraType.Custom, third-person following)
+- `practice`/`play`: Isometric (CameraType.Scriptable, fixed overhead)
+
+---
+
+**Identified: Race Condition Issues**
+
+Discovered intermittent bugs where systems don't work until restart:
+- Roasting sometimes doesn't work on first load
+- ZoneController may not detect player already in zone when enabled
+- Event connections may not be ready when events fire
+
+**Root Cause Analysis:**
+- Scripts run when loaded, not in guaranteed order
+- No verification that initialization completed
+- Client scripts especially problematic (no RegisterAsset equivalent)
+- Within a boot stage, order is non-deterministic
+
+**Documented Refactor Plan:** Module Initialization System
+- Two-phase lifecycle: `init()` (create resources) → `start()` (connect events)
+- All modules registered, System orchestrates initialization
+- Verification that all modules completed each phase
+- Client-side boot system with explicit stages
+- ~28 scripts to migrate, 4-6 hours estimated
+
+Plan saved to: `.claude/plans/quiet-hopping-hammock.md`
+
+---
+
+## Technical Wins This Session
+
+1. **Template Reuse Pattern** - Single GlobalTimer template serves two use cases via attributes
+2. **Transition Event Flow** - Clean handoff: client → server → client with milestone events
+3. **Dynamic Camera Framing** - Auto-calculate position from asset locations
+4. **Player Freeze Pattern** - Save/restore Humanoid movement properties
+
+---
+
+## Files Changed
+
+**New Files:**
+- `src/System/Camera/ReplicatedFirst/CameraConfig.lua`
+- `src/System/Camera/StarterPlayerScripts/Script.client.lua`
+- `src/System/GUI/ReplicatedStorage/Transition.lua`
+- `src/System/GUI/StarterPlayerScripts/Transition.client.lua`
+- `src/System/GUI/ReplicatedStorage/TransitionEvent/` (RemoteEvent)
+- `src/System/GUI/ReplicatedStorage/TransitionStart/` (BindableEvent)
+- `src/System/GUI/ReplicatedStorage/TransitionCovered/` (BindableEvent)
+- `src/System/GUI/ReplicatedStorage/TransitionComplete/` (BindableEvent)
+
+**Modified Files:**
+- `default.project.json` - Added Camera module mapping
+- `src/Assets/GlobalTimer/_ServerScriptService/Script.server.lua` - Dual-mode support
+- `src/Assets/GlobalTimer/StarterGui/LocalScript.client.lua` - Dual-mode UI
+- `src/Assets/Orchestrator/_ServerScriptService/Script.server.lua` - Transition, countdown, freeze
+- `src/System/GUI/ReplicatedFirst/Styles.lua` - Countdown styles
+- `src/System/ReplicatedStorage/GameManifest.lua` - CountdownTimer wiring
+- `src/System/RunModes/ReplicatedFirst/RunModesConfig.lua` - CountdownTimer in modes
+
+---
+
 ## Statistics
 
-- **Session Logs Written:** 20
-- **Commits:** ~35
-- **Lua Files:** 48+
+- **Session Logs Written:** 22
+- **Commits:** ~36
+- **Lua Files:** 52+
 - **Assets Built:** 11
 - **Templates Built:** 2
-- **System Modules Built:** 6 (added Input, Visibility)
-- **Lines of Code:** ~5,500 (estimate)
+- **System Modules Built:** 7 (added Camera)
+- **Lines of Code:** ~6,200 (estimate)
 - **Debug Calls Migrated:** 97
-- **Major Pivots:** 5 (added Input/Visibility refactor, Unified Styling)
+- **Major Pivots:** 6 (added Module Init Refactor plan)
 - **Days to Working Game Loop:** 2
 - **Documentation Pages:** 3 (SYSTEM_REFERENCE, PROCEDURES, STYLING_SYSTEM)

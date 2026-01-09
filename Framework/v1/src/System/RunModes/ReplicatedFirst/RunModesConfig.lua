@@ -31,9 +31,11 @@ return {
 			assets = {
 				MarshmallowBag = { active = false, visible = false },
 				RoastingStick = { active = false },
-				GlobalTimer = { active = false, visible = false },
+				PlayTimer = { active = false, visible = false },
+				CountdownTimer = { active = false, visible = false },
 				Scoreboard = { active = false, visible = false },
 				TimedEvaluator = { active = false, visible = false },
+				Campfire = { active = false, visible = false },
 				Camper = { active = true, behavior = "tutorial" },
 			},
 			input = {
@@ -57,9 +59,11 @@ return {
 			assets = {
 				MarshmallowBag = { active = true, visible = true },
 				RoastingStick = { active = true },
-				GlobalTimer = { active = true, visible = true },
+				PlayTimer = { active = true, visible = true },
+				CountdownTimer = { active = true, visible = true },
 				Scoreboard = { active = true, visible = true },
 				TimedEvaluator = { active = true, visible = true },
+				Campfire = { active = true, visible = true },
 				Camper = { active = false },
 			},
 			input = {
@@ -82,9 +86,11 @@ return {
 			assets = {
 				MarshmallowBag = { active = true, visible = true },
 				RoastingStick = { active = true },
-				GlobalTimer = { active = true, visible = true },
+				PlayTimer = { active = true, visible = true },
+				CountdownTimer = { active = true, visible = true },
 				Scoreboard = { active = true, visible = true },
 				TimedEvaluator = { active = true, visible = true },
+				Campfire = { active = true, visible = true },
 				Camper = { active = false },
 			},
 			input = {

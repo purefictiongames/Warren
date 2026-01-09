@@ -9,7 +9,9 @@
 --]]
 
 -- GlobalTimer.LocalScript (Client)
--- Timer display - creates its own standalone GUI
+-- Timer display - supports two modes:
+--   "duration": HUD panel for game timer (sidebar)
+--   "sequence": Centered countdown with text sequence (ready/set/go)
 
 -- Guard: Only run if this is the deployed version (has dot in name)
 if not script.Name:match("%.") then
@@ -36,98 +38,175 @@ local playerGui = player:WaitForChild("PlayerGui")
 local GUI = require(ReplicatedStorage:WaitForChild("GUI.GUI"))
 local timerUpdate = ReplicatedStorage:WaitForChild(assetName .. ".TimerUpdate")
 
+-- Get model reference for attributes
+local runtimeAssets = game.Workspace:WaitForChild("RuntimeAssets")
+local model = runtimeAssets:WaitForChild(assetName)
+
+-- Read timer mode
+local timerMode = model:GetAttribute("TimerMode") or "duration"
+System.Debug:Message(assetName .. ".client", "Timer mode:", timerMode)
+
 --------------------------------------------------------------------------------
--- CREATE TIMER UI
+-- CREATE TIMER UI (mode-specific)
 --------------------------------------------------------------------------------
 
--- Create ScreenGui manually (layout system will find and reposition if active)
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = assetName .. ".ScreenGui"
-screenGui.ResetOnSpawn = false
-screenGui.Enabled = false -- Hidden by default until RunModes activates
+local screenGui, content, timerLabel, sequenceLabel
 
--- Content frame that layout can move
-local content = Instance.new("Frame")
-content.Name = "Content"
-content.Size = UDim2.new(1, 0, 1, 0)
-content.BackgroundTransparency = 1
-content.Visible = false -- Hidden by default until RunModes activates
-content.Parent = screenGui
+if timerMode == "sequence" then
+	--------------------------------------------------------------------------------
+	-- SEQUENCE MODE: Centered fullscreen overlay with stacked text/number
+	--------------------------------------------------------------------------------
 
--- Container with shared HUD panel styling
-local container = GUI:Create({
-	type = "Frame",
-	id = "timer-container",
-	class = "hud-panel",
-	children = {
-		{
-			type = "TextLabel",
-			id = "timer-header",
-			class = "hud-header",
-			text = "TIME:",
-			size = {1, 0, 0.35, 0},
-			position = {0, 0, 0.05, 0},
+	screenGui = Instance.new("ScreenGui")
+	screenGui.Name = assetName .. ".ScreenGui"
+	screenGui.DisplayOrder = 500 -- Above game, below transitions
+	screenGui.ResetOnSpawn = false
+	screenGui.IgnoreGuiInset = true
+
+	content = Instance.new("Frame")
+	content.Name = "Content"
+	content.Size = UDim2.new(1, 0, 1, 0)
+	content.BackgroundTransparency = 1
+	content.Visible = false
+	content.Parent = screenGui
+
+	-- Centered container for countdown
+	local container = GUI:Create({
+		type = "Frame",
+		id = assetName .. "-container",
+		class = "transparent",
+		size = {0.5, 0, 0.4, 0},
+		position = {0.5, 0, 0.5, 0},
+		anchorPoint = {0.5, 0.5},
+		children = {
+			{
+				type = "TextLabel",
+				id = assetName .. "-sequence-text",
+				class = "countdown-text",
+				text = "",
+				size = {1, 0, 0.4, 0},
+				position = {0.5, 0, 0.1, 0},
+				anchorPoint = {0.5, 0},
+			},
+			{
+				type = "TextLabel",
+				id = assetName .. "-countdown-number",
+				class = "countdown-number",
+				text = "",
+				size = {1, 0, 0.5, 0},
+				position = {0.5, 0, 0.5, 0},
+				anchorPoint = {0.5, 0},
+			},
 		},
-		{
-			type = "TextLabel",
-			id = "global-timer",
-			class = "hud-value",
-			text = "00:00",
-			size = {1, 0, 0.55, 0},
-			position = {0, 0, 0.4, 0},
+	})
+	container.Parent = content
+
+	sequenceLabel = GUI:GetById(assetName .. "-sequence-text")
+	timerLabel = GUI:GetById(assetName .. "-countdown-number")
+
+	screenGui.Parent = playerGui
+
+	System.Debug:Message(assetName .. ".client", "Created sequence mode UI (centered)")
+
+else
+	--------------------------------------------------------------------------------
+	-- DURATION MODE: HUD panel for sidebar (existing behavior)
+	--------------------------------------------------------------------------------
+
+	screenGui = Instance.new("ScreenGui")
+	screenGui.Name = assetName .. ".ScreenGui"
+	screenGui.ResetOnSpawn = false
+	screenGui.Enabled = false
+
+	content = Instance.new("Frame")
+	content.Name = "Content"
+	content.Size = UDim2.new(1, 0, 1, 0)
+	content.BackgroundTransparency = 1
+	content.Visible = false
+	content.Parent = screenGui
+
+	-- Container with shared HUD panel styling
+	local container = GUI:Create({
+		type = "Frame",
+		id = assetName .. "-container",
+		class = "hud-panel",
+		children = {
+			{
+				type = "TextLabel",
+				id = assetName .. "-header",
+				class = "hud-header",
+				text = "TIME:",
+				size = {1, 0, 0.35, 0},
+				position = {0, 0, 0.05, 0},
+			},
+			{
+				type = "TextLabel",
+				id = assetName .. "-timer",
+				class = "hud-value",
+				text = "00:00",
+				size = {1, 0, 0.55, 0},
+				position = {0, 0, 0.4, 0},
+			},
 		},
-	},
-})
-container.Parent = content
+	})
+	container.Parent = content
 
--- Get reference to timer label for updates
-local timerLabel = GUI:GetById("global-timer")
+	timerLabel = GUI:GetById(assetName .. "-timer")
 
-screenGui.Parent = playerGui
+	screenGui.Parent = playerGui
+
+	System.Debug:Message(assetName .. ".client", "Created duration mode UI (HUD panel)")
+end
 
 --------------------------------------------------------------------------------
 -- VISIBILITY CONTROL
 --------------------------------------------------------------------------------
 
--- Get model reference for HUDVisible attribute
-local runtimeAssets = game.Workspace:WaitForChild("RuntimeAssets")
-local model = runtimeAssets:WaitForChild(assetName)
-
 -- Update visibility based on HUDVisible attribute
--- NOTE: We control the Content frame's Visible property, not ScreenGui.Enabled,
--- because the layout system may reparent Content into HUD.ScreenGui.
--- The Content frame follows our UI whether standalone or in a layout region.
 local function updateVisibility()
 	local rawValue = model:GetAttribute("HUDVisible")
 	local visible = rawValue
-	if visible == nil then visible = false end -- Default to hidden until RunModes activates
+	if visible == nil then visible = false end
 	content.Visible = visible
-	System.Debug:Message(assetName .. ".client", "updateVisibility: raw=", tostring(rawValue), "-> visible=", tostring(visible), "content.Visible=", tostring(content.Visible))
+	System.Debug:Message(assetName .. ".client", "updateVisibility:", tostring(visible))
 end
 
 -- Listen for attribute changes
 model:GetAttributeChangedSignal("HUDVisible"):Connect(function()
-	System.Debug:Message(assetName .. ".client", "HUDVisible attribute changed!")
 	updateVisibility()
 end)
 
 -- Set initial visibility
-System.Debug:Message(assetName .. ".client", "Setting initial visibility, content.Parent=", content.Parent and content.Parent.Name or "nil")
 updateVisibility()
 
 --------------------------------------------------------------------------------
--- TIMER LOGIC
+-- TIMER LOGIC (mode-specific)
 --------------------------------------------------------------------------------
 
 local function updateTimer(data)
-	if timerLabel then
-		if data.isRunning then
-			timerLabel.Text = data.formatted
-		else
-			if data.timeRemaining <= 0 then
-				timerLabel.Text = "TIME!"
-			else
+	if timerMode == "sequence" then
+		-- Sequence mode: update both text and number
+		if sequenceLabel then
+			sequenceLabel.Text = data.sequenceText or ""
+		end
+		if timerLabel then
+			timerLabel.Text = data.formatted or ""
+		end
+		-- Auto-hide when stopped and countdown complete
+		if not data.isRunning and data.timeRemaining <= 0 then
+			content.Visible = false
+		end
+	else
+		-- Duration mode: existing behavior
+		if timerLabel then
+			if data.isRunning then
 				timerLabel.Text = data.formatted
+			else
+				if data.timeRemaining <= 0 then
+					timerLabel.Text = "TIME!"
+				else
+					timerLabel.Text = data.formatted
+				end
 			end
 		end
 	end

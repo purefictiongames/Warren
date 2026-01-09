@@ -345,7 +345,7 @@ end
 function GUI:GetByClass(className)
 	local matches = {}
 	for _, element in pairs(self._elements) do
-		local elementClass = element:GetAttribute("guiClass")
+		local elementClass = element:GetAttribute("StyleClass")
 		if elementClass then
 			-- Check if class list contains the target class
 			for class in elementClass:gmatch("%S+") do
@@ -447,8 +447,8 @@ function GUI:_reapplyStyles(element, newClass)
 	-- Build a minimal definition for style resolution
 	local definition = {
 		type = elementType,
-		class = newClass or element:GetAttribute("guiClass"),
-		id = element:GetAttribute("guiId"),
+		class = newClass or element:GetAttribute("StyleClass"),
+		id = element:GetAttribute("StyleId"),
 	}
 
 	-- Resolve styles with current breakpoint
@@ -462,13 +462,13 @@ end
 
 -- Apply/update class on an element (replaces all classes)
 function GUI:SetClass(element, newClass)
-	element:SetAttribute("guiClass", newClass)
+	element:SetAttribute("StyleClass", newClass)
 	self:_reapplyStyles(element, newClass)
 end
 
 -- Add a class to an element
 function GUI:AddClass(element, className)
-	local currentClass = element:GetAttribute("guiClass") or ""
+	local currentClass = element:GetAttribute("StyleClass") or ""
 	local classes = {}
 	for class in currentClass:gmatch("%S+") do
 		classes[class] = true
@@ -480,13 +480,13 @@ function GUI:AddClass(element, className)
 		table.insert(classList, class)
 	end
 	local newClass = table.concat(classList, " ")
-	element:SetAttribute("guiClass", newClass)
+	element:SetAttribute("StyleClass", newClass)
 	self:_reapplyStyles(element, newClass)
 end
 
 -- Remove a class from an element
 function GUI:RemoveClass(element, className)
-	local currentClass = element:GetAttribute("guiClass") or ""
+	local currentClass = element:GetAttribute("StyleClass") or ""
 	local newClasses = {}
 	for class in currentClass:gmatch("%S+") do
 		if class ~= className then
@@ -494,13 +494,13 @@ function GUI:RemoveClass(element, className)
 		end
 	end
 	local newClass = table.concat(newClasses, " ")
-	element:SetAttribute("guiClass", newClass)
+	element:SetAttribute("StyleClass", newClass)
 	self:_reapplyStyles(element, newClass)
 end
 
 -- Check if element has a class (utility)
 function GUI:HasClass(element, className)
-	local currentClass = element:GetAttribute("guiClass") or ""
+	local currentClass = element:GetAttribute("StyleClass") or ""
 	for class in currentClass:gmatch("%S+") do
 		if class == className then
 			return true

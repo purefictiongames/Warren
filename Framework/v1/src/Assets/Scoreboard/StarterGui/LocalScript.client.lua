@@ -11,8 +11,15 @@
 -- Scoreboard.LocalScript (Client)
 -- Score display - creates its own standalone GUI
 
--- Guard: Only run if this is the deployed version
-if not script.Name:match("^Scoreboard%.") then
+-- Guard: Only run if this is the deployed version (has dot in name)
+if not script.Name:match("%.") then
+	return
+end
+
+-- Extract asset name from script name (e.g., "Scoreboard.LocalScript" → "Scoreboard")
+local assetName = script.Name:match("^(.+)%.")
+if not assetName then
+	warn("[Scoreboard.client] Could not extract asset name from script.Name:", script.Name)
 	return
 end
 
@@ -27,7 +34,7 @@ System:WaitForStage(System.Stages.READY)
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 local GUI = require(ReplicatedStorage:WaitForChild("GUI.GUI"))
-local scoreUpdate = ReplicatedStorage:WaitForChild("Scoreboard.ScoreUpdate")
+local scoreUpdate = ReplicatedStorage:WaitForChild(assetName .. ".ScoreUpdate")
 
 --------------------------------------------------------------------------------
 -- CREATE SCORE UI
@@ -35,7 +42,7 @@ local scoreUpdate = ReplicatedStorage:WaitForChild("Scoreboard.ScoreUpdate")
 
 -- Create ScreenGui manually (layout system will find and reposition if active)
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "Scoreboard.ScreenGui"
+screenGui.Name = assetName .. ".ScreenGui"
 screenGui.ResetOnSpawn = false
 screenGui.Enabled = false -- Hidden by default until RunModes activates
 
@@ -84,7 +91,7 @@ screenGui.Parent = playerGui
 
 -- Get model reference for HUDVisible attribute
 local runtimeAssets = game.Workspace:WaitForChild("RuntimeAssets")
-local model = runtimeAssets:WaitForChild("Scoreboard")
+local model = runtimeAssets:WaitForChild(assetName)
 
 -- Update visibility based on HUDVisible attribute
 -- NOTE: We control the Content frame's Visible property, not ScreenGui.Enabled,
@@ -116,9 +123,9 @@ local function updateScore(data)
 		scoreValue.Text = tostring(displayScore)
 	end
 
-	System.Debug:Message("Scoreboard.client", "Score updated - Total:", data.totalScore)
+	System.Debug:Message(assetName .. ".client", "Score updated - Total:", data.totalScore)
 end
 
 scoreUpdate.OnClientEvent:Connect(updateScore)
 
-System.Debug:Message("Scoreboard.client", "Script loaded")
+System.Debug:Message(assetName .. ".client", "Script loaded")

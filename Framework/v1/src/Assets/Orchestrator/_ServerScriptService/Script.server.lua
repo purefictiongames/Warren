@@ -9,11 +9,19 @@
 --]]
 
 -- Orchestrator.Script (Server)
--- Coordinates game flow - listens to events and triggers appropriate resets
+-- Coordinates game flow - receives events via Input, sends commands via Output
 -- Applies RunModes configuration to assets based on player mode changes
+-- Black box implementation - no direct asset references
 
--- Guard: Only run if this is the deployed version
-if not script.Name:match("^Orchestrator%.") then
+-- Guard: Only run if this is the deployed version (has dot in name)
+if not script.Name:match("%.") then
+	return
+end
+
+-- Extract asset name from script name
+local assetName = script.Name:match("^(.+)%.")
+if not assetName then
+	warn("[Orchestrator.Script] Could not extract asset name from script.Name:", script.Name)
 	return
 end
 
@@ -26,76 +34,50 @@ System:WaitForStage(System.Stages.ORCHESTRATE)
 -- Load RunModes API
 local RunModes = require(ReplicatedStorage:WaitForChild("RunModes.RunModes"))
 
--- Dependencies (guaranteed to exist after ORCHESTRATE stage - all asset inits called)
-local runtimeAssets = game.Workspace:WaitForChild("RuntimeAssets")
-
--- Get GlobalTimer controls
-local globalTimer = runtimeAssets:WaitForChild("GlobalTimer")
-local globalTimerStart = globalTimer:WaitForChild("Start")
-
--- Get asset Reset functions
-local dispenser = runtimeAssets:WaitForChild("Dispenser")
-local dispenserReset = dispenser:WaitForChild("Reset")
-
-local timedEvaluator = runtimeAssets:WaitForChild("TimedEvaluator")
-local timedEvaluatorReset = timedEvaluator:WaitForChild("Reset")
+-- Get standardized events (created by bootstrap)
+local inputEvent = ReplicatedStorage:WaitForChild(assetName .. ".Input")
+local outputEvent = ReplicatedStorage:WaitForChild(assetName .. ".Output")
 
 -- Track if game loop is running
 local gameRunning = false
 
--- Events
-local roundComplete = ReplicatedStorage:WaitForChild("Scoreboard.RoundComplete")
-local timerExpired = ReplicatedStorage:WaitForChild("GlobalTimer.TimerExpired")
-local dispenserEmpty = ReplicatedStorage:WaitForChild("Dispenser.Empty")
-local modeChanged = ReplicatedStorage:WaitForChild("RunModes.ModeChanged")
-
--- Asset control references
-local scoreboard = runtimeAssets:WaitForChild("Scoreboard")
-local roastingStick = runtimeAssets:WaitForChild("RoastingStick")
-
 -- Apply mode configuration to all assets
+-- Reads config and sends enable/disable commands via Output
 local function applyModeToAssets(mode)
 	local config = RunModes:GetConfig(mode)
 	if not config or not config.assets then
-		System.Debug:Warn("Orchestrator", "No asset config for mode:", mode)
+		System.Debug:Warn(assetName, "No asset config for mode:", mode)
 		return
 	end
 
-	System.Debug:Message("Orchestrator", "Applying mode config:", mode)
+	System.Debug:Message(assetName, "Applying mode config:", mode)
 
-	for assetName, settings in pairs(config.assets) do
-		local asset = runtimeAssets:FindFirstChild(assetName)
-		if asset then
-			-- Apply active state
-			if settings.active ~= nil then
-				local funcName = settings.active and "Enable" or "Disable"
-				local func = asset:FindFirstChild(funcName)
-				if func then
-					System.Debug:Message("Orchestrator", "Calling", assetName .. "." .. funcName)
-					func:Invoke()
-				else
-					System.Debug:Warn("Orchestrator", "Function not found:", assetName .. "." .. funcName)
-				end
-			end
-		else
-			System.Debug:Warn("Orchestrator", "Asset not found:", assetName)
+	for targetAssetName, settings in pairs(config.assets) do
+		-- Apply active state
+		if settings.active ~= nil then
+			local command = settings.active and "enable" or "disable"
+			System.Debug:Message(assetName, "Sending", command, "to", targetAssetName)
+			outputEvent:Fire({
+				target = targetAssetName,
+				command = command
+			})
 		end
 	end
 
-	System.Debug:Message("Orchestrator", "Finished applying mode config:", mode)
+	System.Debug:Message(assetName, "Finished applying mode config:", mode)
 end
 
--- Start the game loop (call once when first player enters active mode)
+-- Start the game loop
 local function startGameLoop()
 	if gameRunning then return end
 	gameRunning = true
 
-	System.Debug:Message("Orchestrator", "Starting game loop")
+	System.Debug:Message(assetName, "Starting game loop")
 
-	-- Reset all assets and start timer
-	dispenserReset:Invoke()
-	timedEvaluatorReset:Invoke()
-	globalTimerStart:Invoke()
+	-- Send reset commands to assets
+	outputEvent:Fire({ target = "MarshmallowBag", command = "reset" })
+	outputEvent:Fire({ target = "TimedEvaluator", command = "reset" })
+	outputEvent:Fire({ target = "GlobalTimer", command = "start" })
 end
 
 -- Stop the game loop
@@ -103,13 +85,10 @@ local function stopGameLoop()
 	if not gameRunning then return end
 	gameRunning = false
 
-	-- Stop GlobalTimer
-	local stopFunc = globalTimer:FindFirstChild("Stop")
-	if stopFunc then
-		stopFunc:Invoke()
-	end
+	-- Send stop command to GlobalTimer
+	outputEvent:Fire({ target = "GlobalTimer", command = "stop" })
 
-	System.Debug:Message("Orchestrator", "Stopped game loop")
+	System.Debug:Message(assetName, "Stopped game loop")
 end
 
 -- Per-submission reset (RoundComplete from Scoreboard)
@@ -117,22 +96,20 @@ local function onRoundComplete(result)
 	-- Only reset if game is running
 	if not gameRunning then return end
 
-	System.Debug:Message("Orchestrator", "Submission received - resetting TimedEvaluator")
+	System.Debug:Message(assetName, "Submission received - resetting TimedEvaluator")
 	task.wait(1)
 
 	-- Check again after delay
 	if not gameRunning then return end
 
-	timedEvaluatorReset:Invoke()
+	outputEvent:Fire({ target = "TimedEvaluator", command = "reset" })
 end
-
-roundComplete.Event:Connect(onRoundComplete)
 
 -- End game and return all active players to standby
 local function endGame(reason)
 	if not gameRunning then return end
 
-	System.Debug:Message("Orchestrator", "Game ending:", reason)
+	System.Debug:Message(assetName, "Game ending:", reason)
 
 	-- Stop the game loop first
 	stopGameLoop()
@@ -143,61 +120,81 @@ local function endGame(reason)
 	-- Transition all active players back to standby
 	for _, player in ipairs(game.Players:GetPlayers()) do
 		if RunModes:IsGameActive(player) then
-			System.Debug:Message("Orchestrator", "Returning", player.Name, "to standby")
+			System.Debug:Message(assetName, "Returning", player.Name, "to standby")
 			RunModes:SetMode(player, RunModes.Modes.STANDBY)
 		end
 	end
 
-	System.Debug:Message("Orchestrator", "Game ended - players returned to standby")
+	System.Debug:Message(assetName, "Game ended - players returned to standby")
 end
 
--- Listen for GlobalTimer expiration - ends the game
-timerExpired.Event:Connect(function()
-	endGame("GlobalTimer expired")
-end)
-
--- Listen for Dispenser empty - ends the game
-dispenserEmpty.Event:Connect(function()
-	endGame("Dispenser empty")
-end)
-
--- Listen for RunModes changes
-modeChanged.Event:Connect(function(data)
-	local player = data.player
-	local newMode = data.newMode
-	local oldMode = data.oldMode
-
-	System.Debug:Message("Orchestrator", "Mode changed for", player.Name, ":", oldMode, "->", newMode)
-
-	-- Apply mode config to assets
-	applyModeToAssets(newMode)
-
-	-- Start game loop if entering active mode
-	if RunModes:IsGameActive(player) and not gameRunning then
-		startGameLoop()
+-- Handle input messages
+inputEvent.Event:Connect(function(message)
+	if not message or type(message) ~= "table" then
+		System.Debug:Warn(assetName, "Invalid input message:", message)
+		return
 	end
 
-	-- Check if anyone is still in active mode
-	if not RunModes:IsGameActive(player) then
-		local anyActive = false
-		for _, p in ipairs(game.Players:GetPlayers()) do
-			if RunModes:IsGameActive(p) then
-				anyActive = true
-				break
+	local action = message.action
+
+	-- Handle RunModes.ModeChanged (doesn't have action field, has player/newMode/oldMode)
+	if not action and message.player and message.newMode then
+		action = "modeChanged"
+	end
+
+	if action == "timerExpired" then
+		-- GlobalTimer expired - end the game
+		endGame("GlobalTimer expired")
+
+	elseif action == "dispenserEmpty" then
+		-- Dispenser (MarshmallowBag) is empty - end the game
+		endGame("Dispenser empty")
+
+	elseif action == "roundComplete" then
+		-- Scoreboard round complete - reset evaluator
+		onRoundComplete(message.result)
+
+	elseif action == "modeChanged" then
+		-- RunModes changed for a player
+		local player = message.player
+		local newMode = message.newMode
+		local oldMode = message.oldMode
+
+		System.Debug:Message(assetName, "Mode changed for", player.Name, ":", oldMode, "->", newMode)
+
+		-- Apply mode config to assets
+		applyModeToAssets(newMode)
+
+		-- Start game loop if entering active mode
+		if RunModes:IsGameActive(player) and not gameRunning then
+			startGameLoop()
+		end
+
+		-- Check if anyone is still in active mode
+		if not RunModes:IsGameActive(player) then
+			local anyActive = false
+			for _, p in ipairs(game.Players:GetPlayers()) do
+				if RunModes:IsGameActive(p) then
+					anyActive = true
+					break
+				end
+			end
+
+			if not anyActive and gameRunning then
+				stopGameLoop()
+				-- Apply standby config since no one is playing
+				applyModeToAssets(RunModes.Modes.STANDBY)
 			end
 		end
 
-		if not anyActive and gameRunning then
-			stopGameLoop()
-			-- Apply standby config since no one is playing
-			applyModeToAssets(RunModes.Modes.STANDBY)
-		end
+	else
+		System.Debug:Warn(assetName, "Unknown action:", action)
 	end
 end)
 
 -- Apply initial standby mode to all assets (game doesn't auto-start)
 applyModeToAssets(RunModes.Modes.STANDBY)
 
-System.Debug:Message("Orchestrator", "Setup complete - waiting for RunModes")
+System.Debug:Message(assetName, "Setup complete - listening on", assetName .. ".Input")
 
-System.Debug:Message("Orchestrator", "Script loaded")
+System.Debug:Message(assetName, "Script loaded")

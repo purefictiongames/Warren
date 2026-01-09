@@ -11,8 +11,15 @@
 -- Dispenser.LocalScript (Client)
 -- Updates BillboardGui to show remaining count
 
--- Guard: Only run if this is the deployed version
-if not script.Name:match("^Dispenser%.") then
+-- Guard: Only run if this is the deployed version (has dot in name)
+if not script.Name:match("%.") then
+	return
+end
+
+-- Extract asset name from script name (e.g., "MarshmallowBag.LocalScript" → "MarshmallowBag")
+local assetName = script.Name:match("^(.+)%.")
+if not assetName then
+	warn("[Dispenser.client] Could not extract asset name from script.Name:", script.Name)
 	return
 end
 
@@ -27,7 +34,7 @@ System:WaitForStage(System.Stages.READY)
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 local runtimeAssets = workspace:WaitForChild("RuntimeAssets")
-local model = runtimeAssets:WaitForChild("Dispenser")
+local model = runtimeAssets:WaitForChild(assetName)
 local anchor = model:WaitForChild("Anchor")
 
 local GUI = require(ReplicatedStorage:WaitForChild("GUI.GUI"))
@@ -109,4 +116,4 @@ updateVisibility()
 model:GetAttributeChangedSignal("Remaining"):Connect(updateDisplay)
 model:GetAttributeChangedSignal("HUDVisible"):Connect(updateVisibility)
 
-System.Debug:Message("Dispenser.client", "Display ready")
+System.Debug:Message(assetName .. ".client", "Display ready")

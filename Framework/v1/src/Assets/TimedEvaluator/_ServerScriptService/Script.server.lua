@@ -8,12 +8,19 @@
     in whole or in part, is strictly prohibited without prior written permission.
 --]]
 
--- TimedEvaluator.Script (Server)
+-- assetName.Script (Server)
 -- Timed evaluation system - accepts items and compares against target value
 -- Uses deferred initialization pattern - registers init function, called at ASSETS stage
 
--- Guard: Only run if this is the deployed version
-if not script.Name:match("^TimedEvaluator%.") then
+-- Guard: Only run if this is the deployed version (has dot in name)
+if not script.Name:match("%.")then
+	return
+end
+
+-- Extract asset name from script name
+local assetName = script.Name:match("^(.+)%.")
+if not assetName then
+	warn("[assetName.Script] Could not extract asset name from script.Name:", script.Name)
 	return
 end
 
@@ -25,12 +32,15 @@ local System = require(ReplicatedStorage:WaitForChild("System.System"))
 System:WaitForStage(System.Stages.SCRIPTS)
 
 -- Register init function (will be called at ASSETS stage)
-System:RegisterAsset("TimedEvaluator", function()
+System:RegisterAsset(assetName, function()
 	-- Dependencies
 	local Visibility = require(ReplicatedStorage:WaitForChild("System.Visibility"))
 	local forceItemPickup = ReplicatedStorage:WaitForChild("Backpack.ForceItemPickup")
 	local runtimeAssets = game.Workspace:WaitForChild("RuntimeAssets")
-	local model = runtimeAssets:WaitForChild("TimedEvaluator")
+	local model = runtimeAssets:WaitForChild(assetName)
+
+	-- Get standardized events (created by bootstrap)
+	local inputEvent = ReplicatedStorage:WaitForChild(assetName .. ".Input")
 
 	-- Config from attributes (with validation)
 	local acceptType = model:GetAttribute("AcceptType") or "Marshmallow"
@@ -47,19 +57,19 @@ System:RegisterAsset("TimedEvaluator", function()
 	-- Find components
 	local anchor = model:FindFirstChild("Anchor")
 	if not anchor then
-		System.Debug:Warn("TimedEvaluator", "No Anchor found in", model.Name)
+		System.Debug:Warn(assetName, "No Anchor found in", model.Name)
 		return
 	end
 
 	local prompt = anchor:FindFirstChild("ProximityPrompt")
 	if not prompt then
-		System.Debug:Warn("TimedEvaluator", "No ProximityPrompt found in Anchor")
+		System.Debug:Warn(assetName, "No ProximityPrompt found in Anchor")
 		return
 	end
 
 	local evaluationComplete = anchor:FindFirstChild("EvaluationComplete")
 	if not evaluationComplete then
-		System.Debug:Warn("TimedEvaluator", "No EvaluationComplete event found in Anchor")
+		System.Debug:Warn(assetName, "No EvaluationComplete event found in Anchor")
 		return
 	end
 
@@ -80,7 +90,7 @@ System:RegisterAsset("TimedEvaluator", function()
 		local decay = state.deltaTime * 3
 		satisfaction = math.max(0, satisfaction - decay)
 		model:SetAttribute("Satisfaction", satisfaction)
-		System.Debug:Message("TimedEvaluator", "Satisfaction updated to", math.floor(satisfaction))
+		System.Debug:Message(assetName, "Satisfaction updated to", math.floor(satisfaction))
 	end
 
 	-- Listen for timer ticks
@@ -105,9 +115,9 @@ System:RegisterAsset("TimedEvaluator", function()
 		if item then
 			submittedValue = item:GetAttribute(evalTarget) or 0
 			score = math.abs(targetValue - submittedValue)
-			System.Debug:Message("TimedEvaluator", "Evaluated", item.Name, "- Submitted:", submittedValue, "Target:", targetValue, "Score:", score)
+			System.Debug:Message(assetName, "Evaluated", item.Name, "- Submitted:", submittedValue, "Target:", targetValue, "Score:", score)
 		else
-			System.Debug:Message("TimedEvaluator", "Time ran out! Target was:", targetValue)
+			System.Debug:Message(assetName, "Time ran out! Target was:", targetValue)
 		end
 
 		-- Fire event with result
@@ -165,7 +175,7 @@ System:RegisterAsset("TimedEvaluator", function()
 		model:SetAttribute("TimeRemaining", countdown)
 		model:SetAttribute("Satisfaction", 100)
 
-		System.Debug:Message("TimedEvaluator", "Reset - TargetValue:", newTarget, "(range:", targetMin, "-", targetMax, ") Countdown:", countdown)
+		System.Debug:Message(assetName, "Reset - TargetValue:", newTarget, "(range:", targetMin, "-", targetMax, ") Countdown:", countdown)
 
 		startTimer()
 	end
@@ -228,20 +238,20 @@ System:RegisterAsset("TimedEvaluator", function()
 	-- Handle player interaction
 	prompt.Triggered:Connect(function(player)
 		if not isRunning or hasEvaluated then
-			System.Debug:Message("TimedEvaluator", "Not accepting submissions")
+			System.Debug:Message(assetName, "Not accepting submissions")
 			return
 		end
 
 		local mounted = findMountedItem(player)
 		if mounted then
-			System.Debug:Message("TimedEvaluator", "Unmounting", mounted.Name, "from RoastingStick")
+			System.Debug:Message(assetName, "Unmounting", mounted.Name, "from RoastingStick")
 			unmountToBackpack(player, mounted)
 			task.wait(0.1)
 		end
 
 		local item = findAcceptedItem(player)
 		if not item then
-			System.Debug:Message("TimedEvaluator", "Player has no", acceptType)
+			System.Debug:Message(assetName, "Player has no", acceptType)
 			return
 		end
 
@@ -251,33 +261,22 @@ System:RegisterAsset("TimedEvaluator", function()
 		evaluate(itemToEvaluate, player)
 	end)
 
-	-- Expose reset via BindableFunction (for orchestrator)
-	local resetFunction = Instance.new("BindableFunction")
-	resetFunction.Name = "Reset"
-	resetFunction.OnInvoke = function()
+	-- Command handlers (callable from Input or BindableFunctions)
+	local function handleReset()
 		reset()
 		return true
 	end
-	resetFunction.Parent = model
 
-	-- Expose Enable via BindableFunction (for RunModes)
-	-- NOTE: Enable does NOT call reset() - Orchestrator calls Reset() explicitly when starting game loop
-	local enableFunction = Instance.new("BindableFunction")
-	enableFunction.Name = "Enable"
-	enableFunction.OnInvoke = function()
+	local function handleEnable()
 		Visibility.showModel(model)
 		prompt.Enabled = true
 		model:SetAttribute("IsEnabled", true)
 		model:SetAttribute("HUDVisible", true)
-		System.Debug:Message("TimedEvaluator", "Enabled")
+		System.Debug:Message(assetName, "Enabled")
 		return true
 	end
-	enableFunction.Parent = model
 
-	-- Expose Disable via BindableFunction (for RunModes)
-	local disableFunction = Instance.new("BindableFunction")
-	disableFunction.Name = "Disable"
-	disableFunction.OnInvoke = function()
+	local function handleDisable()
 		-- Stop timer
 		if timerThread then
 			pcall(function() task.cancel(timerThread) end)
@@ -288,12 +287,47 @@ System:RegisterAsset("TimedEvaluator", function()
 		prompt.Enabled = false
 		model:SetAttribute("IsEnabled", false)
 		model:SetAttribute("HUDVisible", false)
-		System.Debug:Message("TimedEvaluator", "Disabled")
+		System.Debug:Message(assetName, "Disabled")
 		return true
 	end
+
+	-- Listen on Input for commands from Orchestrator
+	inputEvent.Event:Connect(function(message)
+		if not message or type(message) ~= "table" then
+			return
+		end
+
+		if message.command == "reset" then
+			handleReset()
+		elseif message.command == "enable" then
+			handleEnable()
+		elseif message.command == "disable" then
+			handleDisable()
+		else
+			System.Debug:Warn(assetName, "Unknown command:", message.command)
+		end
+	end)
+
+	-- Expose reset via BindableFunction (backward compatibility)
+	local resetFunction = Instance.new("BindableFunction")
+	resetFunction.Name = "Reset"
+	resetFunction.OnInvoke = handleReset
+	resetFunction.Parent = model
+
+	-- Expose Enable via BindableFunction (backward compatibility)
+	-- NOTE: Enable does NOT call reset() - Orchestrator calls Reset() explicitly when starting game loop
+	local enableFunction = Instance.new("BindableFunction")
+	enableFunction.Name = "Enable"
+	enableFunction.OnInvoke = handleEnable
+	enableFunction.Parent = model
+
+	-- Expose Disable via BindableFunction (backward compatibility)
+	local disableFunction = Instance.new("BindableFunction")
+	disableFunction.Name = "Disable"
+	disableFunction.OnInvoke = handleDisable
 	disableFunction.Parent = model
 
-	System.Debug:Message("TimedEvaluator", "Initialized - AcceptType:", acceptType, "EvalTarget:", evalTarget)
+	System.Debug:Message(assetName, "Initialized - AcceptType:", acceptType, "EvalTarget:", evalTarget)
 end)
 
-System.Debug:Message("TimedEvaluator", "Script loaded, init registered")
+System.Debug:Message(assetName, "Script loaded, init registered")

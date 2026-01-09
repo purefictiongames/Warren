@@ -29,7 +29,7 @@ return {
         --]]
 		standby = {
 			assets = {
-				Dispenser = { active = false, visible = false },
+				MarshmallowBag = { active = false, visible = false },
 				RoastingStick = { active = false },
 				GlobalTimer = { active = false, visible = false },
 				Scoreboard = { active = false, visible = false },
@@ -55,7 +55,7 @@ return {
         --]]
 		practice = {
 			assets = {
-				Dispenser = { active = true, visible = true },
+				MarshmallowBag = { active = true, visible = true },
 				RoastingStick = { active = true },
 				GlobalTimer = { active = true, visible = true },
 				Scoreboard = { active = true, visible = true },
@@ -64,7 +64,7 @@ return {
 			},
 			input = {
 				-- Game prompts enabled in practice
-				prompts = { "Dispenser", "TimedEvaluator" },
+				prompts = { "MarshmallowBag", "TimedEvaluator" },
 				gameControls = true,
 			},
 			scoring = {
@@ -80,7 +80,7 @@ return {
         --]]
 		play = {
 			assets = {
-				Dispenser = { active = true, visible = true },
+				MarshmallowBag = { active = true, visible = true },
 				RoastingStick = { active = true },
 				GlobalTimer = { active = true, visible = true },
 				Scoreboard = { active = true, visible = true },
@@ -89,7 +89,7 @@ return {
 			},
 			input = {
 				-- Game prompts enabled in play
-				prompts = { "Dispenser", "TimedEvaluator" },
+				prompts = { "MarshmallowBag", "TimedEvaluator" },
 				gameControls = true,
 			},
 			scoring = {

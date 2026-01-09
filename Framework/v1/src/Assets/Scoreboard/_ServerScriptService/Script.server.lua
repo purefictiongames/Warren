@@ -8,12 +8,19 @@
     in whole or in part, is strictly prohibited without prior written permission.
 --]]
 
--- Scoreboard.Script (Server)
+-- assetName.Script (Server)
 -- Listens to evaluation events from assets, calculates scores, fires to clients
 -- Uses deferred initialization pattern - registers init function, called at ASSETS stage
 
--- Guard: Only run if this is the deployed version
-if not script.Name:match("^Scoreboard%.") then
+-- Guard: Only run if this is the deployed version (has dot in name)
+if not script.Name:match("%.") then
+	return
+end
+
+-- Extract asset name from script name
+local assetName = script.Name:match("^(.+)%.")
+if not assetName then
+	warn("[assetName.Script] Could not extract asset name from script.Name:", script.Name)
 	return
 end
 
@@ -25,15 +32,22 @@ local System = require(ReplicatedStorage:WaitForChild("System.System"))
 System:WaitForStage(System.Stages.SCRIPTS)
 
 -- Register init function (will be called at ASSETS stage)
-System:RegisterAsset("Scoreboard", function()
+System:RegisterAsset(assetName, function()
 	-- Dependencies
-	local scoreUpdate = ReplicatedStorage:WaitForChild("Scoreboard.ScoreUpdate")
-	local roundComplete = ReplicatedStorage:WaitForChild("Scoreboard.RoundComplete")
 	local runtimeAssets = game.Workspace:WaitForChild("RuntimeAssets")
+	local model = runtimeAssets:WaitForChild(assetName)
+
+	-- Get standardized events (created by bootstrap)
+	local inputEvent = ReplicatedStorage:WaitForChild(assetName .. ".Input")
+	local outputEvent = ReplicatedStorage:WaitForChild(assetName .. ".Output")
+
+	-- ScoreUpdate is still a custom RemoteEvent for client updates (keep for now)
+	local scoreUpdate = ReplicatedStorage:WaitForChild(assetName .. ".ScoreUpdate")
+
+	-- TimedEvaluator event (still custom for now)
 	local timedEvaluator = runtimeAssets:WaitForChild("TimedEvaluator")
 	local anchor = timedEvaluator:WaitForChild("Anchor")
 	local evaluationComplete = anchor:WaitForChild("EvaluationComplete")
-	local model = runtimeAssets:WaitForChild("Scoreboard")
 
 	-- Load RunModes API (lazy - may not exist during initial development)
 	local RunModes = nil
@@ -65,7 +79,7 @@ System:RegisterAsset("Scoreboard", function()
 
 		local score = accuracyScore + speedScore
 
-		System.Debug:Message("Scoreboard", "Accuracy:", accuracyScore, "Speed:", speedScore, "Total:", score)
+		System.Debug:Message("assetName", "Accuracy:", accuracyScore, "Speed:", speedScore, "Total:", score)
 
 		return score
 	end
@@ -82,16 +96,16 @@ System:RegisterAsset("Scoreboard", function()
 			local shouldPersist = true
 			if RunModes and not RunModes:IsScoringEnabled(player) then
 				shouldPersist = false
-				System.Debug:Message("Scoreboard", "Practice mode - score not persisted for", player.Name)
+				System.Debug:Message("assetName", "Practice mode - score not persisted for", player.Name)
 			end
 
 			if shouldPersist then
 				-- Update player's total score
 				playerScores[player] = (playerScores[player] or 0) + score
-				System.Debug:Message("Scoreboard", player.Name, "scored", score, "points. Total:", playerScores[player])
+				System.Debug:Message("assetName", player.Name, "scored", score, "points. Total:", playerScores[player])
 			else
 				-- In practice mode, show score but don't persist
-				System.Debug:Message("Scoreboard", player.Name, "scored", score, "points (practice - not saved)")
+				System.Debug:Message("assetName", player.Name, "scored", score, "points (practice - not saved)")
 			end
 
 			-- Fire to client (always show the score)
@@ -104,51 +118,76 @@ System:RegisterAsset("Scoreboard", function()
 				isPractice = not shouldPersist,
 			})
 		else
-			System.Debug:Message("Scoreboard", "Timeout - no submission")
+			System.Debug:Message("assetName", "Timeout - no submission")
 		end
 
-		-- Signal round complete (for Orchestrator) - always fire to reset
-		roundComplete:Fire({
+		-- Signal round complete via Output - fires to both Orchestrator and LeaderBoard
+		outputEvent:Fire({
+			action = "roundComplete",
 			player = player,
-			roundScore = score,
-			totalScore = player and playerScores[player] or 0,
-			timeout = not result.submitted,
+			score = player and playerScores[player] or 0,
+			result = {
+				player = player,
+				roundScore = score,
+				totalScore = player and playerScores[player] or 0,
+				timeout = not result.submitted,
+			}
 		})
-		System.Debug:Message("Scoreboard", "Round complete signaled")
+		System.Debug:Message(assetName, "Round complete signaled via Output")
 	end
 
 	-- Connect to TimedEvaluator
 	evaluationComplete.Event:Connect(onEvaluationComplete)
-	System.Debug:Message("Scoreboard", "Connected to TimedEvaluator.EvaluationComplete")
+	System.Debug:Message("assetName", "Connected to TimedEvaluator.EvaluationComplete")
 
 	-- Clean up when player leaves
 	Players.PlayerRemoving:Connect(function(player)
 		playerScores[player] = nil
 	end)
 
-	-- Expose Enable via BindableFunction (for RunModes)
-	local enableFunction = Instance.new("BindableFunction")
-	enableFunction.Name = "Enable"
-	enableFunction.OnInvoke = function()
+	-- Command handlers (callable from Input or BindableFunctions)
+	local function handleEnable()
 		model:SetAttribute("IsEnabled", true)
 		model:SetAttribute("HUDVisible", true)
-		System.Debug:Message("Scoreboard", "Enabled")
+		System.Debug:Message(assetName, "Enabled")
 		return true
 	end
-	enableFunction.Parent = model
 
-	-- Expose Disable via BindableFunction (for RunModes)
-	local disableFunction = Instance.new("BindableFunction")
-	disableFunction.Name = "Disable"
-	disableFunction.OnInvoke = function()
+	local function handleDisable()
 		model:SetAttribute("IsEnabled", false)
 		model:SetAttribute("HUDVisible", false)
-		System.Debug:Message("Scoreboard", "Disabled")
+		System.Debug:Message(assetName, "Disabled")
 		return true
 	end
+
+	-- Listen on Input for commands from Orchestrator
+	inputEvent.Event:Connect(function(message)
+		if not message or type(message) ~= "table" then
+			return
+		end
+
+		if message.command == "enable" then
+			handleEnable()
+		elseif message.command == "disable" then
+			handleDisable()
+		else
+			System.Debug:Warn(assetName, "Unknown command:", message.command)
+		end
+	end)
+
+	-- Expose Enable via BindableFunction (backward compatibility)
+	local enableFunction = Instance.new("BindableFunction")
+	enableFunction.Name = "Enable"
+	enableFunction.OnInvoke = handleEnable
+	enableFunction.Parent = model
+
+	-- Expose Disable via BindableFunction (backward compatibility)
+	local disableFunction = Instance.new("BindableFunction")
+	disableFunction.Name = "Disable"
+	disableFunction.OnInvoke = handleDisable
 	disableFunction.Parent = model
 
-	System.Debug:Message("Scoreboard", "Initialized")
+	System.Debug:Message("assetName", "Initialized")
 end)
 
-System.Debug:Message("Scoreboard", "Script loaded, init registered")
+System.Debug:Message("assetName", "Script loaded, init registered")

@@ -912,7 +912,7 @@ base = {
 
 ### Class Selector
 
-Matches by `guiClass` (GUI) or `StyleClass` (Asset) attribute:
+Matches by `StyleClass` attribute:
 
 ```lua
 classes = {
@@ -930,7 +930,7 @@ Space-separated classes apply in order:
 
 ### ID Selector
 
-Matches by `guiId` (GUI) or `StyleId` (Asset) attribute:
+Matches by `StyleId` attribute:
 
 ```lua
 ids = {

@@ -89,33 +89,177 @@ local function bootstrapSelf()
 	end
 end
 
--- Deploy assets from ReplicatedStorage/Assets to RuntimeAssets
-local function bootstrapAssets()
-	-- Create RuntimeAssets folder
+-- Deep rename: Replace all occurrences of template name with alias in instance names
+-- Walks instance tree and renames descendants
+-- Scripts discover their deployed name dynamically - no source patching needed
+local function deepRename(instance, templateName, alias)
+	-- Escape special pattern characters for safe string matching
+	local tEsc = templateName:gsub("([%^%$%(%)%%%.%[%]%*%+%-%?])", "%%%1")
+
+	-- Recursively process all descendants
+	for _, child in ipairs(instance:GetDescendants()) do
+		-- Rename if it has the template prefix (e.g., "Dispenser.Script" → "MarshmallowBag.Script")
+		if child.Name:match("^" .. tEsc .. "%.") then
+			child.Name = child.Name:gsub("^" .. tEsc, alias)
+		end
+	end
+
+	-- Rename the root instance if it matches the template name
+	if instance.Name == templateName then
+		instance.Name = alias
+	end
+end
+
+-- Apply event wiring from manifest
+-- Connects Output events to Input events based on manifest configuration
+local function applyWiring(manifest, System)
+	if not manifest.wiring then
+		return
+	end
+
+	for _, wire in ipairs(manifest.wiring) do
+		local fromPath = wire.from
+		local toPath = wire.to
+
+		-- Parse paths (format: "AssetName.EventName")
+		local fromAsset, fromEvent = fromPath:match("^(.+)%.(.+)$")
+		local toAsset, toEvent = toPath:match("^(.+)%.(.+)$")
+
+		if not fromAsset or not toAsset then
+			System.Debug:Warn("System.Script", "Invalid wiring format:", fromPath, "->", toPath)
+			continue
+		end
+
+		-- Find source event (dot notation)
+		local sourceEvent = ReplicatedStorage:FindFirstChild(fromAsset .. "." .. fromEvent)
+		if not sourceEvent or not sourceEvent:IsA("BindableEvent") then
+			System.Debug:Warn("System.Script", "Wiring source not found:", fromPath)
+			continue
+		end
+
+		-- Find target event
+		local targetEvent = ReplicatedStorage:FindFirstChild(toAsset .. "." .. toEvent)
+		if not targetEvent or not targetEvent:IsA("BindableEvent") then
+			System.Debug:Warn("System.Script", "Wiring target not found:", toPath)
+			continue
+		end
+
+		-- Connect source output to target input
+		sourceEvent.Event:Connect(function(...)
+			targetEvent:Fire(...)
+		end)
+
+		System.Debug:Critical("System.Script", "Wired", fromPath, "->", toPath)
+	end
+end
+
+-- Deploy assets from manifest
+local function bootstrapAssets(System)
+	System.Debug:Critical("System.Script", "=== BOOTSTRAP ASSETS START ===")
+
+	-- Create RuntimeAssets folder in Workspace
 	local runtimeAssets = Instance.new("Folder")
 	runtimeAssets.Name = "RuntimeAssets"
 	runtimeAssets.Parent = Workspace
 
+	-- Load manifest
+	local manifestModule = ReplicatedStorage:FindFirstChild("System.GameManifest")
+	if not manifestModule then
+		System.Debug:Warn("System.Script", "GameManifest not found - cannot deploy assets")
+		return
+	end
+
+	local manifest = require(manifestModule)
 	local assetsFolder = ReplicatedStorage:FindFirstChild("Assets")
 
-	for _, asset in ipairs(assetsFolder:GetChildren()) do
-		if asset:IsA("Model") then
-			local clone = asset:Clone()
-			local assetName = clone.Name
+	if not assetsFolder then
+		System.Debug:Warn("System.Script", "Assets folder not found")
+		return
+	end
 
-			-- Extract service folders from clone (ordered: events before scripts)
-			for _, folderName in ipairs(SERVICE_ORDER) do
-				local service = SERVICE_FOLDERS[folderName]
-				local serviceFolder = clone:FindFirstChild(folderName)
-				if serviceFolder then
-					deployServiceFolder(serviceFolder, service, assetName)
-					serviceFolder:Destroy()
-				end
+	-- Track deployed aliases for validation
+	local deployedAliases = {}
+
+	-- Deploy each manifest entry
+	for _, entry in ipairs(manifest.assets) do
+		local templateName = entry.use
+		local alias = entry.as
+
+		-- Validation: Check for duplicate aliases
+		if deployedAliases[alias] then
+			System.Debug:Warn("System.Script", "Duplicate alias:", alias, "- skipping")
+			continue
+		end
+
+		-- Find template in Assets folder
+		local template = assetsFolder:FindFirstChild(templateName)
+		if not template or not template:IsA("Model") then
+			System.Debug:Warn("System.Script", "Template not found:", templateName, "- skipping")
+			continue
+		end
+
+		-- Clone template
+		local clone = template:Clone()
+
+		-- Deep rename: Replace all occurrences of templateName with alias
+		if templateName ~= alias then
+			deepRename(clone, templateName, alias)
+		end
+
+		-- Extract service folders from renamed clone (ordered: events before scripts)
+		for _, folderName in ipairs(SERVICE_ORDER) do
+			local service = SERVICE_FOLDERS[folderName]
+			local serviceFolder = clone:FindFirstChild(folderName)
+			if serviceFolder then
+				deployServiceFolder(serviceFolder, service, alias)
+				serviceFolder:Destroy()
+			end
+		end
+
+		-- Parent cleaned clone to RuntimeAssets
+		clone.Parent = runtimeAssets
+		deployedAliases[alias] = true
+
+		-- Create standardized events for this asset
+		local eventTypes = {"Input", "Output", "Debug"}
+		for _, eventType in ipairs(eventTypes) do
+			local event = Instance.new("BindableEvent")
+			event.Name = alias .. "." .. eventType
+			event.Parent = ReplicatedStorage
+		end
+
+		System.Debug:Critical("System.Script", "Deployed", templateName, "as", alias)
+	end
+
+	-- Apply wiring connections
+	applyWiring(manifest, System)
+
+	-- Set up message router for Orchestrator
+	-- Routes commands with { target = "AssetName", command = "..." } to AssetName.Input
+	local orchestratorOutput = ReplicatedStorage:FindFirstChild("Orchestrator.Output")
+	if orchestratorOutput then
+		orchestratorOutput.Event:Connect(function(message)
+			if not message or type(message) ~= "table" then
+				return
 			end
 
-			-- Parent cleaned clone to RuntimeAssets
-			clone.Parent = runtimeAssets
-		end
+			local target = message.target
+			local command = message.command
+
+			if target and command then
+				-- Route to target asset's Input
+				local targetInput = ReplicatedStorage:FindFirstChild(target .. ".Input")
+				if targetInput then
+					targetInput:Fire({ command = command })
+					System.Debug:Verbose("System.Router", "Routed", command, "to", target)
+				else
+					System.Debug:Warn("System.Router", "Target not found:", target)
+				end
+			end
+		end)
+		System.Debug:Critical("System.Script", "Message router connected to Orchestrator.Output")
+	else
+		System.Debug:Warn("System.Script", "Orchestrator.Output not found - router not connected")
 	end
 end
 
@@ -160,7 +304,7 @@ end
 System:_setStage(System.Stages.SYNC)
 
 -- Phase 2: Bootstrap Assets (deploys to all services)
-bootstrapAssets()
+bootstrapAssets(System)
 
 -- Fire EVENTS stage (all events now exist in ReplicatedStorage)
 System:_setStage(System.Stages.EVENTS)

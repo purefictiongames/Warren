@@ -29,6 +29,7 @@ System:RegisterAsset("Camper", function()
 	local Visibility = require(ReplicatedStorage:WaitForChild("System.Visibility"))
 	local runtimeAssets = game.Workspace:WaitForChild("RuntimeAssets")
 	local model = runtimeAssets:WaitForChild("Camper")
+	local inputEvent = ReplicatedStorage:WaitForChild("Camper.Input")
 	local interactEvent = ReplicatedStorage:WaitForChild("Camper.Interact")
 
 	-- Find Anchor (contains ProximityPrompt)
@@ -62,28 +63,48 @@ System:RegisterAsset("Camper", function()
 		})
 	end)
 
-	-- Expose Enable via BindableFunction (for RunModes)
-	local enableFunction = Instance.new("BindableFunction")
-	enableFunction.Name = "Enable"
-	enableFunction.OnInvoke = function()
+	-- Command handlers (callable from Input or BindableFunctions)
+	local function handleEnable()
 		Visibility.showModel(model)
 		prompt.Enabled = true
 		model:SetAttribute("IsEnabled", true)
 		System.Debug:Message("Camper", "Enabled")
 		return true
 	end
-	enableFunction.Parent = model
 
-	-- Expose Disable via BindableFunction (for RunModes)
-	local disableFunction = Instance.new("BindableFunction")
-	disableFunction.Name = "Disable"
-	disableFunction.OnInvoke = function()
+	local function handleDisable()
 		Visibility.hideModel(model)
 		prompt.Enabled = false
 		model:SetAttribute("IsEnabled", false)
 		System.Debug:Message("Camper", "Disabled")
 		return true
 	end
+
+	-- Listen on Input for commands from Orchestrator
+	inputEvent.Event:Connect(function(message)
+		if not message or type(message) ~= "table" then
+			return
+		end
+
+		if message.command == "enable" then
+			handleEnable()
+		elseif message.command == "disable" then
+			handleDisable()
+		else
+			System.Debug:Warn("Camper", "Unknown command:", message.command)
+		end
+	end)
+
+	-- Expose Enable via BindableFunction (backward compatibility)
+	local enableFunction = Instance.new("BindableFunction")
+	enableFunction.Name = "Enable"
+	enableFunction.OnInvoke = handleEnable
+	enableFunction.Parent = model
+
+	-- Expose Disable via BindableFunction (backward compatibility)
+	local disableFunction = Instance.new("BindableFunction")
+	disableFunction.Name = "Disable"
+	disableFunction.OnInvoke = handleDisable
 	disableFunction.Parent = model
 
 	-- Set initial state

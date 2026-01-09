@@ -70,14 +70,14 @@ function GuiAdapter.getNodeInfo(node)
 	end
 
 	-- Get class list from attribute
-	local classString = node:GetAttribute("guiClass") or ""
+	local classString = node:GetAttribute("StyleClass") or ""
 	local classList = {}
 	for class in classString:gmatch("%S+") do
 		table.insert(classList, class)
 	end
 
 	-- Get ID from attribute
-	local id = node:GetAttribute("guiId")
+	local id = node:GetAttribute("StyleId")
 
 	-- Get attributes for selector matching
 	local attributes = {}

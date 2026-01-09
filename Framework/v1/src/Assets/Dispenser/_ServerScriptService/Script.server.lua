@@ -12,8 +12,15 @@
 -- Handles ProximityPrompt interaction and item dispensing
 -- Uses deferred initialization pattern - registers init function, called at ASSETS stage
 
--- Guard: Only run if this is the deployed version
-if not script.Name:match("^Dispenser%.") then
+-- Guard: Only run if this is the deployed version (has dot in name)
+if not script.Name:match("%.") then
+	return
+end
+
+-- Extract asset name from script name (e.g., "MarshmallowBag.Script" → "MarshmallowBag")
+local assetName = script.Name:match("^(.+)%.")
+if not assetName then
+	warn("[Dispenser.Script] Could not extract asset name from script.Name:", script.Name)
 	return
 end
 
@@ -24,12 +31,16 @@ local System = require(ReplicatedStorage:WaitForChild("System.System"))
 System:WaitForStage(System.Stages.SCRIPTS)
 
 -- Register init function (will be called at ASSETS stage)
-System:RegisterAsset("Dispenser", function()
+System:RegisterAsset(assetName, function()
 	-- Dependencies
-	local Dispenser = require(ReplicatedStorage:WaitForChild("Dispenser.ModuleScript"))
+	local DispenserModule = require(ReplicatedStorage:WaitForChild(assetName .. ".ModuleScript"))
 	local Visibility = require(ReplicatedStorage:WaitForChild("System.Visibility"))
 	local runtimeAssets = game.Workspace:WaitForChild("RuntimeAssets")
-	local model = runtimeAssets:WaitForChild("Dispenser")
+	local model = runtimeAssets:WaitForChild(assetName)
+
+	-- Get standardized events (created by bootstrap)
+	local inputEvent = ReplicatedStorage:WaitForChild(assetName .. ".Input")
+	local outputEvent = ReplicatedStorage:WaitForChild(assetName .. ".Output")
 
 	-- MessageTicker loaded lazily (optional dependency)
 	local messageTicker = nil
@@ -37,22 +48,18 @@ System:RegisterAsset("Dispenser", function()
 		messageTicker = ReplicatedStorage:WaitForChild("MessageTicker.MessageTicker", 10)
 	end)
 
-	-- Create Empty event for Orchestrator to listen to
-	local emptyEvent = Instance.new("BindableEvent")
-	emptyEvent.Name = "Dispenser.Empty"
-	emptyEvent.Parent = ReplicatedStorage
 
 	-- Get config from model attributes
 	local itemType = model:GetAttribute("DispenseItem") or "Marshmallow"
 	local capacity = model:GetAttribute("Capacity") or 10
 
 	-- Create dispenser instance
-	local dispenser = Dispenser.new(itemType, capacity)
+	local dispenser = DispenserModule.new(itemType, capacity)
 
 	-- Find Anchor
 	local anchor = model:FindFirstChild("Anchor")
 	if not anchor then
-		System.Debug:Warn("Dispenser", "No Anchor found in", model.Name)
+		System.Debug:Warn(assetName, "No Anchor found in", model.Name)
 		return
 	end
 
@@ -67,14 +74,14 @@ System:RegisterAsset("Dispenser", function()
 			-- Hide anchor, mesh is the visual
 			anchor.Transparency = 1
 		else
-			System.Debug:Warn("Dispenser", "Mesh not found:", meshName)
+			System.Debug:Warn(assetName, "Mesh not found:", meshName)
 		end
 	end
 
 	-- Find ProximityPrompt
 	local prompt = anchor:FindFirstChild("ProximityPrompt")
 	if not prompt then
-		System.Debug:Warn("Dispenser", "No ProximityPrompt found in", model.Name)
+		System.Debug:Warn(assetName, "No ProximityPrompt found in", model.Name)
 		return
 	end
 
@@ -92,67 +99,91 @@ System:RegisterAsset("Dispenser", function()
 			end
 
 			local backpack = player.Backpack
-			System.Debug:Message("Dispenser", "Putting", item.Name, "in backpack:", backpack:GetFullName())
+			System.Debug:Message(assetName, "Putting", item.Name, "in backpack:", backpack:GetFullName())
 			item.Parent = backpack
 			model:SetAttribute("Remaining", dispenser.remaining)
-			System.Debug:Message("Dispenser", "Gave", item.Name, "to", player.Name)
+			System.Debug:Message(assetName, "Gave", item.Name, "to", player.Name)
 
 			-- Notify player
 			if messageTicker then
 				messageTicker:FireClient(player, "Roast your marshmallow over the campfire!")
 			end
 
-			-- Fire empty event if this was the last one
+			-- Fire Output event if this was the last one
 			if dispenser:isEmpty() then
-				System.Debug:Message("Dispenser", "Now empty - firing event")
-				emptyEvent:Fire()
+				System.Debug:Message(assetName, "Now empty - firing Output")
+				outputEvent:Fire({ action = "dispenserEmpty" })
 			end
 		else
-			System.Debug:Message("Dispenser", "Empty")
+			System.Debug:Message(assetName, "Empty")
 			if messageTicker then
 				messageTicker:FireClient(player, "The bag is empty!")
 			end
 		end
 	end)
 
-	-- Expose Reset via BindableFunction (for Orchestrator)
-	local resetFunction = Instance.new("BindableFunction")
-	resetFunction.Name = "Reset"
-	resetFunction.OnInvoke = function()
+	-- Command handlers (callable from Input or BindableFunctions)
+	local function handleReset()
 		dispenser:refill()
 		model:SetAttribute("Remaining", dispenser.remaining)
-		System.Debug:Message("Dispenser", "Refilled to", dispenser.remaining)
+		System.Debug:Message(assetName, "Refilled to", dispenser.remaining)
 		return true
 	end
-	resetFunction.Parent = model
 
-	-- Expose Enable via BindableFunction (for RunModes)
-	local enableFunction = Instance.new("BindableFunction")
-	enableFunction.Name = "Enable"
-	enableFunction.OnInvoke = function()
+	local function handleEnable()
 		Visibility.showModel(model)
 		prompt.Enabled = true
 		model:SetAttribute("IsEnabled", true)
 		model:SetAttribute("HUDVisible", true)
-		System.Debug:Message("Dispenser", "Enabled")
+		System.Debug:Message(assetName, "Enabled")
 		return true
 	end
-	enableFunction.Parent = model
 
-	-- Expose Disable via BindableFunction (for RunModes)
-	local disableFunction = Instance.new("BindableFunction")
-	disableFunction.Name = "Disable"
-	disableFunction.OnInvoke = function()
+	local function handleDisable()
 		Visibility.hideModel(model)
 		prompt.Enabled = false
 		model:SetAttribute("IsEnabled", false)
 		model:SetAttribute("HUDVisible", false)
-		System.Debug:Message("Dispenser", "Disabled")
+		System.Debug:Message(assetName, "Disabled")
 		return true
 	end
+
+	-- Listen on Input for commands from Orchestrator
+	inputEvent.Event:Connect(function(message)
+		if not message or type(message) ~= "table" then
+			return
+		end
+
+		if message.command == "reset" then
+			handleReset()
+		elseif message.command == "enable" then
+			handleEnable()
+		elseif message.command == "disable" then
+			handleDisable()
+		else
+			System.Debug:Warn(assetName, "Unknown command:", message.command)
+		end
+	end)
+
+	-- Expose Reset via BindableFunction (backward compatibility)
+	local resetFunction = Instance.new("BindableFunction")
+	resetFunction.Name = "Reset"
+	resetFunction.OnInvoke = handleReset
+	resetFunction.Parent = model
+
+	-- Expose Enable via BindableFunction (backward compatibility)
+	local enableFunction = Instance.new("BindableFunction")
+	enableFunction.Name = "Enable"
+	enableFunction.OnInvoke = handleEnable
+	enableFunction.Parent = model
+
+	-- Expose Disable via BindableFunction (backward compatibility)
+	local disableFunction = Instance.new("BindableFunction")
+	disableFunction.Name = "Disable"
+	disableFunction.OnInvoke = handleDisable
 	disableFunction.Parent = model
 
-	System.Debug:Message("Dispenser", "Initialized (DispenseItem:" .. itemType .. ", Capacity:" .. capacity .. ")")
+	System.Debug:Message(assetName, "Initialized (DispenseItem:" .. itemType .. ", Capacity:" .. capacity .. ")")
 end)
 
-System.Debug:Message("Dispenser", "Script loaded, init registered")
+System.Debug:Message(assetName, "Script loaded, init registered")

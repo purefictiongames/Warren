@@ -11,8 +11,15 @@
 -- GlobalTimer.LocalScript (Client)
 -- Timer display - creates its own standalone GUI
 
--- Guard: Only run if this is the deployed version
-if not script.Name:match("^GlobalTimer%.") then
+-- Guard: Only run if this is the deployed version (has dot in name)
+if not script.Name:match("%.") then
+	return
+end
+
+-- Extract asset name from script name (e.g., "GlobalTimer.LocalScript" → "GlobalTimer")
+local assetName = script.Name:match("^(.+)%.")
+if not assetName then
+	warn("[GlobalTimer.client] Could not extract asset name from script.Name:", script.Name)
 	return
 end
 
@@ -27,7 +34,7 @@ System:WaitForStage(System.Stages.READY)
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 local GUI = require(ReplicatedStorage:WaitForChild("GUI.GUI"))
-local timerUpdate = ReplicatedStorage:WaitForChild("GlobalTimer.TimerUpdate")
+local timerUpdate = ReplicatedStorage:WaitForChild(assetName .. ".TimerUpdate")
 
 --------------------------------------------------------------------------------
 -- CREATE TIMER UI
@@ -35,7 +42,7 @@ local timerUpdate = ReplicatedStorage:WaitForChild("GlobalTimer.TimerUpdate")
 
 -- Create ScreenGui manually (layout system will find and reposition if active)
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "GlobalTimer.ScreenGui"
+screenGui.Name = assetName .. ".ScreenGui"
 screenGui.ResetOnSpawn = false
 screenGui.Enabled = false -- Hidden by default until RunModes activates
 
@@ -84,7 +91,7 @@ screenGui.Parent = playerGui
 
 -- Get model reference for HUDVisible attribute
 local runtimeAssets = game.Workspace:WaitForChild("RuntimeAssets")
-local model = runtimeAssets:WaitForChild("GlobalTimer")
+local model = runtimeAssets:WaitForChild(assetName)
 
 -- Update visibility based on HUDVisible attribute
 -- NOTE: We control the Content frame's Visible property, not ScreenGui.Enabled,
@@ -95,17 +102,17 @@ local function updateVisibility()
 	local visible = rawValue
 	if visible == nil then visible = false end -- Default to hidden until RunModes activates
 	content.Visible = visible
-	System.Debug:Message("GlobalTimer.client", "updateVisibility: raw=", tostring(rawValue), "-> visible=", tostring(visible), "content.Visible=", tostring(content.Visible))
+	System.Debug:Message(assetName .. ".client", "updateVisibility: raw=", tostring(rawValue), "-> visible=", tostring(visible), "content.Visible=", tostring(content.Visible))
 end
 
 -- Listen for attribute changes
 model:GetAttributeChangedSignal("HUDVisible"):Connect(function()
-	System.Debug:Message("GlobalTimer.client", "HUDVisible attribute changed!")
+	System.Debug:Message(assetName .. ".client", "HUDVisible attribute changed!")
 	updateVisibility()
 end)
 
 -- Set initial visibility
-System.Debug:Message("GlobalTimer.client", "Setting initial visibility, content.Parent=", content.Parent and content.Parent.Name or "nil")
+System.Debug:Message(assetName .. ".client", "Setting initial visibility, content.Parent=", content.Parent and content.Parent.Name or "nil")
 updateVisibility()
 
 --------------------------------------------------------------------------------
@@ -128,4 +135,4 @@ end
 
 timerUpdate.OnClientEvent:Connect(updateTimer)
 
-System.Debug:Message("GlobalTimer.client", "Script loaded")
+System.Debug:Message(assetName .. ".client", "Script loaded")

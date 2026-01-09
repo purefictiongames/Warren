@@ -11,8 +11,15 @@
 -- TimedEvaluator.LocalScript (Client)
 -- Displays evaluation target and status above the TimedEvaluator
 
--- Guard: Only run if this is the deployed version
-if not script.Name:match("^TimedEvaluator%.") then
+-- Guard: Only run if this is the deployed version (has dot in name)
+if not script.Name:match("%.") then
+	return
+end
+
+-- Extract asset name from script name (e.g., "TimedEvaluator.LocalScript" → "TimedEvaluator")
+local assetName = script.Name:match("^(.+)%.")
+if not assetName then
+	warn("[TimedEvaluator.client] Could not extract asset name from script.Name:", script.Name)
 	return
 end
 
@@ -28,7 +35,7 @@ local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 local templates = ReplicatedStorage:WaitForChild("Templates")
 local runtimeAssets = workspace:WaitForChild("RuntimeAssets")
-local model = runtimeAssets:WaitForChild("TimedEvaluator")
+local model = runtimeAssets:WaitForChild(assetName)
 local anchor = model:WaitForChild("Anchor")
 
 local GUI = require(ReplicatedStorage:WaitForChild("GUI.GUI"))
@@ -152,7 +159,7 @@ local function setupMarshmallowPreview()
 		return nil
 	end
 
-	System.Debug:Message("TimedEvaluator.client", "Handle found - Part Size:", handle.Size)
+	System.Debug:Message(assetName .. ".client", "Handle found - Part Size:", handle.Size)
 
 	local previewPart = handle:Clone()
 	previewPart.CFrame = CFrame.new(0, 0, 0)
@@ -171,7 +178,7 @@ local function setupMarshmallowPreview()
 	light.Range = 10
 	light.Parent = previewPart
 
-	System.Debug:Message("TimedEvaluator.client", "Preview part parented to viewport")
+	System.Debug:Message(assetName .. ".client", "Preview part parented to viewport")
 
 	return previewPart
 end
@@ -206,4 +213,4 @@ model:GetAttributeChangedSignal("Satisfaction"):Connect(updateSatisfactionDispla
 model:GetAttributeChangedSignal("TargetValue"):Connect(updateToastPreview)
 model:GetAttributeChangedSignal("HUDVisible"):Connect(updateVisibility)
 
-System.Debug:Message("TimedEvaluator.client", "Display ready")
+System.Debug:Message(assetName .. ".client", "Display ready")

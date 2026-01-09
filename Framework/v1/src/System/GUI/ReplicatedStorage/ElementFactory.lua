@@ -337,10 +337,10 @@ function ElementFactory.create(definition, styles, guiRef)
 
 	-- Store class attribute on the element for future style updates
 	if definition.class then
-		element:SetAttribute("guiClass", definition.class)
+		element:SetAttribute("StyleClass", definition.class)
 	end
 	if definition.id then
-		element:SetAttribute("guiId", definition.id)
+		element:SetAttribute("StyleId", definition.id)
 	end
 
 	-- Create children recursively
@@ -397,10 +397,10 @@ function ElementFactory.createWithStyles(definition, styles, guiRef)
 
 	-- Store class/id attributes on the element for future style updates
 	if definition.class then
-		element:SetAttribute("guiClass", definition.class)
+		element:SetAttribute("StyleClass", definition.class)
 	end
 	if definition.id then
-		element:SetAttribute("guiId", definition.id)
+		element:SetAttribute("StyleId", definition.id)
 	end
 
 	-- Wire pseudo-class event handlers (:hover, :active, :disabled)

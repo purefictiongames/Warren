@@ -11,17 +11,41 @@
 -- DebugConfig.ModuleScript (ReplicatedFirst)
 -- Controls debug output filtering across the framework
 --
--- Level 1: System only (System, System.Script, System.client)
--- Level 2: System + Subsystems (adds System.Player, System.Backpack)
--- Level 3: Assets only (Dispenser, ZoneController, etc.)
--- Level 4: Everything with filtering (uses Filter table)
+-- Priority Levels (from highest to lowest):
+--   Critical - Always shown (bootstrap, errors, warnings)
+--   Info     - Normal messages (default output level)
+--   Verbose  - Debug/trace messages (detailed logging)
+--
+-- Categories:
+--   System      - Core framework (System.Script, System.System, etc.)
+--   Subsystems  - Framework subsystems (System.Player, System.Backpack, System.GUI, etc.)
+--   Assets      - Game assets (MarshmallowBag, Orchestrator, etc.)
+--   RunModes    - Run mode system
+--   Tutorial    - Tutorial system
+--   Input       - Input handling system
 
 return {
-	Level = 3,  -- Debug: Assets only (shows all asset debug messages)
+	-- Priority threshold: "Critical", "Info", or "Verbose"
+	-- Critical: Only bootstrap, errors, warnings
+	-- Info: Critical + normal messages
+	-- Verbose: Everything
+	priorityThreshold = "Info",
 
-	-- Filter table (only used at Level 4)
-	Filter = {
-		enabled = {},
-		disabled = {},
+	-- Category filtering (true = enabled, false = disabled)
+	-- Categories not listed default to true (enabled)
+	categories = {
+		System = true,      -- Core framework
+		Subsystems = true,  -- Framework subsystems
+		Assets = true,      -- Game assets
+		RunModes = true,    -- Run mode system
+		Tutorial = true,    -- Tutorial system
+		Input = true,       -- Input handling
+	},
+
+	-- Advanced filtering with glob patterns (optional)
+	-- These override category filtering
+	filter = {
+		enabled = {},   -- Always show these patterns (e.g., "System.*", "Orchestrator")
+		disabled = {},  -- Never show these patterns (e.g., "*.Tick", "ZoneController")
 	},
 }

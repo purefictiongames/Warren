@@ -33,6 +33,9 @@ System:RegisterAsset("RoastingStick", function()
 	local forceItemDrop = ReplicatedStorage:WaitForChild("Backpack.ForceItemDrop")
 	local itemAdded = ReplicatedStorage:WaitForChild("Backpack.ItemAdded")
 
+	-- Get standardized events (created by bootstrap)
+	local inputEvent = ReplicatedStorage:WaitForChild("RoastingStick.Input")
+
 	-- MessageTicker loaded lazily (optional dependency)
 	local messageTicker = nil
 	task.spawn(function()
@@ -228,11 +231,8 @@ System:RegisterAsset("RoastingStick", function()
 	-- Get model reference for attributes
 	local model = runtimeAssets:WaitForChild("RoastingStick")
 
-	-- Expose Enable via BindableFunction (for RunModes)
-	-- Gives sticks to all players
-	local enableFunction = Instance.new("BindableFunction")
-	enableFunction.Name = "Enable"
-	enableFunction.OnInvoke = function()
+	-- Command handlers (callable from Input or BindableFunctions)
+	local function handleEnable()
 		sticksEnabled = true
 		model:SetAttribute("IsEnabled", true)
 		-- Give sticks to all current players
@@ -242,13 +242,8 @@ System:RegisterAsset("RoastingStick", function()
 		System.Debug:Message("RoastingStick", "Enabled - giving sticks to all players")
 		return true
 	end
-	enableFunction.Parent = model
 
-	-- Expose Disable via BindableFunction (for RunModes)
-	-- Removes sticks from all players
-	local disableFunction = Instance.new("BindableFunction")
-	disableFunction.Name = "Disable"
-	disableFunction.OnInvoke = function()
+	local function handleDisable()
 		sticksEnabled = false
 		model:SetAttribute("IsEnabled", false)
 		-- Remove sticks from all current players
@@ -258,6 +253,34 @@ System:RegisterAsset("RoastingStick", function()
 		System.Debug:Message("RoastingStick", "Disabled - removing sticks from all players")
 		return true
 	end
+
+	-- Listen on Input for commands from Orchestrator
+	inputEvent.Event:Connect(function(message)
+		if not message or type(message) ~= "table" then
+			return
+		end
+
+		if message.command == "enable" then
+			handleEnable()
+		elseif message.command == "disable" then
+			handleDisable()
+		else
+			System.Debug:Warn("RoastingStick", "Unknown command:", message.command)
+		end
+	end)
+
+	-- Expose Enable via BindableFunction (backward compatibility)
+	-- Gives sticks to all players
+	local enableFunction = Instance.new("BindableFunction")
+	enableFunction.Name = "Enable"
+	enableFunction.OnInvoke = handleEnable
+	enableFunction.Parent = model
+
+	-- Expose Disable via BindableFunction (backward compatibility)
+	-- Removes sticks from all players
+	local disableFunction = Instance.new("BindableFunction")
+	disableFunction.Name = "Disable"
+	disableFunction.OnInvoke = handleDisable
 	disableFunction.Parent = model
 
 	System.Debug:Message("RoastingStick", "Initialized")

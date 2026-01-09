@@ -214,13 +214,14 @@ function System:_loadDebugConfig()
 
 	if success and config then
 		self._debugConfig = config
-		print("[Debug] Loaded config, Level =", config.Level)
+		print("[Debug] Loaded config, Priority =", config.priorityThreshold or "Info")
 	else
-		-- Fallback: Level 2 (System + Subsystems) with no filter
-		warn("[Debug] Using fallback config (Level 2)")
+		-- Fallback: Info level, all categories enabled
+		warn("[Debug] Using fallback config (Info level)")
 		self._debugConfig = {
-			Level = 2,
-			Filter = { enabled = {}, disabled = {} }
+			priorityThreshold = "Info",
+			categories = {},
+			filter = { enabled = {}, disabled = {} }
 		}
 	end
 
@@ -238,51 +239,78 @@ local function matchesGlob(str, pattern)
 	return str:match(luaPattern) ~= nil
 end
 
--- Check if source should be logged at current level
-local function shouldLog(source)
+-- Categorize source into a category
+local function categorizeSource(source)
+	-- System core
+	if source == "System" or source == "System.System" or source == "System.Script" or source == "System.client" then
+		return "System"
+	end
+
+	-- Subsystems (System.X where X is not Script/System/client)
+	if source:match("^System%.") then
+		return "Subsystems"
+	end
+
+	-- Special categories
+	if source:match("^RunModes") then
+		return "RunModes"
+	end
+
+	if source:match("^Tutorial") then
+		return "Tutorial"
+	end
+
+	if source:match("^Input") then
+		return "Input"
+	end
+
+	-- Default: Assets (anything else)
+	return "Assets"
+end
+
+-- Check if source should be logged based on priority and category
+local function shouldLog(source, priority)
 	local config = System:_loadDebugConfig()
-	local level = config.Level
 
-	-- Level 1: System only
-	if level == 1 then
-		return source == "System" or source == "System.Script" or source == "System.client"
+	-- Priority check (higher priority always shows)
+	local priorityLevels = { Critical = 3, Info = 2, Verbose = 1 }
+	local threshold = config.priorityThreshold or "Info"
+	local messagePriority = priorityLevels[priority] or 2
+	local thresholdPriority = priorityLevels[threshold] or 2
+
+	if messagePriority < thresholdPriority then
+		return false
 	end
 
-	-- Level 2: System + Subsystems
-	if level == 2 then
-		return source:match("^System") ~= nil
-	end
+	-- Advanced filter check (overrides category filtering)
+	local filter = config.filter or {}
+	local enabled = filter.enabled or {}
+	local disabled = filter.disabled or {}
 
-	-- Level 3: Assets only (NOT System)
-	if level == 3 then
-		return source:match("^System") == nil
-	end
-
-	-- Level 4: Everything with filtering
-	if level == 4 then
-		local filter = config.Filter or {}
-		local enabled = filter.enabled or {}
-		local disabled = filter.disabled or {}
-
-		-- Check enabled list first (if match, ALLOW)
-		for _, pattern in ipairs(enabled) do
-			if matchesGlob(source, pattern) then
-				return true
-			end
+	-- Check enabled list first (if match, ALLOW)
+	for _, pattern in ipairs(enabled) do
+		if matchesGlob(source, pattern) then
+			return true
 		end
-
-		-- Check disabled list second (if match, BLOCK)
-		for _, pattern in ipairs(disabled) do
-			if matchesGlob(source, pattern) then
-				return false
-			end
-		end
-
-		-- Default: allow (permissive)
-		return true
 	end
 
-	-- Unknown level: default allow
+	-- Check disabled list second (if match, BLOCK)
+	for _, pattern in ipairs(disabled) do
+		if matchesGlob(source, pattern) then
+			return false
+		end
+	end
+
+	-- Category filtering
+	local category = categorizeSource(source)
+	local categories = config.categories or {}
+
+	-- If category is explicitly set, use that value
+	-- Otherwise default to true (enabled)
+	if categories[category] ~= nil then
+		return categories[category]
+	end
+
 	return true
 end
 
@@ -299,23 +327,38 @@ end
 -- Debug namespace
 System.Debug = {}
 
--- Debug:Message - regular output
-function System.Debug:Message(source, ...)
-	if shouldLog(source) then
+-- Debug:Critical - critical messages (always shown unless explicitly filtered)
+-- Use for bootstrap, errors, important system events
+function System.Debug:Critical(source, ...)
+	if shouldLog(source, "Critical") then
 		print(source .. ":", formatArgs(...))
 	end
 end
 
--- Debug:Warn - warning output
+-- Debug:Message - regular info-level output
+function System.Debug:Message(source, ...)
+	if shouldLog(source, "Info") then
+		print(source .. ":", formatArgs(...))
+	end
+end
+
+-- Debug:Verbose - detailed debug output (only shown at Verbose priority threshold)
+function System.Debug:Verbose(source, ...)
+	if shouldLog(source, "Verbose") then
+		print(source .. ":", formatArgs(...))
+	end
+end
+
+-- Debug:Warn - warning output (Critical priority)
 function System.Debug:Warn(source, ...)
-	if shouldLog(source) then
+	if shouldLog(source, "Critical") then
 		warn(source .. ":", formatArgs(...))
 	end
 end
 
--- Debug:Alert - error/alert output (prefixed with [ALERT])
+-- Debug:Alert - error/alert output (Critical priority, prefixed with [ALERT])
 function System.Debug:Alert(source, ...)
-	if shouldLog(source) then
+	if shouldLog(source, "Critical") then
 		warn("[ALERT] " .. source .. ":", formatArgs(...))
 	end
 end

@@ -8,12 +8,19 @@
     in whole or in part, is strictly prohibited without prior written permission.
 --]]
 
--- GlobalTimer.Script (Server)
+-- assetName.Script (Server)
 -- Global round timer - counts down and fires events for HUD and Orchestrator
 -- Uses deferred initialization pattern - registers init function, called at ASSETS stage
 
--- Guard: Only run if this is the deployed version
-if not script.Name:match("^GlobalTimer%.") then
+-- Guard: Only run if this is the deployed version (has dot in name)
+if not script.Name:match("%.") then
+	return
+end
+
+-- Extract asset name from script name
+local assetName = script.Name:match("^(.+)%.")
+if not assetName then
+	warn("[assetName.Script] Could not extract asset name from script.Name:", script.Name)
 	return
 end
 
@@ -24,12 +31,17 @@ local System = require(ReplicatedStorage:WaitForChild("System.System"))
 System:WaitForStage(System.Stages.SCRIPTS)
 
 -- Register init function (will be called at ASSETS stage)
-System:RegisterAsset("GlobalTimer", function()
+System:RegisterAsset(assetName, function()
 	-- Dependencies
 	local runtimeAssets = game.Workspace:WaitForChild("RuntimeAssets")
-	local model = runtimeAssets:WaitForChild("GlobalTimer")
-	local timerUpdate = ReplicatedStorage:WaitForChild("GlobalTimer.TimerUpdate")
-	local timerExpired = ReplicatedStorage:WaitForChild("GlobalTimer.TimerExpired")
+	local model = runtimeAssets:WaitForChild(assetName)
+
+	-- Get standardized events (created by bootstrap)
+	local inputEvent = ReplicatedStorage:WaitForChild(assetName .. ".Input")
+	local outputEvent = ReplicatedStorage:WaitForChild(assetName .. ".Output")
+
+	-- TimerUpdate is still a custom RemoteEvent for client updates (keep for now)
+	local timerUpdate = ReplicatedStorage:WaitForChild(assetName .. ".TimerUpdate")
 
 	-- Parse CountdownStart attribute (M.SS format where SS must be 00-59)
 	local function parseCountdown(value)
@@ -42,7 +54,7 @@ System:RegisterAsset("GlobalTimer", function()
 		local seconds = math.floor(decimalPart * 100 + 0.5)
 
 		if seconds > 59 then
-			System.Debug:Warn("GlobalTimer", "Invalid CountdownStart - seconds must be <= 59 (got", seconds, ")")
+			System.Debug:Warn("assetName", "Invalid CountdownStart - seconds must be <= 59 (got", seconds, ")")
 			return nil
 		end
 
@@ -54,11 +66,11 @@ System:RegisterAsset("GlobalTimer", function()
 	local totalSeconds = parseCountdown(countdownStart)
 
 	if not totalSeconds then
-		System.Debug:Warn("GlobalTimer", "Invalid CountdownStart attribute, defaulting to 3:00")
+		System.Debug:Warn("assetName", "Invalid CountdownStart attribute, defaulting to 3:00")
 		totalSeconds = 180
 	end
 
-	System.Debug:Message("GlobalTimer", "Countdown set to", totalSeconds, "seconds (from", countdownStart, ")")
+	System.Debug:Message("assetName", "Countdown set to", totalSeconds, "seconds (from", countdownStart, ")")
 
 	-- Internal state
 	local timerThread = nil
@@ -96,7 +108,7 @@ System:RegisterAsset("GlobalTimer", function()
 		timeRemaining = totalSeconds
 		model:SetAttribute("TimeRemaining", timeRemaining)
 
-		System.Debug:Message("GlobalTimer", "Started -", formatTime(timeRemaining))
+		System.Debug:Message("assetName", "Started -", formatTime(timeRemaining))
 		broadcastUpdate()
 
 		timerThread = task.spawn(function()
@@ -109,9 +121,9 @@ System:RegisterAsset("GlobalTimer", function()
 
 			if isRunning and myGeneration == timerGeneration then
 				isRunning = false
-				System.Debug:Message("GlobalTimer", "Expired!")
+				System.Debug:Message(assetName, "Expired!")
 				broadcastUpdate()
-				timerExpired:Fire()
+				outputEvent:Fire({ action = "timerExpired" })
 			end
 		end)
 	end
@@ -125,51 +137,79 @@ System:RegisterAsset("GlobalTimer", function()
 		isRunning = false
 		model:SetAttribute("TimeRemaining", timeRemaining)
 		broadcastUpdate()
-		System.Debug:Message("GlobalTimer", "Stopped at", formatTime(timeRemaining))
+		System.Debug:Message("assetName", "Stopped at", formatTime(timeRemaining))
 	end
 
-	-- Expose Start via BindableFunction (for Orchestrator)
-	local startFunction = Instance.new("BindableFunction")
-	startFunction.Name = "Start"
-	startFunction.OnInvoke = function()
+	-- Command handlers (callable from Input or BindableFunctions)
+	local function handleStart()
 		start()
 		return true
 	end
-	startFunction.Parent = model
 
-	-- Expose Stop via BindableFunction (for Orchestrator)
-	local stopFunction = Instance.new("BindableFunction")
-	stopFunction.Name = "Stop"
-	stopFunction.OnInvoke = function()
+	local function handleStop()
 		stop()
 		return true
 	end
-	stopFunction.Parent = model
 
-	-- Expose Enable via BindableFunction (for RunModes)
-	local enableFunction = Instance.new("BindableFunction")
-	enableFunction.Name = "Enable"
-	enableFunction.OnInvoke = function()
+	local function handleEnable()
 		model:SetAttribute("IsEnabled", true)
 		model:SetAttribute("HUDVisible", true)
-		System.Debug:Message("GlobalTimer", "Enabled")
+		System.Debug:Message("assetName", "Enabled")
 		return true
 	end
-	enableFunction.Parent = model
 
-	-- Expose Disable via BindableFunction (for RunModes)
-	local disableFunction = Instance.new("BindableFunction")
-	disableFunction.Name = "Disable"
-	disableFunction.OnInvoke = function()
+	local function handleDisable()
 		stop()  -- Stop timer when disabled
 		model:SetAttribute("IsEnabled", false)
 		model:SetAttribute("HUDVisible", false)
-		System.Debug:Message("GlobalTimer", "Disabled")
+		System.Debug:Message("assetName", "Disabled")
 		return true
 	end
+
+	-- Listen on Input for commands from Orchestrator
+	inputEvent.Event:Connect(function(message)
+		if not message or type(message) ~= "table" then
+			return
+		end
+
+		if message.command == "start" then
+			handleStart()
+		elseif message.command == "stop" then
+			handleStop()
+		elseif message.command == "enable" then
+			handleEnable()
+		elseif message.command == "disable" then
+			handleDisable()
+		else
+			System.Debug:Warn(assetName, "Unknown command:", message.command)
+		end
+	end)
+
+	-- Expose Start via BindableFunction (backward compatibility)
+	local startFunction = Instance.new("BindableFunction")
+	startFunction.Name = "Start"
+	startFunction.OnInvoke = handleStart
+	startFunction.Parent = model
+
+	-- Expose Stop via BindableFunction (backward compatibility)
+	local stopFunction = Instance.new("BindableFunction")
+	stopFunction.Name = "Stop"
+	stopFunction.OnInvoke = handleStop
+	stopFunction.Parent = model
+
+	-- Expose Enable via BindableFunction (backward compatibility)
+	local enableFunction = Instance.new("BindableFunction")
+	enableFunction.Name = "Enable"
+	enableFunction.OnInvoke = handleEnable
+	enableFunction.Parent = model
+
+	-- Expose Disable via BindableFunction (backward compatibility)
+	local disableFunction = Instance.new("BindableFunction")
+	disableFunction.Name = "Disable"
+	disableFunction.OnInvoke = handleDisable
 	disableFunction.Parent = model
 
-	System.Debug:Message("GlobalTimer", "Initialized")
+	System.Debug:Message("assetName", "Initialized")
 end)
 
-System.Debug:Message("GlobalTimer", "Script loaded, init registered")
+System.Debug:Message("assetName", "Script loaded, init registered")

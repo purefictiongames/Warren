@@ -42,6 +42,7 @@ function TimedEvaluatorModule.initialize(config)
 	local acceptType = model:GetAttribute("AcceptType") or "Marshmallow"
 	local evalTarget = model:GetAttribute("EvalTarget") or "ToastLevel"
 	local countdown = model:GetAttribute("Countdown") or 30
+	local timeoutBehavior = model:GetAttribute("TimeoutBehavior") or "reset" -- "reset" or "despawn"
 
 	-- Validate target range
 	local targetMin = model:GetAttribute("TargetMin")
@@ -77,7 +78,13 @@ function TimedEvaluatorModule.initialize(config)
 		end
 	end
 
-	-- Configure Anchor: invisible, non-collideable, but interactable
+	-- Bind humanoid/parts to follow anchor using physics constraints
+	-- This keeps the Walking NPC centered on the anchor when it moves
+	Visibility.bindToAnchor(model)
+	System.Debug:Message(assetName, "Bound model parts to anchor")
+
+	-- Configure Anchor: anchored, invisible, non-collideable, but interactable
+	anchor.Anchored = true -- Anchor stays in place, other parts follow via constraints
 	anchor.Transparency = 1
 	anchor:SetAttribute("VisibleTransparency", 1)
 	anchor.CanCollide = false
@@ -124,6 +131,12 @@ function TimedEvaluatorModule.initialize(config)
 	-- Listen for timer ticks
 	timerTick.Event:Connect(updateSatisfaction)
 
+	-- Auto-reset delay (configurable via attribute)
+	local autoResetDelay = model:GetAttribute("AutoResetDelay") or 3
+
+	-- Forward declaration for reset (defined later)
+	local reset
+
 	-- Evaluate submitted item (or nil if timeout)
 	local function evaluate(item, player)
 		if hasEvaluated then return end
@@ -150,6 +163,8 @@ function TimedEvaluatorModule.initialize(config)
 
 		-- Fire event with result
 		local timeRemaining = model:GetAttribute("TimeRemaining") or 0
+		local wasTimeout = item == nil
+
 		evaluationComplete:Fire({
 			submitted = item ~= nil,
 			submittedValue = submittedValue,
@@ -158,8 +173,33 @@ function TimedEvaluatorModule.initialize(config)
 			player = player,
 			timeRemaining = timeRemaining,
 			countdown = countdown,
-			assetName = assetName, -- Include source for tracking
+			assetName = assetName,
+			timedOut = wasTimeout,
 		})
+
+		-- Handle post-evaluation behavior based on timeoutBehavior setting
+		if wasTimeout and timeoutBehavior == "despawn" then
+			-- Timeout with despawn mode: hide and signal for removal
+			System.Debug:Message(assetName, "Timeout - despawning (timeoutBehavior:", timeoutBehavior, ")")
+			Visibility.hideModel(model)
+			model:SetAttribute("IsEnabled", false)
+			model:SetAttribute("HUDVisible", false)
+
+			-- Fire despawn event so Dropper/WaveController know slot is free
+			evaluationComplete:Fire({
+				action = "camperDespawned",
+				assetName = assetName,
+				reason = "timeout",
+			})
+		else
+			-- Normal mode or successful submission: auto-reset after delay
+			task.delay(autoResetDelay, function()
+				if model:GetAttribute("IsEnabled") then
+					System.Debug:Message(assetName, "Auto-resetting after", autoResetDelay, "seconds")
+					reset()
+				end
+			end)
+		end
 	end
 
 	-- Start countdown timer
@@ -189,8 +229,8 @@ function TimedEvaluatorModule.initialize(config)
 		end)
 	end
 
-	-- Reset/init function
-	local function reset()
+	-- Reset/init function (assigned to forward declaration)
+	reset = function()
 		if timerThread then
 			pcall(function() task.cancel(timerThread) end)
 			timerThread = nil

@@ -133,4 +133,141 @@ function Visibility.isHidden(model)
 	return false
 end
 
+--- Bind model parts to follow the Anchor using physics constraints
+--- Parts maintain their relative offset from the Anchor when it moves
+--- For Humanoids: binds HumanoidRootPart/Torso (body follows via Motor6D)
+--- For other models: binds all unanchored root parts
+---@param model Instance The model containing an Anchor part
+---@param options table? Optional config { responsiveness = 200, maxForce = math.huge }
+---@return table Array of created constraints (for cleanup if needed)
+function Visibility.bindToAnchor(model, options)
+	options = options or {}
+	local responsiveness = options.responsiveness or 200
+	local maxForce = options.maxForce or math.huge
+
+	local anchor = model:FindFirstChild("Anchor")
+	if not anchor or not anchor:IsA("BasePart") then
+		warn("[Visibility.bindToAnchor] No Anchor BasePart found in", model.Name)
+		return {}
+	end
+
+	local constraints = {}
+
+	-- Helper to bind a part to the anchor
+	local function bindPart(part)
+		if part == anchor then return end
+		if part.Anchored then return end -- Don't bind anchored parts
+
+		-- Calculate current offset from anchor
+		local offset = anchor.CFrame:ToObjectSpace(part.CFrame)
+
+		-- Create attachment on anchor at the offset position
+		local anchorAttachment = Instance.new("Attachment")
+		anchorAttachment.Name = part.Name .. "_AnchorAttachment"
+		anchorAttachment.CFrame = offset
+		anchorAttachment.Parent = anchor
+
+		-- Create attachment on the target part (at its center)
+		local partAttachment = Instance.new("Attachment")
+		partAttachment.Name = "AnchorBindAttachment"
+		partAttachment.Parent = part
+
+		-- AlignPosition: pulls part toward anchor attachment
+		local alignPos = Instance.new("AlignPosition")
+		alignPos.Name = part.Name .. "_AlignPosition"
+		alignPos.Mode = Enum.PositionAlignmentMode.TwoAttachment
+		alignPos.Attachment0 = partAttachment
+		alignPos.Attachment1 = anchorAttachment
+		alignPos.MaxForce = maxForce
+		alignPos.Responsiveness = responsiveness
+		alignPos.RigidityEnabled = false -- Use force-based, not instant
+		alignPos.Parent = part
+
+		-- AlignOrientation: keeps part rotation aligned with anchor
+		local alignOri = Instance.new("AlignOrientation")
+		alignOri.Name = part.Name .. "_AlignOrientation"
+		alignOri.Mode = Enum.OrientationAlignmentMode.TwoAttachment
+		alignOri.Attachment0 = partAttachment
+		alignOri.Attachment1 = anchorAttachment
+		alignOri.MaxTorque = maxForce
+		alignOri.Responsiveness = responsiveness
+		alignOri.RigidityEnabled = false
+		alignOri.Parent = part
+
+		table.insert(constraints, anchorAttachment)
+		table.insert(constraints, partAttachment)
+		table.insert(constraints, alignPos)
+		table.insert(constraints, alignOri)
+	end
+
+	-- Check for Humanoid (bind root part only - body follows via Motor6D)
+	local humanoid = model:FindFirstChildOfClass("Humanoid")
+	if not humanoid then
+		-- Check descendants (humanoid might be nested in Walking NPC model)
+		for _, desc in ipairs(model:GetDescendants()) do
+			if desc:IsA("Humanoid") then
+				humanoid = desc
+				break
+			end
+		end
+	end
+
+	if humanoid then
+		-- Find the root part (HumanoidRootPart for R15, Torso for R6)
+		local rootPart = humanoid.RootPart
+		if not rootPart then
+			-- Fallback: search for common root part names
+			local humanoidModel = humanoid.Parent
+			rootPart = humanoidModel:FindFirstChild("HumanoidRootPart")
+				or humanoidModel:FindFirstChild("Torso")
+		end
+
+		if rootPart then
+			bindPart(rootPart)
+		else
+			warn("[Visibility.bindToAnchor] Humanoid found but no root part in", model.Name)
+		end
+	else
+		-- No humanoid - bind all unanchored BaseParts that are direct children
+		for _, child in ipairs(model:GetChildren()) do
+			if child:IsA("BasePart") and child ~= anchor then
+				bindPart(child)
+			elseif child:IsA("Model") then
+				-- Check for nested models with unanchored parts
+				local primaryPart = child.PrimaryPart or child:FindFirstChildOfClass("BasePart")
+				if primaryPart and not primaryPart.Anchored then
+					bindPart(primaryPart)
+				end
+			end
+		end
+	end
+
+	return constraints
+end
+
+--- Remove all anchor bindings from a model
+---@param model Instance The model to unbind
+function Visibility.unbindFromAnchor(model)
+	local anchor = model:FindFirstChild("Anchor")
+	if anchor then
+		-- Remove attachments from anchor
+		for _, child in ipairs(anchor:GetChildren()) do
+			if child:IsA("Attachment") and child.Name:match("_AnchorAttachment$") then
+				child:Destroy()
+			end
+		end
+	end
+
+	-- Remove constraints and attachments from all parts
+	for _, desc in ipairs(model:GetDescendants()) do
+		if desc:IsA("Attachment") and desc.Name == "AnchorBindAttachment" then
+			desc:Destroy()
+		elseif desc:IsA("AlignPosition") and desc.Name:match("_AlignPosition$") then
+			desc:Destroy()
+		elseif desc:IsA("AlignOrientation") and desc.Name:match("_AlignOrientation$") then
+			desc:Destroy()
+		end
+	end
+end
+
 return Visibility

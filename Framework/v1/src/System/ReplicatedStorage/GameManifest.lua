@@ -22,7 +22,8 @@ return {
 		{ use = "GlobalTimer", as = "PlayTimer" },
 		{ use = "GlobalTimer", as = "CountdownTimer" },
 		{ use = "Scoreboard", as = "Scoreboard" },
-		{ use = "ArrayPlacer", as = "CampPlacer", spawns = "Dropper", around = "Campfire", count = 4, radius = 10 },
+		{ use = "WaveController", as = "WaveController" },
+		{ use = "ArrayPlacer", as = "CampPlacer", spawns = "Dropper", count = 4, centerOn = "Campfire", anchorSizeX = 20, anchorSizeY = 0.5, anchorSizeZ = 40 },
 		{ use = "Orchestrator", as = "Orchestrator" },
 		{ use = "RoastingStick", as = "RoastingStick" },
 		{ use = "LeaderBoard", as = "LeaderBoard" },
@@ -34,19 +35,28 @@ return {
 	-- Format: { from = "AssetName.EventName", to = "AssetName.EventName" }
 	-- Connects Output events to Input events for black box communication
 	wiring = {
-		-- Asset Outputs → Orchestrator Input
+		-- Asset Outputs → Orchestrator Input (game flow events)
 		{ from = "PlayTimer.Output", to = "Orchestrator.Input" },
 		{ from = "CountdownTimer.Output", to = "Orchestrator.Input" },
 		{ from = "MarshmallowBag.Output", to = "Orchestrator.Input" },
 		{ from = "Scoreboard.Output", to = "Orchestrator.Input" },
 
-		-- ArrayPlacer forwards events from spawned Droppers to Scoreboard
+		-- Orchestrator → WaveController (game start/stop signals)
+		{ from = "Orchestrator.Output", to = "WaveController.Input" },
+
+		-- WaveController → CampPlacer (spawn commands to individual droppers)
+		{ from = "WaveController.Output", to = "CampPlacer.Input" },
+
+		-- CampPlacer → WaveController (camper status: spawned/despawned/fed)
+		{ from = "CampPlacer.Output", to = "WaveController.Input" },
+
+		-- CampPlacer → Scoreboard (evaluation results for scoring)
 		{ from = "CampPlacer.Output", to = "Scoreboard.Input" },
 
 		-- Scoreboard Output → LeaderBoard Input (score updates)
 		{ from = "Scoreboard.Output", to = "LeaderBoard.Input" },
 
-		-- RunModes (system event - still custom for now)
+		-- RunModes (system event)
 		{ from = "RunModes.ModeChanged", to = "Orchestrator.Input" },
 	}
 }

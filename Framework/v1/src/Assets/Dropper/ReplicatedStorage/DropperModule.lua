@@ -44,6 +44,7 @@ function DropperModule.initialize(config)
 	-- Get configuration from model attributes
 	local dropTemplate = model:GetAttribute("DropTemplate") or "TimedEvaluator"
 	local spawnOffset = model:GetAttribute("SpawnOffset") or Vector3.new(0, 0, 0)
+	local spawnMode = model:GetAttribute("SpawnMode") or "auto" -- "auto" or "onDemand"
 
 	-- Find and configure Anchor
 	local anchor = model:FindFirstChild("Anchor")
@@ -184,6 +185,12 @@ function DropperModule.initialize(config)
 			end
 		end
 
+		-- Propagate attributes from Dropper to spawned instance
+		local timeoutBehavior = model:GetAttribute("TimeoutBehavior")
+		if timeoutBehavior then
+			clone:SetAttribute("TimeoutBehavior", timeoutBehavior)
+		end
+
 		-- Position at SpawnPoint
 		local targetCFrame = spawnPoint.CFrame * CFrame.new(spawnOffset)
 		clone:PivotTo(targetCFrame)
@@ -279,19 +286,72 @@ function DropperModule.initialize(config)
 		Visibility.showModel(model)
 		model:SetAttribute("IsEnabled", true)
 
-		if #spawnedInstances == 0 then
-			local instance = spawnInstance()
-			if instance and instance.controller then
-				instance.controller.enable()
-			end
-		else
-			local instance = getCurrentInstance()
-			if instance and instance.controller then
-				instance.controller.enable()
+		-- In "auto" mode, spawn immediately; in "onDemand" mode, wait for spawn command
+		if spawnMode == "auto" then
+			if #spawnedInstances == 0 then
+				local instance = spawnInstance()
+				if instance and instance.controller then
+					instance.controller.enable()
+				end
+			else
+				local instance = getCurrentInstance()
+				if instance and instance.controller then
+					instance.controller.enable()
+				end
 			end
 		end
 
-		System.Debug:Message(assetName, "Enabled")
+		System.Debug:Message(assetName, "Enabled (spawnMode:", spawnMode, ")")
+		return true
+	end
+
+	-- Explicit spawn command (for onDemand mode)
+	local function handleSpawn()
+		if not model:GetAttribute("IsEnabled") then
+			System.Debug:Warn(assetName, "Cannot spawn - not enabled")
+			return false
+		end
+
+		-- Despawn existing if any
+		despawnAll()
+
+		-- Spawn new
+		local instance = spawnInstance()
+		if instance and instance.controller then
+			instance.controller.enable()
+			instance.controller.reset()
+			System.Debug:Message(assetName, "Spawned camper:", instance.name)
+
+			-- Fire spawned event
+			if outputEvent then
+				outputEvent:Fire({
+					action = "camperSpawned",
+					origin = instance.name,
+					dropperName = assetName,
+				})
+			end
+			return true
+		end
+		return false
+	end
+
+	-- Explicit despawn command
+	local function handleDespawn()
+		local instance = getCurrentInstance()
+		local instanceName = instance and instance.name or nil
+
+		despawnAll()
+
+		-- Fire despawned event
+		if instanceName and outputEvent then
+			outputEvent:Fire({
+				action = "camperDespawned",
+				origin = instanceName,
+				dropperName = assetName,
+			})
+		end
+
+		System.Debug:Message(assetName, "Despawned")
 		return true
 	end
 
@@ -322,6 +382,10 @@ function DropperModule.initialize(config)
 				handleDisable()
 			elseif message.command == "reset" then
 				handleReset()
+			elseif message.command == "spawn" then
+				handleSpawn()
+			elseif message.command == "despawn" then
+				handleDespawn()
 			end
 		end)
 	end
@@ -342,7 +406,17 @@ function DropperModule.initialize(config)
 	resetFn.OnInvoke = handleReset
 	resetFn.Parent = model
 
-	System.Debug:Message(assetName, "Initialized via module")
+	local spawnFn = Instance.new("BindableFunction")
+	spawnFn.Name = "Spawn"
+	spawnFn.OnInvoke = handleSpawn
+	spawnFn.Parent = model
+
+	local despawnFn = Instance.new("BindableFunction")
+	despawnFn.Name = "Despawn"
+	despawnFn.OnInvoke = handleDespawn
+	despawnFn.Parent = model
+
+	System.Debug:Message(assetName, "Initialized via module (spawnMode:", spawnMode, ")")
 
 	return {
 		model = model,
@@ -350,6 +424,8 @@ function DropperModule.initialize(config)
 		enable = handleEnable,
 		disable = handleDisable,
 		reset = handleReset,
+		spawn = handleSpawn,
+		despawn = handleDespawn,
 		spawnedInstances = spawnedInstances,
 	}
 end

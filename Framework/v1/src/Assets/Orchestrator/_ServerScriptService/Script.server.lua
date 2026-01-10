@@ -135,9 +135,13 @@ local function startGameLoop()
 
 	System.Debug:Message(assetName, "Starting game loop")
 
-	-- Send reset commands to assets
+	-- Reset assets
 	outputEvent:Fire({ target = "MarshmallowBag", command = "reset" })
-	outputEvent:Fire({ target = "CampPlacer", command = "reset" }) -- Dropper forwards to CampPlacer_Camper
+
+	-- Signal WaveController to start spawning (it controls CampPlacer)
+	outputEvent:Fire({ action = "gameStarted" })
+
+	-- Start the play timer
 	outputEvent:Fire({ target = "PlayTimer", command = "start" })
 end
 
@@ -146,24 +150,22 @@ local function stopGameLoop()
 	if not gameRunning then return end
 	gameRunning = false
 
-	-- Send stop command to PlayTimer
+	-- Signal WaveController to stop spawning
+	outputEvent:Fire({ action = "gameStopped" })
+
+	-- Stop PlayTimer
 	outputEvent:Fire({ target = "PlayTimer", command = "stop" })
 
 	System.Debug:Message(assetName, "Stopped game loop")
 end
 
--- Per-submission reset (RoundComplete from Scoreboard)
+-- Per-submission handler (RoundComplete from Scoreboard)
+-- Note: Individual TimedEvaluators auto-reset themselves after evaluation
 local function onRoundComplete(result)
-	-- Only reset if game is running
 	if not gameRunning then return end
 
-	System.Debug:Message(assetName, "Submission received - resetting CampPlacer (Dropper)")
-	task.wait(1)
-
-	-- Check again after delay
-	if not gameRunning then return end
-
-	outputEvent:Fire({ target = "CampPlacer", command = "reset" }) -- Dropper forwards to CampPlacer_Camper
+	-- Log the submission (each TimedEvaluator handles its own reset)
+	System.Debug:Message(assetName, "Submission received from", result and result.assetName or "unknown")
 end
 
 -- End game and return all active players to standby

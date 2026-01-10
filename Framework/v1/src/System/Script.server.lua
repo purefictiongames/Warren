@@ -240,6 +240,18 @@ local function bootstrapAssets(System)
 		if entry.faceOffset then
 			clone:SetAttribute("FaceOffset", entry.faceOffset)
 		end
+		if entry.centerOn then
+			clone:SetAttribute("CenterOn", entry.centerOn)
+		end
+		if entry.anchorSizeX then
+			clone:SetAttribute("AnchorSizeX", entry.anchorSizeX)
+		end
+		if entry.anchorSizeY then
+			clone:SetAttribute("AnchorSizeY", entry.anchorSizeY)
+		end
+		if entry.anchorSizeZ then
+			clone:SetAttribute("AnchorSizeZ", entry.anchorSizeZ)
+		end
 
 		-- Create standardized events for this asset
 		local eventTypes = {"Input", "Output", "Debug"}

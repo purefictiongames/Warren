@@ -9,8 +9,9 @@
 --]]
 
 -- ArrayPlacer.Script (Server)
--- Spawns multiple instances of a template in a radial pattern around an origin
--- Configured via manifest: { spawns = "Template", around = "Origin", count = N, radius = R }
+-- Spawns multiple instances of a template in an elliptical pattern around its own Anchor
+-- Configured via manifest: { spawns = "Template", count = N }
+-- Ellipse size determined by Anchor part's Size.X and Size.Z (radii = Size/2)
 
 -- Guard: Only run if this is the deployed version
 if not script.Name:match("%.") then
@@ -43,17 +44,17 @@ System:RegisterAsset(assetName, function()
 
 	-- Get configuration from attributes (set by System.Script from manifest)
 	local spawnsTemplate = model:GetAttribute("Spawns")
-	local aroundAsset = model:GetAttribute("Around")
 	local count = model:GetAttribute("Count") or 4
-	local radius = model:GetAttribute("Radius") or 10
 
 	if not spawnsTemplate then
 		System.Debug:Alert(assetName, "No 'Spawns' attribute - nothing to spawn")
 		return
 	end
 
-	if not aroundAsset then
-		System.Debug:Alert(assetName, "No 'Around' attribute - no origin specified")
+	-- Find own Anchor part (defines ellipse center and size)
+	local anchor = model:FindFirstChild("Anchor")
+	if not anchor then
+		System.Debug:Alert(assetName, "No Anchor part found - cannot determine placement area")
 		return
 	end
 
@@ -64,18 +65,39 @@ System:RegisterAsset(assetName, function()
 		return
 	end
 
-	-- Find origin asset
-	local originModel = runtimeAssets:FindFirstChild(aroundAsset)
-	if not originModel then
-		System.Debug:Alert(assetName, "Origin asset not found:", aroundAsset)
-		return
+	-- Optional: Center anchor on another asset (for initial positioning)
+	local centerOn = model:GetAttribute("CenterOn")
+	if centerOn then
+		local centerAsset = runtimeAssets:FindFirstChild(centerOn)
+		if centerAsset then
+			local centerAnchor = centerAsset:FindFirstChild("Anchor")
+			local centerPos = centerAnchor and centerAnchor.Position or centerAsset:GetPivot().Position
+			-- Move anchor to center on that asset's XZ, keep configured Y
+			anchor.Position = Vector3.new(centerPos.X, anchor.Position.Y, centerPos.Z)
+			System.Debug:Message(assetName, "Centered anchor on", centerOn)
+		else
+			System.Debug:Warn(assetName, "CenterOn asset not found:", centerOn)
+		end
 	end
 
-	-- Get origin position (use Anchor if available, otherwise model pivot)
-	local originAnchor = originModel:FindFirstChild("Anchor")
-	local originPosition = originAnchor and originAnchor.Position or originModel:GetPivot().Position
+	-- Configure anchor size for ellipse (can be overridden by attributes)
+	local anchorSizeX = model:GetAttribute("AnchorSizeX")
+	local anchorSizeZ = model:GetAttribute("AnchorSizeZ")
+	local anchorSizeY = model:GetAttribute("AnchorSizeY")
+	if anchorSizeX or anchorSizeZ or anchorSizeY then
+		anchor.Size = Vector3.new(
+			anchorSizeX or anchor.Size.X,
+			anchorSizeY or anchor.Size.Y,
+			anchorSizeZ or anchor.Size.Z
+		)
+	end
 
-	System.Debug:Message(assetName, "Spawns:", spawnsTemplate, "Around:", aroundAsset, "Count:", count, "Radius:", radius)
+	-- Ellipse radii from anchor size
+	local radiusX = anchor.Size.X / 2
+	local radiusZ = anchor.Size.Z / 2
+	local originPosition = anchor.Position
+
+	System.Debug:Message(assetName, "Spawns:", spawnsTemplate, "Count:", count, "RadiusX:", radiusX, "RadiusZ:", radiusZ)
 
 	-- Load initialization module for the template
 	local initModule = nil
@@ -108,14 +130,13 @@ System:RegisterAsset(assetName, function()
 	-- Rotation offset for spawned models (in degrees, applied after facing origin)
 	-- 0 = model's local -Z faces the origin (CFrame.lookAt default)
 	-- 180 = model's local +Z faces the origin (common for models that "face" +Z)
-	-- TODO: faceOffset rotation not working as expected - models don't rotate to face origin
 	local faceOffset = model:GetAttribute("FaceOffset") or 0
 
-	-- Calculate position for index in circle (position only, no rotation)
+	-- Calculate position for index in ellipse
 	local function getPositionForIndex(index, total)
 		local angle = (index - 1) * (2 * math.pi / total)
-		local x = originPosition.X + radius * math.cos(angle)
-		local z = originPosition.Z + radius * math.sin(angle)
+		local x = originPosition.X + radiusX * math.cos(angle)
+		local z = originPosition.Z + radiusZ * math.sin(angle)
 
 		-- Face toward origin (at ground level)
 		local position = Vector3.new(x, groundY, z)
@@ -189,6 +210,15 @@ System:RegisterAsset(assetName, function()
 					child:Destroy()
 				end
 			end
+
+			-- Apply spawn attributes to cloned instance
+			-- SpawnMode defaults to "onDemand" for WaveController integration
+			local spawnMode = model:GetAttribute("SpawnMode") or "onDemand"
+			clone:SetAttribute("SpawnMode", spawnMode)
+
+			-- TimeoutBehavior for spawned TimedEvaluators (passed through Dropper)
+			local timeoutBehavior = model:GetAttribute("TimeoutBehavior") or "despawn"
+			clone:SetAttribute("TimeoutBehavior", timeoutBehavior)
 
 			-- Debug: Log what parts exist in the cloned template
 			local partNames = {}
@@ -328,10 +358,52 @@ System:RegisterAsset(assetName, function()
 		return true
 	end
 
+	-- Route command to specific spawned instance
+	local function routeToInstance(targetName, message)
+		for _, instance in ipairs(spawnedInstances) do
+			if instance.name == targetName then
+				-- Forward command to instance's input event
+				if instance.inputEvent then
+					instance.inputEvent:Fire(message)
+					System.Debug:Message(assetName, "Routed", message.command, "to", targetName)
+					return true
+				end
+				-- Or call controller method directly
+				if instance.controller then
+					if message.command == "spawn" and instance.controller.spawn then
+						instance.controller.spawn()
+						return true
+					elseif message.command == "despawn" and instance.controller.despawn then
+						instance.controller.despawn()
+						return true
+					elseif message.command == "reset" and instance.controller.reset then
+						instance.controller.reset()
+						return true
+					elseif message.command == "enable" and instance.controller.enable then
+						instance.controller.enable()
+						return true
+					elseif message.command == "disable" and instance.controller.disable then
+						instance.controller.disable()
+						return true
+					end
+				end
+			end
+		end
+		System.Debug:Warn(assetName, "Instance not found for routing:", targetName)
+		return false
+	end
+
 	-- Listen for commands
 	inputEvent.Event:Connect(function(message)
 		if not message or type(message) ~= "table" then return end
 
+		-- Check if this is a routed command for a specific instance
+		if message.target and message.target:match("^" .. assetName .. "_") then
+			routeToInstance(message.target, message)
+			return
+		end
+
+		-- Otherwise handle as ArrayPlacer-level command
 		if message.command == "enable" then
 			handleEnable()
 		elseif message.command == "disable" then

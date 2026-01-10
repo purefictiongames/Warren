@@ -15,14 +15,14 @@
 return {
 	-- Asset instantiation
 	-- Each entry clones a template from Assets/ and deploys it with the given alias
-	-- Format: { use = "TemplateName", as = "InstanceName" }
+	-- Format: { use = "TemplateName", as = "InstanceName", drops = "Template" (for Droppers) }
 	assets = {
 		{ use = "Dispenser", as = "MarshmallowBag" },
 		{ use = "Camper", as = "Camper" },
 		{ use = "GlobalTimer", as = "PlayTimer" },
 		{ use = "GlobalTimer", as = "CountdownTimer" },
 		{ use = "Scoreboard", as = "Scoreboard" },
-		{ use = "TimedEvaluator", as = "TimedEvaluator" },
+		{ use = "ArrayPlacer", as = "CampPlacer", spawns = "Dropper", around = "Campfire", count = 4, radius = 10 },
 		{ use = "Orchestrator", as = "Orchestrator" },
 		{ use = "RoastingStick", as = "RoastingStick" },
 		{ use = "LeaderBoard", as = "LeaderBoard" },
@@ -39,6 +39,9 @@ return {
 		{ from = "CountdownTimer.Output", to = "Orchestrator.Input" },
 		{ from = "MarshmallowBag.Output", to = "Orchestrator.Input" },
 		{ from = "Scoreboard.Output", to = "Orchestrator.Input" },
+
+		-- ArrayPlacer forwards events from spawned Droppers to Scoreboard
+		{ from = "CampPlacer.Output", to = "Scoreboard.Input" },
 
 		-- Scoreboard Output → LeaderBoard Input (score updates)
 		{ from = "Scoreboard.Output", to = "LeaderBoard.Input" },

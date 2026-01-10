@@ -220,6 +220,27 @@ local function bootstrapAssets(System)
 		clone.Parent = runtimeAssets
 		deployedAliases[alias] = true
 
+		-- Apply manifest configuration as attributes
+		if entry.drops then
+			clone:SetAttribute("DropTemplate", entry.drops)
+			System.Debug:Message("System.Script", alias, "drops:", entry.drops)
+		end
+		if entry.spawns then
+			clone:SetAttribute("Spawns", entry.spawns)
+		end
+		if entry.around then
+			clone:SetAttribute("Around", entry.around)
+		end
+		if entry.count then
+			clone:SetAttribute("Count", entry.count)
+		end
+		if entry.radius then
+			clone:SetAttribute("Radius", entry.radius)
+		end
+		if entry.faceOffset then
+			clone:SetAttribute("FaceOffset", entry.faceOffset)
+		end
+
 		-- Create standardized events for this asset
 		local eventTypes = {"Input", "Output", "Debug"}
 		for _, eventType in ipairs(eventTypes) do

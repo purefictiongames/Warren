@@ -34,7 +34,7 @@ return {
 				PlayTimer = { active = false, visible = false },
 				CountdownTimer = { active = false, visible = false },
 				Scoreboard = { active = false, visible = false },
-				TimedEvaluator = { active = false, visible = false },
+				CampPlacer = { active = false, visible = false },
 				Campfire = { active = false, visible = false },
 				Camper = { active = true, behavior = "tutorial" },
 			},
@@ -62,13 +62,14 @@ return {
 				PlayTimer = { active = true, visible = true },
 				CountdownTimer = { active = true, visible = true },
 				Scoreboard = { active = true, visible = true },
-				TimedEvaluator = { active = true, visible = true },
+				CampPlacer = { active = true, visible = true },
 				Campfire = { active = true, visible = true },
-				Camper = { active = false },
+				Camper = { active = true, behavior = "exitMode" },
 			},
 			input = {
-				-- Game prompts enabled in practice
-				prompts = { "MarshmallowBag", "TimedEvaluator" },
+				-- Game prompts + Camper for exiting mode
+				-- Note: Dropper-spawned prompts are dynamically allowed
+				prompts = { "MarshmallowBag", "Camper" },
 				gameControls = true,
 			},
 			scoring = {
@@ -89,13 +90,14 @@ return {
 				PlayTimer = { active = true, visible = true },
 				CountdownTimer = { active = true, visible = true },
 				Scoreboard = { active = true, visible = true },
-				TimedEvaluator = { active = true, visible = true },
+				CampPlacer = { active = true, visible = true },
 				Campfire = { active = true, visible = true },
-				Camper = { active = false },
+				Camper = { active = true, behavior = "exitMode" },
 			},
 			input = {
-				-- Game prompts enabled in play
-				prompts = { "MarshmallowBag", "TimedEvaluator" },
+				-- Game prompts + Camper for exiting mode
+				-- Note: Dropper-spawned prompts are dynamically allowed
+				prompts = { "MarshmallowBag", "Camper" },
 				gameControls = true,
 			},
 			scoring = {

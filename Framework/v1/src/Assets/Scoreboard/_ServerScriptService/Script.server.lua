@@ -44,11 +44,6 @@ System:RegisterAsset(assetName, function()
 	-- ScoreUpdate is still a custom RemoteEvent for client updates (keep for now)
 	local scoreUpdate = ReplicatedStorage:WaitForChild(assetName .. ".ScoreUpdate")
 
-	-- TimedEvaluator event (still custom for now)
-	local timedEvaluator = runtimeAssets:WaitForChild("TimedEvaluator")
-	local anchor = timedEvaluator:WaitForChild("Anchor")
-	local evaluationComplete = anchor:WaitForChild("EvaluationComplete")
-
 	-- Load RunModes API (lazy - may not exist during initial development)
 	local RunModes = nil
 	task.spawn(function()
@@ -136,10 +131,6 @@ System:RegisterAsset(assetName, function()
 		System.Debug:Message(assetName, "Round complete signaled via Output")
 	end
 
-	-- Connect to TimedEvaluator
-	evaluationComplete.Event:Connect(onEvaluationComplete)
-	System.Debug:Message("assetName", "Connected to TimedEvaluator.EvaluationComplete")
-
 	-- Clean up when player leaves
 	Players.PlayerRemoving:Connect(function(player)
 		playerScores[player] = nil
@@ -160,20 +151,30 @@ System:RegisterAsset(assetName, function()
 		return true
 	end
 
-	-- Listen on Input for commands from Orchestrator
+	-- Listen on Input for commands and forwarded events
 	inputEvent.Event:Connect(function(message)
 		if not message or type(message) ~= "table" then
 			return
 		end
 
+		-- Handle forwarded evaluation events from Dropper
+		if message.action == "evaluationComplete" then
+			System.Debug:Message(assetName, "Received forwarded evaluation from", message.origin or "unknown")
+			onEvaluationComplete(message.result)
+			return
+		end
+
+		-- Handle commands from Orchestrator
 		if message.command == "enable" then
 			handleEnable()
 		elseif message.command == "disable" then
 			handleDisable()
 		else
-			System.Debug:Warn(assetName, "Unknown command:", message.command)
+			System.Debug:Warn(assetName, "Unknown message:", message.command or message.action)
 		end
 	end)
+
+	System.Debug:Message(assetName, "Listening for evaluation events via Input")
 
 	-- Expose Enable via BindableFunction (backward compatibility)
 	local enableFunction = Instance.new("BindableFunction")

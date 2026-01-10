@@ -32,6 +32,18 @@ System:RegisterAsset("Camper", function()
 	local inputEvent = ReplicatedStorage:WaitForChild("Camper.Input")
 	local interactEvent = ReplicatedStorage:WaitForChild("Camper.Interact")
 
+	-- Load RunModes API for exitMode behavior
+	local RunModes = nil
+	task.spawn(function()
+		local runModesModule = ReplicatedStorage:WaitForChild("RunModes.RunModes", 10)
+		if runModesModule then
+			RunModes = require(runModesModule)
+		end
+	end)
+
+	-- Track current behavior mode (set via RunModes config)
+	local currentBehavior = "tutorial" -- default
+
 	-- Find Anchor (contains ProximityPrompt)
 	local anchor = model:FindFirstChild("Anchor")
 	if not anchor then
@@ -80,9 +92,19 @@ System:RegisterAsset("Camper", function()
 
 	-- Handle player interaction
 	prompt.Triggered:Connect(function(player)
-		System.Debug:Message("Camper", player.Name, "interacted")
+		System.Debug:Message("Camper", player.Name, "interacted, behavior:", currentBehavior)
 
-		-- Fire event for Tutorial system to handle
+		-- Check behavior mode
+		if currentBehavior == "exitMode" and RunModes then
+			-- If player is in game mode, exit to standby
+			if RunModes:IsGameActive(player) then
+				System.Debug:Message("Camper", "Exiting game mode for", player.Name)
+				RunModes:SetMode(player, RunModes.Modes.STANDBY)
+				return
+			end
+		end
+
+		-- Default: Fire event for Tutorial system to handle
 		interactEvent:Fire({
 			player = player,
 		})
@@ -112,9 +134,20 @@ System:RegisterAsset("Camper", function()
 		end
 
 		if message.command == "enable" then
+			-- Check for behavior override in message
+			if message.behavior then
+				currentBehavior = message.behavior
+				System.Debug:Message("Camper", "Behavior set to:", currentBehavior)
+			end
 			handleEnable()
 		elseif message.command == "disable" then
 			handleDisable()
+		elseif message.command == "setBehavior" then
+			-- Direct behavior change command
+			if message.behavior then
+				currentBehavior = message.behavior
+				System.Debug:Message("Camper", "Behavior changed to:", currentBehavior)
+			end
 		else
 			System.Debug:Warn("Camper", "Unknown command:", message.command)
 		end

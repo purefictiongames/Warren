@@ -110,11 +110,18 @@ local function applyModeToAssets(mode)
 		-- Apply active state
 		if settings.active ~= nil then
 			local command = settings.active and "enable" or "disable"
-			System.Debug:Message(assetName, "Sending", command, "to", targetAssetName)
-			outputEvent:Fire({
+			local message = {
 				target = targetAssetName,
 				command = command
-			})
+			}
+
+			-- Include behavior if specified in config
+			if settings.behavior then
+				message.behavior = settings.behavior
+			end
+
+			System.Debug:Message(assetName, "Sending", command, "to", targetAssetName, settings.behavior and ("behavior:" .. settings.behavior) or "")
+			outputEvent:Fire(message)
 		end
 	end
 
@@ -130,7 +137,7 @@ local function startGameLoop()
 
 	-- Send reset commands to assets
 	outputEvent:Fire({ target = "MarshmallowBag", command = "reset" })
-	outputEvent:Fire({ target = "TimedEvaluator", command = "reset" })
+	outputEvent:Fire({ target = "CampPlacer", command = "reset" }) -- Dropper forwards to CampPlacer_Camper
 	outputEvent:Fire({ target = "PlayTimer", command = "start" })
 end
 
@@ -150,13 +157,13 @@ local function onRoundComplete(result)
 	-- Only reset if game is running
 	if not gameRunning then return end
 
-	System.Debug:Message(assetName, "Submission received - resetting TimedEvaluator")
+	System.Debug:Message(assetName, "Submission received - resetting CampPlacer (Dropper)")
 	task.wait(1)
 
 	-- Check again after delay
 	if not gameRunning then return end
 
-	outputEvent:Fire({ target = "TimedEvaluator", command = "reset" })
+	outputEvent:Fire({ target = "CampPlacer", command = "reset" }) -- Dropper forwards to CampPlacer_Camper
 end
 
 -- End game and return all active players to standby

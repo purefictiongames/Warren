@@ -279,25 +279,47 @@ end
 -- Phase 1: Bootstrap System (deploys ReplicatedStorage items including System.System module)
 bootstrapSelf()
 
+-- Initialize Debug first - it's infrastructure for all other modules
+local Debug = require(ReplicatedStorage:WaitForChild("System.Debug"))
+Debug:Initialize()
+
 -- Get references to boot infrastructure (now deployed)
 local System = require(ReplicatedStorage:WaitForChild("System.System"))
-local BootStage = ReplicatedStorage:FindFirstChild("System.BootStage")
-local ClientBoot = ReplicatedStorage:FindFirstChild("System.ClientBoot")
+local BootStage = ReplicatedStorage:WaitForChild("System.BootStage", 5)
+local ClientBoot = ReplicatedStorage:WaitForChild("System.ClientBoot", 5)
+
+if not BootStage then
+	System.Debug:Alert("System.Script", "System.BootStage not found after bootstrap!")
+end
+if not ClientBoot then
+	System.Debug:Alert("System.Script", "System.ClientBoot not found after bootstrap!")
+end
 
 -- Wire up the stage event
 System._stageEvent = BootStage
 
 -- Set up client ping-pong handler
+-- Note: We defer PONG response until READY stage to prevent race conditions
 if ClientBoot then
+	System.Debug:Message("System.Script", "ClientBoot handler registered")
 	ClientBoot.OnServerEvent:Connect(function(player, message)
 		if message == "PING" then
-			-- Respond with current stage so client can catch up
-			ClientBoot:FireClient(player, "PONG", System._currentStage)
+			-- Wait for READY stage before responding
+			-- This prevents client from receiving an intermediate stage
+			task.spawn(function()
+				while System._currentStage < System.Stages.READY do
+					task.wait(0.05)
+				end
+				System.Debug:Message("System.Script", "PING from", player.Name, "- responding with stage", System._currentStage)
+				ClientBoot:FireClient(player, "PONG", System._currentStage)
+			end)
 		elseif message == "READY" then
 			-- Client confirmed ready (useful for debugging)
 			System.Debug:Message("System", "Client ready -", player.Name)
 		end
 	end)
+else
+	System.Debug:Warn("System.Script", "ClientBoot event not found - client sync disabled")
 end
 
 -- Fire SYNC stage (System bootstrapped, boot events exist)
@@ -312,16 +334,22 @@ System:_setStage(System.Stages.EVENTS)
 -- Fire MODULES stage (all modules deployed and requireable)
 System:_setStage(System.Stages.MODULES)
 
--- Fire SCRIPTS stage (server scripts load and register their init functions)
-System:_setStage(System.Stages.SCRIPTS)
+-- Fire REGISTER stage (scripts load and register their modules)
+System:_setStage(System.Stages.REGISTER)
 
--- Yield to allow all asset scripts to run and register
--- This ensures all RegisterAsset calls complete before ASSETS stage
+-- Yield to allow all scripts to run and register modules
+-- This ensures all RegisterModule/RegisterAsset calls complete before INIT stage
 task.wait()
 
--- Fire ASSETS stage and initialize all registered assets
-System:_setStage(System.Stages.ASSETS)
-System:_initializeAssets()
+-- Fire INIT stage (Phase 1: all module:init() called)
+-- Modules create events/state but do NOT connect to other modules yet
+System:_setStage(System.Stages.INIT)
+System:_initAllModules()
+
+-- Fire START stage (Phase 2: all module:start() called)
+-- Modules can now safely connect events and call other modules
+System:_setStage(System.Stages.START)
+System:_startAllModules()
 
 -- Fire ORCHESTRATE stage (Orchestrator applies initial mode config)
 System:_setStage(System.Stages.ORCHESTRATE)
@@ -333,4 +361,4 @@ System:_setStage(System.Stages.READY)
 Players.CharacterAutoLoads = true
 spawnWaitingPlayers()
 
-System.Debug:Message("System.Script", "Boot complete")
+System.Debug:Message("System.Script", "Boot complete - all", #System:GetRegisteredModules(), "modules initialized")

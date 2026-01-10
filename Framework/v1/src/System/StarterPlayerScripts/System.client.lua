@@ -9,49 +9,98 @@
 --]]
 
 -- System.LocalScript (Client)
--- Client-side boot handler with ping-pong protocol
+-- Client-side boot orchestrator with deterministic module loading
+-- Manages client boot stages: WAIT -> DISCOVER -> INIT -> START -> READY
+-- Uses explicit module discovery and topological sorting (no timing hacks)
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
--- Wait for System module (deployed by System.Script)
+--------------------------------------------------------------------------------
+-- EARLY BOOTSTRAP: Debug system initialized first
+--------------------------------------------------------------------------------
+
+-- Initialize Debug before anything else - it's infrastructure for all modules
+local Debug = require(ReplicatedStorage:WaitForChild("System.Debug"))
+Debug:Initialize()
+
+-- Now require System (which re-exports Debug as System.Debug)
 local System = require(ReplicatedStorage:WaitForChild("System.System"))
 
--- Wait for ClientBoot event
+-- Create client stage event for other client scripts to wait on
+local clientStageEvent = Instance.new("BindableEvent")
+clientStageEvent.Name = "System.ClientStage"
+clientStageEvent.Parent = ReplicatedStorage
+System._clientStageEvent = clientStageEvent
+
+-- Wait for ClientBoot event (server communication)
 local ClientBoot = ReplicatedStorage:WaitForChild("System.ClientBoot", 30)
 
-if not ClientBoot then
-	System.Debug:Warn("System.client", "ClientBoot event not found, assuming server ready")
-	System:_updateFromServer(System.Stages.READY)
-	return
-end
+--------------------------------------------------------------------------------
+-- SERVER SYNCHRONIZATION (Ping-Pong Protocol)
+--------------------------------------------------------------------------------
 
 local PING_TIMEOUT = 5
 local responded = false
 
--- Listen for server response
-ClientBoot.OnClientEvent:Connect(function(message, stage)
-	if message == "PONG" then
-		responded = true
-		System:_updateFromServer(stage)
-	end
-end)
+if ClientBoot then
+	System.Debug:Message("System.client", "ClientBoot found, setting up ping-pong")
 
--- Send ping to server
-ClientBoot:FireServer("PING")
+	-- Listen for server response
+	ClientBoot.OnClientEvent:Connect(function(message, stage)
+		System.Debug:Message("System.client", "Received from server:", message, stage)
+		if message == "PONG" then
+			responded = true
+			System:_updateFromServer(stage)
+		end
+	end)
 
--- Timeout fallback - assume READY if no response
-task.delay(PING_TIMEOUT, function()
-	if not responded then
-		System.Debug:Warn("System.client", "Server ping timeout, assuming READY")
-		System:_updateFromServer(System.Stages.READY)
-	end
-end)
+	-- Send ping to server
+	System.Debug:Message("System.client", "Sending PING to server")
+	ClientBoot:FireServer("PING")
 
--- Wait until we're at READY stage, then signal back
-task.spawn(function()
-	System:WaitForStage(System.Stages.READY)
-	if ClientBoot then
-		ClientBoot:FireServer("READY")
-	end
-	System.Debug:Message("System.client", "Ready")
-end)
+	-- Timeout fallback - assume READY if no response
+	task.delay(PING_TIMEOUT, function()
+		if not responded then
+			System.Debug:Warn("System.client", "Server ping timeout, assuming READY")
+			System:_updateFromServer(System.Stages.READY)
+		end
+	end)
+else
+	System.Debug:Warn("System.client", "ClientBoot event not found, assuming server ready")
+	System:_updateFromServer(System.Stages.READY)
+end
+
+--------------------------------------------------------------------------------
+-- CLIENT BOOT SEQUENCE
+--------------------------------------------------------------------------------
+
+-- Stage 1: WAIT - Wait for server to be READY
+System:_setClientStage(System.ClientStages.WAIT)
+System.Debug:Message("System.client", "Waiting for server READY, current stage:", System:GetCurrentStage())
+System:WaitForStage(System.Stages.READY)
+System.Debug:Message("System.client", "Server is READY")
+
+-- Notify server that we received READY
+if ClientBoot then
+	ClientBoot:FireServer("READY")
+end
+
+-- Stage 2: DISCOVER - Find all client modules and build dependency graph
+-- System explicitly discovers and requires modules (no self-registration)
+System:_setClientStage(System.ClientStages.DISCOVER)
+System:_discoverClientModules()
+
+-- Stage 3: INIT - All client module:init() called in dependency order
+-- Modules create events/state but do NOT connect to other modules yet
+System:_setClientStage(System.ClientStages.INIT)
+System:_initAllClientModules()
+
+-- Stage 4: START - All client module:start() called in dependency order
+-- Modules can now safely connect events and call other modules
+System:_setClientStage(System.ClientStages.START)
+System:_startAllClientModules()
+
+-- Stage 5: READY - Client fully ready
+System:_setClientStage(System.ClientStages.READY)
+
+System.Debug:Message("System.client", "Client boot complete -", #System:GetClientModuleOrder(), "modules initialized")

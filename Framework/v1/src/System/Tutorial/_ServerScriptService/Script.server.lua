@@ -11,7 +11,7 @@
 -- Tutorial.Script (Server)
 -- State machine for the Tutorial system
 -- Listens to game events and transitions players through tutorial states
--- Dispatches commands to client for HUD rendering
+-- Uses two-phase initialization: init() creates state, start() connects events
 
 -- Guard: Only run if this is the deployed version
 if not script.Name:match("^Tutorial%.") then
@@ -22,33 +22,24 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local DataStoreService = game:GetService("DataStoreService")
 
--- Wait for boot system
+-- Wait for System module
 local System = require(ReplicatedStorage:WaitForChild("System.System"))
-System:WaitForStage(System.Stages.SCRIPTS)
 
--- Load Tutorial API
-local Tutorial = require(ReplicatedStorage:WaitForChild("Tutorial.Tutorial"))
-local tutorialCommand = ReplicatedStorage:WaitForChild("Tutorial.TutorialCommand")
-local tutorialStateChanged = ReplicatedStorage:WaitForChild("Tutorial.TutorialStateChanged")
+--------------------------------------------------------------------------------
+-- MODULE DEFINITION
+--------------------------------------------------------------------------------
 
--- Load RunModes API (Tutorial transitions RunModes, not Orchestrator)
-local RunModes = require(ReplicatedStorage:WaitForChild("RunModes.RunModes"))
+local TutorialModule = {}
 
--- MessageTicker loaded lazily (optional dependency)
-local messageTicker = nil
-task.spawn(function()
-	messageTicker = ReplicatedStorage:WaitForChild("MessageTicker.MessageTicker", 10)
-end)
-
--- DataStore for persistence (optional - may fail in Studio)
-local tutorialStore = nil
-pcall(function()
-	tutorialStore = DataStoreService:GetDataStore("TutorialProgress")
-end)
-
--- Internal state
-local playerStates = {} -- [player] = state string
-local playerTasks = {} -- [player] = { [taskId] = completed }
+-- Module state (initialized in init())
+local Tutorial
+local RunModes
+local tutorialCommand
+local tutorialStateChanged
+local messageTicker
+local tutorialStore
+local playerStates = {}
+local playerTasks = {}
 
 -- Check if player has completed tutorial (from DataStore)
 local function isCompleted(player)
@@ -79,21 +70,18 @@ local function setState(player, state)
 	playerStates[player] = state
 	Tutorial:_updatePlayerState(player, state)
 
-	-- Fire state changed event
 	tutorialStateChanged:Fire({
 		player = player,
 		oldState = oldState,
 		newState = state,
 	})
 
-	-- Notify client
 	tutorialCommand:FireClient(player, {
 		command = "state_changed",
 		oldState = oldState,
 		newState = state,
 	})
 
-	-- Send MessageTicker hints for certain states
 	if state == Tutorial.States.FIND_CAMPER and messageTicker then
 		messageTicker:FireClient(player, "Find the camper and talk to them!")
 	end
@@ -108,7 +96,6 @@ local function onStepComplete(player, taskId)
 	end
 	playerTasks[player][taskId] = true
 
-	-- Notify client to update task list
 	tutorialCommand:FireClient(player, {
 		command = "task_complete",
 		taskId = taskId,
@@ -117,16 +104,12 @@ local function onStepComplete(player, taskId)
 	System.Debug:Message("Tutorial", player.Name, "completed step:", taskId)
 end
 
--- Register handlers with Tutorial API
-Tutorial:_registerServerHandlers(setState, onStepComplete)
-
 -- Handle popup button responses from client
 local function handleClientResponse(player, data)
 	local state = playerStates[player]
-	local action = data.action
 	local buttonId = data.buttonId
 
-	System.Debug:Message("Tutorial", player.Name, "responded:", action, buttonId)
+	System.Debug:Message("Tutorial", player.Name, "responded:", data.action, buttonId)
 
 	if state == Tutorial.States.WELCOME and buttonId == "ok" then
 		setState(player, Tutorial.States.FIND_CAMPER)
@@ -135,91 +118,26 @@ local function handleClientResponse(player, data)
 	elseif state == Tutorial.States.MODE_SELECT then
 		if buttonId == "practice" then
 			setState(player, Tutorial.States.PRACTICE)
-			-- Transition RunModes to PRACTICE
 			RunModes:SetMode(player, RunModes.Modes.PRACTICE)
 		elseif buttonId == "play" then
 			setState(player, Tutorial.States.PLAYING)
-			-- Transition RunModes to PLAY
 			RunModes:SetMode(player, RunModes.Modes.PLAY)
-			-- Mark tutorial as completed
 			setState(player, Tutorial.States.COMPLETED)
 			markCompleted(player)
 		end
 	end
 end
 
--- Listen for client responses
-tutorialCommand.OnServerEvent:Connect(handleClientResponse)
-
--- Listen for Camper interaction (when Camper asset exists)
-task.spawn(function()
-	local camperInteract = ReplicatedStorage:WaitForChild("Camper.Interact", 30)
-	if camperInteract then
-		camperInteract.Event:Connect(function(data)
-			local player = data.player
-			local state = playerStates[player] or Tutorial.States.INACTIVE
-
-			if state == Tutorial.States.FIND_CAMPER then
-				setState(player, Tutorial.States.RULES)
-			elseif state == Tutorial.States.INACTIVE then
-				-- Start tutorial when talking to camper
-				setState(player, Tutorial.States.WELCOME)
-			elseif state == Tutorial.States.COMPLETED then
-				-- Allow replay by talking to camper again
-				setState(player, Tutorial.States.RULES)
-			end
-		end)
-		System.Debug:Message("Tutorial", "Connected to Camper.Interact")
-	else
-		System.Debug:Warn("Tutorial", "Camper.Interact not found - camper integration disabled")
-	end
-end)
-
--- Listen for game events to complete tutorial steps
-task.spawn(function()
-	-- Item added to backpack (grab marshmallow)
-	local itemAdded = ReplicatedStorage:WaitForChild("Backpack.ItemAdded", 10)
-	if itemAdded then
-		itemAdded.Event:Connect(function(data)
-			local player = data.player
-			if Tutorial:IsActive(player) and not Tutorial:IsStepCompleted(player, "grab") then
-				Tutorial:CompleteStep(player, "grab")
-			end
-		end)
-	end
-
-	-- Round complete (serve to camper)
-	local roundComplete = ReplicatedStorage:WaitForChild("Scoreboard.RoundComplete", 10)
-	if roundComplete then
-		roundComplete.Event:Connect(function(result)
-			local player = result.player
-			if player and Tutorial:IsActive(player) and not Tutorial:IsStepCompleted(player, "serve") then
-				Tutorial:CompleteStep(player, "serve")
-
-				-- If in practice mode and all steps complete, offer to continue
-				local state = playerStates[player]
-				if state == Tutorial.States.PRACTICE then
-					-- Could transition to PLAYING or stay in PRACTICE
-					System.Debug:Message("Tutorial", player.Name, "completed practice round")
-				end
-			end
-		end)
-	end
-end)
-
 -- Setup player on join
 local function setupPlayer(player)
-	-- Check if already completed
 	if isCompleted(player) then
 		playerStates[player] = Tutorial.States.COMPLETED
 		Tutorial:_updatePlayerState(player, Tutorial.States.COMPLETED)
 		System.Debug:Message("Tutorial", player.Name, "already completed tutorial")
 	else
-		-- Start in inactive - player talks to camper to begin
 		playerStates[player] = Tutorial.States.INACTIVE
 		Tutorial:_updatePlayerState(player, Tutorial.States.INACTIVE)
 
-		-- Auto-start welcome for new players (can be changed to require camper interaction)
 		task.delay(2, function()
 			if player.Parent and playerStates[player] == Tutorial.States.INACTIVE then
 				setState(player, Tutorial.States.WELCOME)
@@ -228,42 +146,130 @@ local function setupPlayer(player)
 	end
 end
 
--- Setup existing players
-for _, player in ipairs(Players:GetPlayers()) do
-	setupPlayer(player)
+--[[
+    Phase 1: Initialize
+    Load dependencies, get event references - NO connections yet
+--]]
+function TutorialModule:init()
+	-- Load dependencies
+	Tutorial = require(ReplicatedStorage:WaitForChild("Tutorial.Tutorial"))
+	RunModes = require(ReplicatedStorage:WaitForChild("RunModes.RunModes"))
+
+	-- Get event references
+	tutorialCommand = ReplicatedStorage:WaitForChild("Tutorial.TutorialCommand")
+	tutorialStateChanged = ReplicatedStorage:WaitForChild("Tutorial.TutorialStateChanged")
+
+	-- Optional: MessageTicker (loaded lazily)
+	task.spawn(function()
+		messageTicker = ReplicatedStorage:WaitForChild("MessageTicker.MessageTicker", 10)
+	end)
+
+	-- Optional: DataStore for persistence
+	pcall(function()
+		tutorialStore = DataStoreService:GetDataStore("TutorialProgress")
+	end)
+
+	-- Register handlers with Tutorial API (setup, not connection)
+	Tutorial:_registerServerHandlers(setState, onStepComplete)
 end
 
--- Setup new players
-Players.PlayerAdded:Connect(setupPlayer)
+--[[
+    Phase 2: Start
+    Connect events, initialize players
+--]]
+function TutorialModule:start()
+	-- Listen for client responses
+	tutorialCommand.OnServerEvent:Connect(handleClientResponse)
 
--- Cleanup on player leave
-Players.PlayerRemoving:Connect(function(player)
-	playerStates[player] = nil
-	playerTasks[player] = nil
-	Tutorial:_removePlayer(player)
-end)
+	-- Connect Camper interaction
+	task.spawn(function()
+		local camperInteract = ReplicatedStorage:WaitForChild("Camper.Interact", 30)
+		if camperInteract then
+			camperInteract.Event:Connect(function(data)
+				local player = data.player
+				local state = playerStates[player] or Tutorial.States.INACTIVE
 
--- Listen for RunModes changes - reset tutorial when returning to standby
-task.spawn(function()
-	local modeChanged = ReplicatedStorage:WaitForChild("RunModes.ModeChanged", 10)
-	if modeChanged then
-		modeChanged.Event:Connect(function(data)
-			local player = data.player
-			local newMode = data.newMode
-
-			-- When player returns to standby, reset tutorial to inactive
-			if newMode == RunModes.Modes.STANDBY then
-				local currentState = playerStates[player]
-				-- Only reset if they were in an active game state
-				if currentState == Tutorial.States.PRACTICE or currentState == Tutorial.States.PLAYING then
-					setState(player, Tutorial.States.INACTIVE)
-					playerTasks[player] = {} -- Clear completed tasks
-					System.Debug:Message("Tutorial", player.Name, "returned to standby - tutorial reset")
+				if state == Tutorial.States.FIND_CAMPER then
+					setState(player, Tutorial.States.RULES)
+				elseif state == Tutorial.States.INACTIVE then
+					setState(player, Tutorial.States.WELCOME)
+				elseif state == Tutorial.States.COMPLETED then
+					setState(player, Tutorial.States.RULES)
 				end
-			end
-		end)
-		System.Debug:Message("Tutorial", "Connected to RunModes.ModeChanged")
-	end
-end)
+			end)
+			System.Debug:Message("Tutorial", "Connected to Camper.Interact")
+		else
+			System.Debug:Warn("Tutorial", "Camper.Interact not found - camper integration disabled")
+		end
+	end)
 
-System.Debug:Message("Tutorial", "Script loaded")
+	-- Connect game events for tutorial step completion
+	task.spawn(function()
+		local itemAdded = ReplicatedStorage:WaitForChild("Backpack.ItemAdded", 10)
+		if itemAdded then
+			itemAdded.Event:Connect(function(data)
+				local player = data.player
+				if Tutorial:IsActive(player) and not Tutorial:IsStepCompleted(player, "grab") then
+					Tutorial:CompleteStep(player, "grab")
+				end
+			end)
+		end
+
+		local roundComplete = ReplicatedStorage:WaitForChild("Scoreboard.RoundComplete", 10)
+		if roundComplete then
+			roundComplete.Event:Connect(function(result)
+				local player = result.player
+				if player and Tutorial:IsActive(player) and not Tutorial:IsStepCompleted(player, "serve") then
+					Tutorial:CompleteStep(player, "serve")
+					local state = playerStates[player]
+					if state == Tutorial.States.PRACTICE then
+						System.Debug:Message("Tutorial", player.Name, "completed practice round")
+					end
+				end
+			end)
+		end
+	end)
+
+	-- Connect RunModes changes (reset on standby)
+	task.spawn(function()
+		local modeChanged = ReplicatedStorage:WaitForChild("RunModes.ModeChanged", 10)
+		if modeChanged then
+			modeChanged.Event:Connect(function(data)
+				local player = data.player
+				local newMode = data.newMode
+
+				if newMode == RunModes.Modes.STANDBY then
+					local currentState = playerStates[player]
+					if currentState == Tutorial.States.PRACTICE or currentState == Tutorial.States.PLAYING then
+						setState(player, Tutorial.States.INACTIVE)
+						playerTasks[player] = {}
+						System.Debug:Message("Tutorial", player.Name, "returned to standby - tutorial reset")
+					end
+				end
+			end)
+			System.Debug:Message("Tutorial", "Connected to RunModes.ModeChanged")
+		end
+	end)
+
+	-- Setup existing players
+	for _, player in ipairs(Players:GetPlayers()) do
+		setupPlayer(player)
+	end
+
+	-- Setup new players
+	Players.PlayerAdded:Connect(setupPlayer)
+
+	-- Cleanup on player leave
+	Players.PlayerRemoving:Connect(function(player)
+		playerStates[player] = nil
+		playerTasks[player] = nil
+		Tutorial:_removePlayer(player)
+	end)
+
+	System.Debug:Message("Tutorial", "Started")
+end
+
+-- Register with System
+System:RegisterModule("Tutorial", TutorialModule, { type = "system" })
+
+return TutorialModule

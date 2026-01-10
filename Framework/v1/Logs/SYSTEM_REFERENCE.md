@@ -10,8 +10,8 @@
 
 # LibPureFiction Framework - System Reference
 
-**Version:** 2.0
-**Last Updated:** January 8, 2026
+**Version:** 2.1
+**Last Updated:** January 9, 2026
 
 A comprehensive technical reference for the LibPureFiction Roblox game framework.
 
@@ -129,15 +129,30 @@ Client ─── RemoteEvent ────> Server
 
 ## 3.1 Boot Stages
 
+### Server Stages
+
 ```lua
 System.Stages = {
     SYNC        = 1,  -- Assets cloned to RuntimeAssets, folders extracted
     EVENTS      = 2,  -- All BindableEvents/RemoteEvents created
     MODULES     = 3,  -- ModuleScripts deployed and requireable
-    SCRIPTS     = 4,  -- Server scripts can run
-    ASSETS      = 5,  -- Asset init functions called
-    ORCHESTRATE = 6,  -- Orchestrator applies initial mode
-    READY       = 7,  -- Full boot complete, clients can interact
+    REGISTER    = 4,  -- Server modules register via RegisterModule
+    INIT        = 5,  -- All module:init() called
+    START       = 6,  -- All module:start() called (also ASSETS for compat)
+    ORCHESTRATE = 7,  -- Orchestrator applies initial mode
+    READY       = 8,  -- Full boot complete, clients can interact
+}
+```
+
+### Client Stages (Deterministic Discovery)
+
+```lua
+System.ClientStages = {
+    WAIT     = 1,  -- Wait for server READY signal
+    DISCOVER = 2,  -- System discovers all client ModuleScripts
+    INIT     = 3,  -- All client module:init() (topologically sorted)
+    START    = 4,  -- All client module:start() (topologically sorted)
+    READY    = 5,  -- Client fully ready
 }
 ```
 
@@ -162,25 +177,64 @@ local model = runtimeAssets:WaitForChild("AssetName")
 -- Your code here
 ```
 
-## 3.3 Client Script Pattern
+## 3.3 Client Module Pattern (v1.1 - Recommended)
+
+Client modules are **ModuleScripts** discovered and managed by System. No guards, no WaitForStage, no self-registration needed.
 
 ```lua
--- Guard: Only run if this is the deployed version
-if not script.Name:match("^AssetName%.") then
+-- Camera/StarterPlayerScripts/Script.lua (ModuleScript)
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local System = require(ReplicatedStorage:WaitForChild("System.System"))
+
+return {
+    dependencies = { "GUI.Transition" },  -- Modules that must init before this one
+
+    init = function(self)
+        -- Phase 1: Get references, create state
+        -- Do NOT connect to events from other modules here
+        self.player = Players.LocalPlayer
+        self.camera = workspace.CurrentCamera
+        self.pendingStyle = nil
+    end,
+
+    start = function(self)
+        -- Phase 2: Connect events, safe to use dependencies
+        -- Dependencies are guaranteed to be initialized
+        local transitionEvent = ReplicatedStorage:FindFirstChild("Camera.TransitionCovered")
+        if transitionEvent then
+            transitionEvent.Event:Connect(function()
+                self:applyPendingCamera()
+            end)
+        end
+        System.Debug:Message("Camera.client", "Started")
+    end,
+}
+```
+
+### Key Points
+
+- **File extension**: `.lua` (ModuleScript), not `.client.lua` (LocalScript)
+- **No name guard**: System controls when module is required
+- **No WaitForStage**: System calls init/start at correct time
+- **No RegisterClientModule**: Discovery is automatic
+- **Declare dependencies**: Array of module names that must init first
+
+## 3.3.1 Legacy Client Script Pattern (Assets)
+
+Asset client scripts (in StarterGui) still use the LocalScript pattern with guards:
+
+```lua
+-- Dispenser/StarterGui/LocalScript.client.lua
+if not script.Name:match("^Dispenser%.") then
     return
 end
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Players = game:GetService("Players")
-
--- Wait for boot system
 local System = require(ReplicatedStorage:WaitForChild("System.System"))
 System:WaitForStage(System.Stages.READY)
 
-local player = Players.LocalPlayer
-local playerGui = player:WaitForChild("PlayerGui")
-
--- Your code here
+-- Asset-specific UI code
 ```
 
 ## 3.4 Why Name Guards?
@@ -197,14 +251,86 @@ Scripts in the System folder hierarchy are descendants of `ServerScriptService`,
 
 ## 3.5 Client Ping-Pong Protocol
 
-For late-joining clients:
+For late-joining clients, the server waits until READY before responding:
 
 ```
 Client: PING -> Server
-Server: PONG(currentStage) -> Client
-Client: Updates internal stage, unblocks waiting scripts
+Server: (waits until READY stage)
+Server: PONG(8) -> Client  -- Always responds with READY
+Client: Updates internal stage, unblocks WaitForStage
 Client: READY -> Server (confirmation)
 ```
+
+**Important:** The server defers PONG until READY to prevent race conditions. If the server responded with an intermediate stage (e.g., stage 6), the client would wait forever for stage 8.
+
+```lua
+-- Server: Script.server.lua
+ClientBoot.OnServerEvent:Connect(function(player, message)
+    if message == "PING" then
+        task.spawn(function()
+            while System._currentStage < System.Stages.READY do
+                task.wait(0.05)
+            end
+            ClientBoot:FireClient(player, "PONG", System._currentStage)
+        end)
+    end
+end)
+```
+
+## 3.6 Client Module Discovery & Dependency Resolution
+
+The client boot system (v1.1) uses explicit discovery instead of self-registration:
+
+### Discovery Phase
+
+System finds all ModuleScripts in:
+- `PlayerScripts` (direct children)
+- `PlayerGui` (all descendants, including inside ScreenGuis)
+
+```lua
+-- System discovers and requires each ModuleScript
+for _, descendant in ipairs(container:GetDescendants()) do
+    if descendant:IsA("ModuleScript") then
+        local module = require(descendant)
+        -- Register with name = descendant.Name
+    end
+end
+```
+
+### Dependency Declaration
+
+Modules declare what they depend on:
+
+```lua
+return {
+    dependencies = { "GUI.Script", "GUI.Transition" },
+    -- ...
+}
+```
+
+Dependency names must match the **deployed module name** (e.g., `"GUI.Transition"` not just `"Transition"`).
+
+### Topological Sort (Kahn's Algorithm)
+
+System orders modules so dependencies are always initialized first:
+
+```
+Example dependency graph:
+  GUI.Script (no deps)
+  GUI.Transition → depends on GUI.Script
+  Camera.Script → depends on GUI.Transition
+  Tutorial.LocalScript → depends on GUI.Script
+
+Init order: GUI.Script → GUI.Transition → Camera.Script → Tutorial.LocalScript
+```
+
+### Timing Guarantees
+
+- **During DISCOVER**: All modules are found and required
+- **During INIT**: `init()` called in topological order (dependencies first)
+- **During START**: `start()` called in same order (safe to connect events)
+
+**No timing hacks needed.** If module A depends on module B, B's `start()` completes before A's `start()` is called.
 
 ---
 
@@ -215,14 +341,27 @@ Client: READY -> Server (confirmation)
 
 ## 4.1 Stage Constants
 
+### Server Stages
+
 ```lua
 System.Stages.SYNC        -- 1
 System.Stages.EVENTS      -- 2
 System.Stages.MODULES     -- 3
-System.Stages.SCRIPTS     -- 4
-System.Stages.ASSETS      -- 5
-System.Stages.ORCHESTRATE -- 6
-System.Stages.READY       -- 7
+System.Stages.REGISTER    -- 4
+System.Stages.INIT        -- 5
+System.Stages.START       -- 6 (also ASSETS for compat)
+System.Stages.ORCHESTRATE -- 7
+System.Stages.READY       -- 8
+```
+
+### Client Stages
+
+```lua
+System.ClientStages.WAIT     -- 1
+System.ClientStages.DISCOVER -- 2
+System.ClientStages.INIT     -- 3
+System.ClientStages.START    -- 4
+System.ClientStages.READY    -- 5
 ```
 
 ## 4.2 Stage Methods
@@ -262,7 +401,56 @@ if System:IsStageReached(System.Stages.READY) then
 end
 ```
 
-## 4.3 Debug Methods
+## 4.3 Client Module Methods (v1.1)
+
+### GetClientModuleOrder()
+
+Returns the topologically sorted list of client module names.
+
+```lua
+local order = System:GetClientModuleOrder()
+-- { "GUI.Script", "GUI.Transition", "Camera.Script", ... }
+```
+
+### IsClientModuleReady(name)
+
+Check if a client module has completed initialization (both init and start).
+
+```lua
+if System:IsClientModuleReady("GUI.Transition") then
+    -- Safe to use Transition features
+end
+```
+
+### GetRegisteredClientModules()
+
+Returns array of all registered client module names.
+
+```lua
+local modules = System:GetRegisteredClientModules()
+for _, name in ipairs(modules) do
+    print(name)
+end
+```
+
+### WaitForClientStage(stage)
+
+Yields until the specified client stage is reached.
+
+```lua
+System:WaitForClientStage(System.ClientStages.READY)
+-- Client is fully ready
+```
+
+### GetClientStageName(stage)
+
+Returns human-readable name of a client stage.
+
+```lua
+local name = System:GetClientStageName(2)  -- "DISCOVER"
+```
+
+## 4.4 Debug Methods
 
 ### System.Debug:Message(source, ...)
 
@@ -1461,7 +1649,8 @@ Framework/v1/
     │   │   └── DebugConfig.lua
     │   │
     │   ├── ReplicatedStorage/
-    │   │   ├── System.lua              # Stage API + Debug
+    │   │   ├── System.lua              # Stage API, discovery, topological sort
+    │   │   ├── Debug.lua               # Debug system (bootstrapped first)
     │   │   ├── Visibility.lua          # Visibility utilities
     │   │   ├── BootStage/init.meta.json
     │   │   └── ClientBoot/init.meta.json

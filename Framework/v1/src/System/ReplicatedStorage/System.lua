@@ -15,23 +15,33 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
+-- Debug is a separate module, loaded early before other modules
+-- We require it here and re-export as System.Debug for convenience
+local Debug = require(script.Parent:WaitForChild("System.Debug"))
+
 local System = {
+	-- Re-export Debug for convenient access via System.Debug
+	Debug = Debug,
 	-- Boot stages (in order)
 	Stages = {
 		SYNC        = 1,  -- Assets cloned to RuntimeAssets, folders extracted
 		EVENTS      = 2,  -- All BindableEvents/RemoteEvents created and registered
 		MODULES     = 3,  -- ModuleScripts deployed and requireable
-		SCRIPTS     = 4,  -- Server scripts load, assets register init functions
-		ASSETS      = 5,  -- All registered asset init() functions called
-		ORCHESTRATE = 6,  -- Orchestrator applies initial mode config
-		READY       = 7,  -- Full boot complete, clients can interact
+		REGISTER    = 4,  -- All scripts register their modules via RegisterModule
+		SCRIPTS     = 4,  -- DEPRECATED: Alias for REGISTER (backward compat)
+		INIT        = 5,  -- All module:init() called, wait for completion
+		START       = 6,  -- All module:start() called, wait for completion
+		ASSETS      = 6,  -- DEPRECATED: Alias for START (backward compat)
+		ORCHESTRATE = 7,  -- Orchestrator applies initial mode config
+		READY       = 8,  -- Full boot complete, clients can interact
 	},
 
 	-- Internal state
 	_currentStage = 0,
 	_stageEvent = nil,  -- BindableEvent for stage transitions
 	_isClient = RunService:IsClient(),
-	_registeredAssets = {},  -- [name] = { init = fn, initialized = bool }
+	_registeredModules = {},  -- [name] = { module, options, initComplete, startComplete }
+	_registeredAssets = {},   -- [name] = { init = fn, initialized = bool } (legacy compat)
 }
 
 -- Initialize event reference (called lazily on first use)
@@ -100,50 +110,210 @@ function System:_setStage(stage)
 end
 
 --------------------------------------------------------------------------------
--- ASSET REGISTRATION (Deferred Initialization Pattern)
+-- MODULE REGISTRATION (Two-Phase Initialization Pattern)
 --------------------------------------------------------------------------------
 
 --[[
-    Register an asset's init function for deferred initialization.
-    Called by asset scripts during SCRIPTS stage.
-    Init functions are called during ASSETS stage.
+    Register a module for two-phase initialization.
+
+    Modules should have:
+    - init() - Phase 1: Setup (create events, state). NO connections to other modules.
+    - start() - Phase 2: Start (connect events, begin logic). Safe to call other modules.
+    - stop() (optional) - Cleanup for hot reload
+
+    @param name string - Module name (e.g., "Input", "RunModes", "Campfire")
+    @param module table - Module table with init/start methods
+    @param options table (optional) - { type = "system"|"asset", priority = number, dependencies = {} }
+--]]
+function System:RegisterModule(name, module, options)
+	if self._registeredModules[name] then
+		System.Debug:Warn("System", "Module already registered:", name)
+		return
+	end
+
+	options = options or {}
+
+	self._registeredModules[name] = {
+		module = module,
+		options = options,
+		initComplete = false,
+		startComplete = false,
+	}
+
+	local moduleType = options.type or "unknown"
+	System.Debug:Message("System", "Registered module:", name, "(" .. moduleType .. ")")
+end
+
+--[[
+    Get a registered module by name.
+    Useful for inter-module communication after START stage.
+
+    @param name string - Module name
+    @return table|nil - The module or nil if not found
+--]]
+function System:GetModule(name)
+	local entry = self._registeredModules[name]
+	if entry then
+		return entry.module
+	end
+	return nil
+end
+
+--[[
+    Check if a module is registered.
+    @param name string - Module name
+    @return boolean
+--]]
+function System:IsModuleRegistered(name)
+	return self._registeredModules[name] ~= nil
+end
+
+--[[
+    Get list of registered module names.
+    @return table - Array of module names
+--]]
+function System:GetRegisteredModules()
+	local names = {}
+	for name in pairs(self._registeredModules) do
+		table.insert(names, name)
+	end
+	return names
+end
+
+--[[
+    Initialize all registered modules (Phase 1).
+    Called by System.Script during INIT stage.
+    Modules should create events/state but NOT connect to other modules.
+--]]
+function System:_initAllModules()
+	local count = 0
+	local failed = 0
+
+	for name, entry in pairs(self._registeredModules) do
+		if entry.module.init then
+			System.Debug:Verbose("System", "Init:", name)
+			local success, err = pcall(function()
+				entry.module:init()
+			end)
+			if success then
+				entry.initComplete = true
+				count = count + 1
+				System.Debug:Message("System", "Init:", name, "✓")
+			else
+				failed = failed + 1
+				System.Debug:Alert("System", "Module init failed:", name, "-", tostring(err))
+			end
+		else
+			-- No init method = auto-complete
+			entry.initComplete = true
+			count = count + 1
+		end
+	end
+
+	System.Debug:Message("System", "Initialized", count, "modules" .. (failed > 0 and (", " .. failed .. " failed") or ""))
+end
+
+--[[
+    Start all registered modules (Phase 2).
+    Called by System.Script during START stage.
+    Modules can now safely connect events and call other modules.
+--]]
+function System:_startAllModules()
+	local count = 0
+	local failed = 0
+
+	for name, entry in pairs(self._registeredModules) do
+		if not entry.initComplete then
+			System.Debug:Warn("System", "Skipping start for module with failed init:", name)
+			continue
+		end
+
+		if entry.module.start then
+			System.Debug:Verbose("System", "Start:", name)
+			local success, err = pcall(function()
+				entry.module:start()
+			end)
+			if success then
+				entry.startComplete = true
+				count = count + 1
+				System.Debug:Message("System", "Start:", name, "✓")
+			else
+				failed = failed + 1
+				System.Debug:Alert("System", "Module start failed:", name, "-", tostring(err))
+			end
+		else
+			-- No start method = auto-complete
+			entry.startComplete = true
+			count = count + 1
+		end
+	end
+
+	System.Debug:Message("System", "Started", count, "modules" .. (failed > 0 and (", " .. failed .. " failed") or ""))
+end
+
+--------------------------------------------------------------------------------
+-- ASSET REGISTRATION (Legacy Compatibility + Deferred Initialization)
+--------------------------------------------------------------------------------
+
+--[[
+    Register an asset for two-phase initialization.
+
+    Supports two patterns:
+
+    1. NEW MODULE PATTERN (recommended):
+       System:RegisterAsset("MyAsset", {
+           init = function(self) ... end,
+           start = function(self) ... end,
+       })
+
+    2. LEGACY FUNCTION PATTERN (backward compatible):
+       System:RegisterAsset("MyAsset", function()
+           -- All init code here (runs during START phase)
+       end)
 
     @param name string - Asset name (e.g., "Dispenser", "GlobalTimer")
-    @param initFn function - Initialization function that creates Enable/Disable/etc.
+    @param moduleOrFn table|function - Module table or legacy init function
 --]]
-function System:RegisterAsset(name, initFn)
+function System:RegisterAsset(name, moduleOrFn)
 	if self._registeredAssets[name] then
 		System.Debug:Warn("System", "Asset already registered:", name)
 		return
 	end
 
+	local module
+
+	if type(moduleOrFn) == "function" then
+		-- Legacy pattern: wrap function in module-like structure
+		-- Function runs during START phase (maintains backward compat timing)
+		module = {
+			init = function() end,  -- Empty init
+			start = moduleOrFn,     -- Legacy init becomes start
+		}
+		System.Debug:Verbose("System", "Wrapped legacy asset function:", name)
+	else
+		-- New module pattern
+		module = moduleOrFn
+	end
+
+	-- Track in legacy registry for compatibility
 	self._registeredAssets[name] = {
-		init = initFn,
+		module = module,
 		initialized = false,
 	}
 
-	System.Debug:Message("System", "Asset registered:", name)
+	-- Also register via new module system
+	self:RegisterModule(name, module, { type = "asset" })
 end
 
 --[[
     Initialize all registered assets.
-    Called by System.Script during ASSETS stage.
+    DEPRECATED: Kept for backward compatibility, but assets now use module system.
+    Called by System.Script during ASSETS stage (legacy).
 --]]
 function System:_initializeAssets()
-	local count = 0
-	for name, asset in pairs(self._registeredAssets) do
-		if not asset.initialized then
-			System.Debug:Message("System", "Initializing asset:", name)
-			local success, err = pcall(asset.init)
-			if success then
-				asset.initialized = true
-				count = count + 1
-			else
-				System.Debug:Warn("System", "Asset init failed:", name, "-", err)
-			end
-		end
-	end
-	System.Debug:Message("System", "Initialized", count, "assets")
+	-- Assets are now initialized via _initAllModules and _startAllModules
+	-- This function is kept for backward compatibility but does nothing
+	System.Debug:Verbose("System", "_initializeAssets called (deprecated, assets use module system)")
 end
 
 --[[
@@ -169,8 +339,13 @@ end
 
 -- Internal: Update stage from client ping-pong response
 function System:_updateFromServer(stage)
+	-- Ensure event reference exists before updating
+	-- This prevents race condition where PONG arrives before WaitForStage is called
+	self:_ensureEvent()
+
 	if stage > self._currentStage then
 		self._currentStage = stage
+		System.Debug:Message("System.client", "Received server stage:", self:GetStageName(stage), "(" .. stage .. ")")
 
 		-- Fire event to wake up any waiting client scripts
 		if self._stageEvent then
@@ -180,187 +355,348 @@ function System:_updateFromServer(stage)
 end
 
 --------------------------------------------------------------------------------
--- DEBUG LOGGING SYSTEM
+-- CLIENT BOOT SYSTEM (Client-only)
 --------------------------------------------------------------------------------
 
-local ReplicatedFirst = game:GetService("ReplicatedFirst")
+-- Client boot stages (separate from server stages)
+System.ClientStages = {
+	WAIT     = 1,  -- Waiting for server READY signal
+	DISCOVER = 2,  -- System discovers all client modules
+	INIT     = 3,  -- All client module:init() called (topologically sorted)
+	START    = 4,  -- All client module:start() called (topologically sorted)
+	READY    = 5,  -- Client fully ready
+}
 
--- Debug configuration (loaded lazily)
-System._debugConfig = nil
-System._debugConfigLoaded = false
+-- Client state (only used on client)
+System._clientCurrentStage = 0
+System._registeredClientModules = {}  -- [name] = { module, dependencies, initComplete, startComplete }
+System._clientModuleOrder = {}        -- Topologically sorted module names
+System._clientStageEvent = nil
 
--- Load debug config from ReplicatedFirst (lazy, cached)
-function System:_loadDebugConfig()
-	if self._debugConfigLoaded then
-		return self._debugConfig
+--[[
+    Register a client module for two-phase initialization.
+    Only used on client side.
+
+    @param name string - Module name
+    @param module table - Module table with init/start methods
+    @param options table (optional)
+--]]
+function System:RegisterClientModule(name, module, options)
+	if not self._isClient then
+		System.Debug:Warn("System", "RegisterClientModule called on server for:", name)
+		return
 	end
 
-	self._debugConfigLoaded = true
+	if self._registeredClientModules[name] then
+		System.Debug:Warn("System", "Client module already registered:", name)
+		return
+	end
 
-	local success, config = pcall(function()
-		local configModule = ReplicatedFirst:FindFirstChild("System")
-		if configModule then
-			local debugConfig = configModule:FindFirstChild("DebugConfig")
-			if debugConfig then
-				return require(debugConfig)
+	options = options or {}
+
+	self._registeredClientModules[name] = {
+		module = module,
+		options = options,
+		initComplete = false,
+		startComplete = false,
+	}
+
+	System.Debug:Message("System", "Registered client module:", name)
+end
+
+--[[
+    Get client boot stage name for debugging.
+--]]
+function System:GetClientStageName(stage)
+	for name, value in pairs(self.ClientStages) do
+		if value == stage then
+			return name
+		end
+	end
+	return "UNKNOWN"
+end
+
+--[[
+    Wait for a specific client boot stage.
+    Only used on client side.
+--]]
+function System:WaitForClientStage(stage)
+	if not self._isClient then
+		return
+	end
+
+	if self._clientCurrentStage >= stage then
+		return
+	end
+
+	while self._clientCurrentStage < stage do
+		if self._clientStageEvent then
+			self._clientStageEvent.Event:Wait()
+		else
+			task.wait(0.1)
+		end
+	end
+end
+
+--[[
+    Set client stage (internal, called by System.client).
+--]]
+function System:_setClientStage(stage)
+	self._clientCurrentStage = stage
+	System.Debug:Message("System.client", "Client stage", self:GetClientStageName(stage), "(" .. stage .. ")")
+
+	if self._clientStageEvent then
+		self._clientStageEvent:Fire(stage)
+	end
+end
+
+--------------------------------------------------------------------------------
+-- MODULE DISCOVERY AND DEPENDENCY RESOLUTION (Client-only)
+--------------------------------------------------------------------------------
+
+--[[
+    Topological sort using Kahn's algorithm.
+    Returns modules in dependency order (dependencies first).
+
+    @param modules table - Map of name -> { module, dependencies }
+    @return table - Array of module names in sorted order
+--]]
+function System:_topologicalSort(modules)
+	-- Build in-degree count and adjacency list
+	local inDegree = {}
+	local dependents = {}  -- [name] = { modules that depend on this }
+
+	for name in pairs(modules) do
+		inDegree[name] = 0
+		dependents[name] = {}
+	end
+
+	-- Count incoming edges (dependencies)
+	for name, entry in pairs(modules) do
+		local deps = entry.dependencies or {}
+		for _, dep in ipairs(deps) do
+			if modules[dep] then
+				inDegree[name] = inDegree[name] + 1
+				table.insert(dependents[dep], name)
 			else
-				warn("[Debug] DebugConfig not found in ReplicatedFirst.System")
+				-- Dependency not found - warn but continue
+				System.Debug:Warn("System.client", "Module", name, "depends on unknown module:", dep)
+			end
+		end
+	end
+
+	-- Start with modules that have no dependencies (in-degree 0)
+	local queue = {}
+	for name, degree in pairs(inDegree) do
+		if degree == 0 then
+			table.insert(queue, name)
+		end
+	end
+
+	-- Process queue
+	local sorted = {}
+	while #queue > 0 do
+		-- Sort queue alphabetically for deterministic order
+		table.sort(queue)
+		local name = table.remove(queue, 1)
+		table.insert(sorted, name)
+
+		-- Reduce in-degree for dependents
+		for _, dependent in ipairs(dependents[name]) do
+			inDegree[dependent] = inDegree[dependent] - 1
+			if inDegree[dependent] == 0 then
+				table.insert(queue, dependent)
+			end
+		end
+	end
+
+	-- Check for cycles
+	local moduleCount = 0
+	for _ in pairs(modules) do moduleCount = moduleCount + 1 end
+
+	if #sorted ~= moduleCount then
+		local missing = {}
+		for name in pairs(modules) do
+			local found = false
+			for _, s in ipairs(sorted) do
+				if s == name then found = true break end
+			end
+			if not found then table.insert(missing, name) end
+		end
+		System.Debug:Alert("System.client", "Circular dependency detected! Modules in cycle:", table.concat(missing, ", "))
+	end
+
+	return sorted
+end
+
+--[[
+    Discover all client modules from deployed locations.
+    Finds all ModuleScripts in:
+    - PlayerScripts (deployed System modules)
+    - PlayerGui (deployed GUI/asset modules)
+
+    Each module should return: { dependencies = {}, init = fn, start = fn }
+    Module name is the instance name (e.g., "GUI.Script", "Tutorial.LocalScript")
+--]]
+function System:_discoverClientModules()
+	local Players = game:GetService("Players")
+	local player = Players.LocalPlayer
+	local playerScripts = player:WaitForChild("PlayerScripts")
+	local playerGui = player:WaitForChild("PlayerGui")
+
+	-- Wait for character to load and StarterGui content to clone to PlayerGui
+	-- This ensures ScreenGuis (and their ModuleScript children) are present
+	local character = player.Character or player.CharacterAdded:Wait()
+	character:WaitForChild("Humanoid", 5)  -- Ensure character is fully loaded
+
+	-- Brief yield to allow all StarterGui content to clone
+	task.wait(0.1)
+
+	local discovered = 0
+
+	-- Helper to discover modules in a container
+	-- Uses GetDescendants to find ModuleScripts inside ScreenGuis and other containers
+	local function discoverIn(container, containerName)
+		for _, descendant in ipairs(container:GetDescendants()) do
+			-- Find all ModuleScripts (instance name is the module name)
+			if descendant:IsA("ModuleScript") then
+				local moduleName = descendant.Name
+
+				-- Skip if already registered (prevent duplicates)
+				if self._registeredClientModules[moduleName] then
+					continue
+				end
+
+				local success, moduleTable = pcall(require, descendant)
+				if success and type(moduleTable) == "table" then
+					self._registeredClientModules[moduleName] = {
+						module = moduleTable,
+						dependencies = moduleTable.dependencies or {},
+						initComplete = false,
+						startComplete = false,
+					}
+					discovered = discovered + 1
+					local deps = moduleTable.dependencies or {}
+					local depStr = #deps > 0 and (" [deps: " .. table.concat(deps, ", ") .. "]") or ""
+					System.Debug:Message("System.client", "Discovered:", moduleName, "in", containerName .. depStr)
+				else
+					System.Debug:Alert("System.client", "Failed to require module:", descendant.Name, "-", tostring(moduleTable))
+				end
+			end
+		end
+	end
+
+	-- Discover in both locations
+	discoverIn(playerScripts, "PlayerScripts")
+	discoverIn(playerGui, "PlayerGui")
+
+	-- Topologically sort modules
+	self._clientModuleOrder = self:_topologicalSort(self._registeredClientModules)
+
+	System.Debug:Message("System.client", "Discovered", discovered, "modules")
+	System.Debug:Message("System.client", "Init order:", table.concat(self._clientModuleOrder, " -> "))
+end
+
+--[[
+    Get the client module initialization order.
+    @return table - Array of module names in init order
+--]]
+function System:GetClientModuleOrder()
+	return self._clientModuleOrder
+end
+
+--[[
+    Check if a client module has completed initialization.
+    @param name string - Module name
+    @return boolean
+--]]
+function System:IsClientModuleReady(name)
+	local entry = self._registeredClientModules[name]
+	return entry and entry.startComplete == true
+end
+
+--[[
+    Initialize all registered client modules (Phase 1).
+    Modules are initialized in topologically sorted order (dependencies first).
+--]]
+function System:_initAllClientModules()
+	local count = 0
+	local failed = 0
+
+	-- Use topologically sorted order
+	for _, name in ipairs(self._clientModuleOrder) do
+		local entry = self._registeredClientModules[name]
+		if entry and entry.module.init then
+			System.Debug:Verbose("System.client", "Init:", name)
+			local success, err = pcall(function()
+				entry.module:init()
+			end)
+			if success then
+				entry.initComplete = true
+				count = count + 1
+				System.Debug:Message("System.client", "Init:", name, "✓")
+			else
+				failed = failed + 1
+				System.Debug:Alert("System.client", "Client module init failed:", name, "-", tostring(err))
+			end
+		elseif entry then
+			entry.initComplete = true
+			count = count + 1
+		end
+	end
+
+	System.Debug:Message("System.client", "Initialized", count, "client modules" .. (failed > 0 and (", " .. failed .. " failed") or ""))
+end
+
+--[[
+    Start all registered client modules (Phase 2).
+    Modules are started in topologically sorted order (dependencies first).
+--]]
+function System:_startAllClientModules()
+	local count = 0
+	local failed = 0
+
+	-- Use topologically sorted order
+	for _, name in ipairs(self._clientModuleOrder) do
+		local entry = self._registeredClientModules[name]
+		if not entry then continue end
+
+		if not entry.initComplete then
+			System.Debug:Warn("System.client", "Skipping start for client module with failed init:", name)
+			continue
+		end
+
+		if entry.module.start then
+			System.Debug:Verbose("System.client", "Start:", name)
+			local success, err = pcall(function()
+				entry.module:start()
+			end)
+			if success then
+				entry.startComplete = true
+				count = count + 1
+				System.Debug:Message("System.client", "Start:", name, "✓")
+			else
+				failed = failed + 1
+				System.Debug:Alert("System.client", "Client module start failed:", name, "-", tostring(err))
 			end
 		else
-			warn("[Debug] System folder not found in ReplicatedFirst")
-		end
-		return nil
-	end)
-
-	if success and config then
-		self._debugConfig = config
-		print("[Debug] Loaded config, Priority =", config.priorityThreshold or "Info")
-	else
-		-- Fallback: Info level, all categories enabled
-		warn("[Debug] Using fallback config (Info level)")
-		self._debugConfig = {
-			priorityThreshold = "Info",
-			categories = {},
-			filter = { enabled = {}, disabled = {} }
-		}
-	end
-
-	return self._debugConfig
-end
-
--- Glob pattern matching (supports * for any sequence)
-local function matchesGlob(str, pattern)
-	-- Convert glob to Lua pattern
-	local luaPattern = pattern
-		:gsub("([%.%+%-%^%$%(%)%%])", "%%%1")  -- Escape magic chars
-		:gsub("%*", ".*")                       -- * -> .*
-	luaPattern = "^" .. luaPattern .. "$"       -- Anchor pattern
-
-	return str:match(luaPattern) ~= nil
-end
-
--- Categorize source into a category
-local function categorizeSource(source)
-	-- System core
-	if source == "System" or source == "System.System" or source == "System.Script" or source == "System.client" then
-		return "System"
-	end
-
-	-- Subsystems (System.X where X is not Script/System/client)
-	if source:match("^System%.") then
-		return "Subsystems"
-	end
-
-	-- Special categories
-	if source:match("^RunModes") then
-		return "RunModes"
-	end
-
-	if source:match("^Tutorial") then
-		return "Tutorial"
-	end
-
-	if source:match("^Input") then
-		return "Input"
-	end
-
-	-- Default: Assets (anything else)
-	return "Assets"
-end
-
--- Check if source should be logged based on priority and category
-local function shouldLog(source, priority)
-	local config = System:_loadDebugConfig()
-
-	-- Priority check (higher priority always shows)
-	local priorityLevels = { Critical = 3, Info = 2, Verbose = 1 }
-	local threshold = config.priorityThreshold or "Info"
-	local messagePriority = priorityLevels[priority] or 2
-	local thresholdPriority = priorityLevels[threshold] or 2
-
-	if messagePriority < thresholdPriority then
-		return false
-	end
-
-	-- Advanced filter check (overrides category filtering)
-	local filter = config.filter or {}
-	local enabled = filter.enabled or {}
-	local disabled = filter.disabled or {}
-
-	-- Check enabled list first (if match, ALLOW)
-	for _, pattern in ipairs(enabled) do
-		if matchesGlob(source, pattern) then
-			return true
+			entry.startComplete = true
+			count = count + 1
 		end
 	end
 
-	-- Check disabled list second (if match, BLOCK)
-	for _, pattern in ipairs(disabled) do
-		if matchesGlob(source, pattern) then
-			return false
-		end
-	end
-
-	-- Category filtering
-	local category = categorizeSource(source)
-	local categories = config.categories or {}
-
-	-- If category is explicitly set, use that value
-	-- Otherwise default to true (enabled)
-	if categories[category] ~= nil then
-		return categories[category]
-	end
-
-	return true
+	System.Debug:Message("System.client", "Started", count, "client modules" .. (failed > 0 and (", " .. failed .. " failed") or ""))
 end
 
--- Format arguments for output
-local function formatArgs(...)
-	local args = {...}
-	local parts = {}
-	for i, v in ipairs(args) do
-		parts[i] = tostring(v)
+--[[
+    Get list of registered client module names.
+--]]
+function System:GetRegisteredClientModules()
+	local names = {}
+	for name in pairs(self._registeredClientModules) do
+		table.insert(names, name)
 	end
-	return table.concat(parts, " ")
-end
-
--- Debug namespace
-System.Debug = {}
-
--- Debug:Critical - critical messages (always shown unless explicitly filtered)
--- Use for bootstrap, errors, important system events
-function System.Debug:Critical(source, ...)
-	if shouldLog(source, "Critical") then
-		print(source .. ":", formatArgs(...))
-	end
-end
-
--- Debug:Message - regular info-level output
-function System.Debug:Message(source, ...)
-	if shouldLog(source, "Info") then
-		print(source .. ":", formatArgs(...))
-	end
-end
-
--- Debug:Verbose - detailed debug output (only shown at Verbose priority threshold)
-function System.Debug:Verbose(source, ...)
-	if shouldLog(source, "Verbose") then
-		print(source .. ":", formatArgs(...))
-	end
-end
-
--- Debug:Warn - warning output (Critical priority)
-function System.Debug:Warn(source, ...)
-	if shouldLog(source, "Critical") then
-		warn(source .. ":", formatArgs(...))
-	end
-end
-
--- Debug:Alert - error/alert output (Critical priority, prefixed with [ALERT])
-function System.Debug:Alert(source, ...)
-	if shouldLog(source, "Critical") then
-		warn("[ALERT] " .. source .. ":", formatArgs(...))
-	end
+	return names
 end
 
 return System

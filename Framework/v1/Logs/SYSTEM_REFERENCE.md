@@ -10,8 +10,8 @@
 
 # LibPureFiction Framework - System Reference
 
-**Version:** 2.1
-**Last Updated:** January 9, 2026
+**Version:** 2.2
+**Last Updated:** January 10, 2026
 
 A comprehensive technical reference for the LibPureFiction Roblox game framework.
 
@@ -476,6 +476,159 @@ Error/alert output with `[ALERT]` prefix.
 ```lua
 System.Debug:Alert("ZoneController", "Failed to call callback")
 -- Output: [ALERT] ZoneController: Failed to call callback
+```
+
+---
+
+# 4.5 Router API (Message Routing)
+
+**Access:** `System.Router` (available after requiring System.System)
+
+The Router provides centralized message routing between assets, supporting both targeted and static wiring patterns.
+
+## Router:Send(source, message)
+
+Send a message from an asset. Routing depends on message content:
+
+**Targeted Routing** (message has `target` field):
+```lua
+System.Router:Send(assetName, {
+    target = "MarshmallowBag",
+    command = "reset",
+})
+-- Message goes to: MarshmallowBag.Input
+```
+
+**Static Wiring** (message has no `target`):
+```lua
+System.Router:Send(assetName, {
+    action = "gameStarted",
+})
+-- Message goes to all destinations wired from assetName.Output in GameManifest
+```
+
+## Router:SetContext(key, value)
+
+Set context values for rule-based filtering:
+
+```lua
+System.Router:SetContext("gameActive", true)
+System.Router:SetContext("currentWave", 3)
+```
+
+## Router:AddRule(rule)
+
+Add a filtering rule. Messages matching the rule are only routed if the condition returns true:
+
+```lua
+System.Router:AddRule({
+    action = "camperFed",
+    condition = function(ctx)
+        return ctx.gameActive == true
+    end,
+})
+```
+
+## GameManifest Wiring Configuration
+
+Static routes are defined in `System/ReplicatedStorage/GameManifest.lua`:
+
+```lua
+wiring = {
+    -- Action-based events (no target field)
+    { from = "Orchestrator.Output", to = "WaveController.Input" },
+    { from = "CampPlacer.Output", to = "WaveController.Input" },
+    { from = "CampPlacer.Output", to = "Scoreboard.Input" },
+    { from = "Scoreboard.Output", to = "LeaderBoard.Input" },
+
+    -- System events
+    { from = "RunModes.ModeChanged", to = "Orchestrator.Input" },
+}
+```
+
+---
+
+# 4.6 Visibility API
+
+**Access:** `require(ReplicatedStorage:WaitForChild("System.Visibility"))`
+
+Utilities for model visibility, anchor resolution, and physics binding.
+
+## Visibility.hideModel(model)
+
+Hide all visual/audio elements in a model. Stores original values in attributes for restoration.
+
+```lua
+Visibility.hideModel(camperModel)
+-- Sets Transparency=1, CanCollide=false, CanTouch=false
+-- Disables particles, lights, stops sounds
+-- Original values stored in VisibleTransparency, VisibleCanCollide, etc.
+```
+
+## Visibility.showModel(model)
+
+Restore model visibility from stored attributes.
+
+```lua
+Visibility.showModel(camperModel)
+-- Restores all properties from stored attributes
+```
+
+## Visibility.isHidden(model)
+
+Check if a model is currently hidden.
+
+```lua
+if Visibility.isHidden(model) then
+    Visibility.showModel(model)
+end
+```
+
+## Visibility.resolveAnchor(model)
+
+Resolve the anchor part for a model. Returns `anchor, isBodyPart`.
+
+**Resolution order:**
+1. `AnchorPart` attribute (e.g., `"Head"`) - explicit body part
+2. Literal `"Anchor"` child part - dedicated anchor
+3. Auto-detect for Humanoids - prefers Head, falls back to HumanoidRootPart
+
+```lua
+local anchor, isBodyPart = Visibility.resolveAnchor(model)
+
+if isBodyPart then
+    -- Body part (e.g., Head): keep visible, allow interactions
+    anchor.CanTouch = true
+else
+    -- Dedicated Anchor: make invisible, non-collideable
+    anchor.Anchored = true
+    anchor.Transparency = 1
+    anchor.CanCollide = false
+end
+```
+
+**Use cases:**
+- Static assets: Use dedicated "Anchor" part
+- Humanoid NPCs: Auto-detect Head as anchor (HUD follows NPC naturally)
+- Configurable: Set `AnchorPart` attribute to specify any body part
+
+## Visibility.bindToAnchor(model, options)
+
+Bind model parts to follow the Anchor using physics constraints. For Humanoids, this function returns early (they handle their own physics).
+
+```lua
+local constraints = Visibility.bindToAnchor(model, {
+    responsiveness = 200,  -- How quickly parts follow
+    maxForce = math.huge,  -- Force limit
+})
+```
+
+## Visibility.unbindFromAnchor(model)
+
+Remove all anchor bindings from a model.
+
+```lua
+Visibility.unbindFromAnchor(model)
 ```
 
 ---

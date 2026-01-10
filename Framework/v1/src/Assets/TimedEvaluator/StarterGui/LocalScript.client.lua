@@ -36,9 +36,16 @@ local playerGui = player:WaitForChild("PlayerGui")
 local templates = ReplicatedStorage:WaitForChild("Templates")
 local runtimeAssets = workspace:WaitForChild("RuntimeAssets")
 local model = runtimeAssets:WaitForChild(assetName)
-local anchor = model:WaitForChild("Anchor")
 
 local GUI = require(ReplicatedStorage:WaitForChild("GUI.GUI"))
+local Visibility = require(ReplicatedStorage:WaitForChild("System.Visibility"))
+
+-- Resolve anchor (may be dedicated Anchor part or body part like Head)
+local anchor = Visibility.resolveAnchor(model)
+if not anchor then
+	System.Debug:Warn(assetName .. ".client", "No anchor resolved for model")
+	return
+end
 
 -- Emoji stages from highest to lowest satisfaction
 local EMOJI_STAGES = {

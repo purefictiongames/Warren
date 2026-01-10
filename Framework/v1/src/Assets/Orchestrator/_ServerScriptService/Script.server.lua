@@ -96,7 +96,7 @@ local function unfreezePlayer(player)
 end
 
 -- Apply mode configuration to all assets
--- Reads config and sends enable/disable commands via Output
+-- Sends enable/disable commands via Router to each asset
 local function applyModeToAssets(mode)
 	local config = RunModes:GetConfig(mode)
 	if not config or not config.assets then
@@ -121,42 +121,96 @@ local function applyModeToAssets(mode)
 			end
 
 			System.Debug:Message(assetName, "Sending", command, "to", targetAssetName, settings.behavior and ("behavior:" .. settings.behavior) or "")
-			outputEvent:Fire(message)
+			System.Router:Send(assetName, message)
 		end
 	end
 
 	System.Debug:Message(assetName, "Finished applying mode config:", mode)
 end
 
--- Start the game loop
+-- Start the game loop (or resume after wave transition)
 local function startGameLoop()
 	if gameRunning then return end
 	gameRunning = true
 
+	-- Update Router context
+	System.Router:SetContext("gameActive", true)
+
 	System.Debug:Message(assetName, "Starting game loop")
 
-	-- Reset assets
-	outputEvent:Fire({ target = "MarshmallowBag", command = "reset" })
+	-- Reset dispenser (targeted command)
+	System.Router:Send(assetName, { target = "MarshmallowBag", command = "reset" })
 
-	-- Signal WaveController to start spawning (it controls CampPlacer)
-	outputEvent:Fire({ action = "gameStarted" })
+	-- Signal WaveController to start spawning (uses static wiring)
+	System.Router:Send(assetName, { action = "gameStarted" })
 
-	-- Start the play timer
-	outputEvent:Fire({ target = "PlayTimer", command = "start" })
+	-- Start the play timer (targeted command)
+	System.Router:Send(assetName, { target = "PlayTimer", command = "start" })
 end
 
--- Stop the game loop
+-- Pause the game loop (between waves - player can still move)
+local function pauseGameLoop()
+	if not gameRunning then return end
+
+	-- Stop spawning but don't clear state (uses static wiring)
+	System.Router:Send(assetName, { action = "wavePaused" })
+
+	-- Stop PlayTimer (targeted command)
+	System.Router:Send(assetName, { target = "PlayTimer", command = "stop" })
+
+	System.Debug:Message(assetName, "Paused game loop for wave transition")
+end
+
+-- Resume the game loop after wave transition
+local function resumeGameLoop()
+	if not gameRunning then return end
+
+	-- Signal WaveController to resume spawning (uses static wiring)
+	System.Router:Send(assetName, { action = "waveResumed" })
+
+	-- Restart the play timer (targeted command)
+	System.Router:Send(assetName, { target = "PlayTimer", command = "start" })
+
+	System.Debug:Message(assetName, "Resumed game loop")
+end
+
+-- Stop the game loop completely
 local function stopGameLoop()
 	if not gameRunning then return end
 	gameRunning = false
 
-	-- Signal WaveController to stop spawning
-	outputEvent:Fire({ action = "gameStopped" })
+	-- Update Router context
+	System.Router:SetContext("gameActive", false)
 
-	-- Stop PlayTimer
-	outputEvent:Fire({ target = "PlayTimer", command = "stop" })
+	-- Signal WaveController to stop spawning (uses static wiring)
+	System.Router:Send(assetName, { action = "gameStopped" })
+
+	-- Stop PlayTimer (targeted command)
+	System.Router:Send(assetName, { target = "PlayTimer", command = "stop" })
 
 	System.Debug:Message(assetName, "Stopped game loop")
+end
+
+-- Handle wave transition (PlayTimer expired but game continues)
+local function onWaveTransition()
+	System.Debug:Message(assetName, "Wave timer expired - transitioning to next wave")
+
+	-- Pause spawning
+	pauseGameLoop()
+
+	-- Tell WaveController to advance wave (uses static wiring)
+	System.Router:Send(assetName, { action = "advanceWave" })
+
+	-- Brief pause for wave transition (could show UI here)
+	task.delay(2, function()
+		if gameRunning then
+			-- Reset dispenser for new wave (targeted command)
+			System.Router:Send(assetName, { target = "MarshmallowBag", command = "reset" })
+
+			-- Resume with new wave
+			resumeGameLoop()
+		end
+	end)
 end
 
 -- Per-submission handler (RoundComplete from Scoreboard)
@@ -217,8 +271,8 @@ inputEvent.Event:Connect(function(message)
 			System.Debug:Message(assetName, "Countdown complete - starting game")
 			startGameLoop()
 		else
-			-- PlayTimer expired - end the game
-			endGame("PlayTimer expired")
+			-- PlayTimer expired - transition to next wave (game continues)
+			onWaveTransition()
 		end
 
 	elseif action == "dispenserEmpty" then
@@ -317,7 +371,7 @@ if transitionEvents.Complete then
 			-- Freeze player and lock prompts during countdown
 			freezePlayer(player)
 			pushModal:Invoke(player, "countdown")
-			outputEvent:Fire({ target = "CountdownTimer", command = "start" })
+			System.Router:Send(assetName, { target = "CountdownTimer", command = "start" })
 		else
 			System.Debug:Message(assetName, "Transition complete for", player.Name)
 		end

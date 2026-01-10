@@ -264,36 +264,17 @@ local function bootstrapAssets(System)
 		System.Debug:Critical("System.Script", "Deployed", templateName, "as", alias)
 	end
 
-	-- Apply wiring connections
+	-- Apply wiring connections (for static event forwarding)
 	applyWiring(manifest, System)
 
-	-- Set up message router for Orchestrator
-	-- Routes commands with { target = "AssetName", command = "..." } to AssetName.Input
-	local orchestratorOutput = ReplicatedStorage:FindFirstChild("Orchestrator.Output")
-	if orchestratorOutput then
-		orchestratorOutput.Event:Connect(function(message)
-			if not message or type(message) ~= "table" then
-				return
-			end
+	-- Initialize Router with wiring configuration
+	-- Router handles targeted messages and provides filtering capabilities
+	System.Router:Init({
+		Debug = System.Debug,
+		wiring = manifest.wiring or {},
+	})
 
-			local target = message.target
-			local command = message.command
-
-			if target and command then
-				-- Route to target asset's Input
-				local targetInput = ReplicatedStorage:FindFirstChild(target .. ".Input")
-				if targetInput then
-					targetInput:Fire({ command = command })
-					System.Debug:Verbose("System.Router", "Routed", command, "to", target)
-				else
-					System.Debug:Warn("System.Router", "Target not found:", target)
-				end
-			end
-		end)
-		System.Debug:Critical("System.Script", "Message router connected to Orchestrator.Output")
-	else
-		System.Debug:Warn("System.Script", "Orchestrator.Output not found - router not connected")
-	end
+	System.Debug:Critical("System.Script", "Router initialized with", #(manifest.wiring or {}), "wires")
 end
 
 -- Spawn all waiting players

@@ -111,8 +111,8 @@ System:RegisterAsset(assetName, function()
 		-- Mark slot as occupied
 		activeCampers[camperName] = true
 
-		-- Send spawn command to the tent (via ArrayPlacer routing)
-		outputEvent:Fire({
+		-- Send spawn command to the tent (via Router)
+		System.Router:Send(assetName, {
 			target = tentName,
 			command = "spawn",
 		})
@@ -186,7 +186,7 @@ System:RegisterAsset(assetName, function()
 		if campersSpawnedThisWave >= config.campersPerWave and countActiveCampers() == 0 then
 			System.Debug:Message(assetName, "Wave", config.waveNumber, "complete!")
 
-			outputEvent:Fire({
+			System.Router:Send(assetName, {
 				action = "waveComplete",
 				wave = config.waveNumber,
 				campersFed = campersFedThisWave,
@@ -275,6 +275,60 @@ System:RegisterAsset(assetName, function()
 		System.Debug:Message(assetName, "Wave set to", wave)
 	end
 
+	-- Pause spawning (between waves)
+	local function handlePause()
+		stopSpawnLoop()
+		System.Debug:Message(assetName, "Paused - awaiting wave transition")
+	end
+
+	-- Resume spawning (after wave transition)
+	local function handleResume()
+		if not isRunning then
+			isRunning = true
+		end
+		startSpawnLoop()
+		System.Debug:Message(assetName, "Resumed spawning")
+	end
+
+	-- Advance to next wave (adjusts difficulty)
+	local function handleAdvanceWave()
+		local config = getConfig()
+		local newWave = config.waveNumber + 1
+
+		-- Reset wave counters
+		campersSpawnedThisWave = 0
+		campersFedThisWave = 0
+		model:SetAttribute("CampersSpawnedThisWave", 0)
+		model:SetAttribute("CampersFedThisWave", 0)
+
+		-- Increment wave number
+		model:SetAttribute("WaveNumber", newWave)
+
+		-- Adjust difficulty based on wave number
+		-- These are the "knobs" that control signal amplitude
+		local newMaxConcurrent = math.min(1 + math.floor(newWave / 2), 4) -- 1, 1, 2, 2, 3, 3, 4
+		local newSpawnInterval = math.max(5 - (newWave - 1) * 0.5, 2) -- 5, 4.5, 4, 3.5, 3, 2.5, 2
+		local newCampersPerWave = 10 + (newWave - 1) * 2 -- 10, 12, 14, 16, ...
+
+		model:SetAttribute("MaxConcurrent", newMaxConcurrent)
+		model:SetAttribute("SpawnInterval", newSpawnInterval)
+		model:SetAttribute("CampersPerWave", newCampersPerWave)
+
+		System.Debug:Message(assetName, "Advanced to wave", newWave,
+			"- MaxConcurrent:", newMaxConcurrent,
+			"SpawnInterval:", newSpawnInterval,
+			"CampersPerWave:", newCampersPerWave)
+
+		-- Fire wave started event (uses static wiring)
+		System.Router:Send(assetName, {
+			action = "waveStarted",
+			wave = newWave,
+			maxConcurrent = newMaxConcurrent,
+			spawnInterval = newSpawnInterval,
+			campersPerWave = newCampersPerWave,
+		})
+	end
+
 	-- Listen for input events
 	inputEvent.Event:Connect(function(message)
 		if not message or type(message) ~= "table" then return end
@@ -285,6 +339,12 @@ System:RegisterAsset(assetName, function()
 			handleStart()
 		elseif action == "gameStopped" then
 			handleStop()
+		elseif action == "wavePaused" then
+			handlePause()
+		elseif action == "waveResumed" then
+			handleResume()
+		elseif action == "advanceWave" then
+			handleAdvanceWave()
 		elseif action == "camperDespawned" then
 			onCamperDespawned(message.origin)
 		elseif action == "camperFed" or action == "evaluationComplete" then

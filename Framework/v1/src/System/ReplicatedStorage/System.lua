@@ -19,9 +19,15 @@ local RunService = game:GetService("RunService")
 -- We require it here and re-export as System.Debug for convenience
 local Debug = require(script.Parent:WaitForChild("System.Debug"))
 
+-- Router is the central message routing system
+-- Loaded early, initialized by System.Script with wiring from GameManifest
+local Router = require(script.Parent:WaitForChild("System.Router"))
+
 local System = {
 	-- Re-export Debug for convenient access via System.Debug
 	Debug = Debug,
+	-- Re-export Router for convenient access via System.Router
+	Router = Router,
 	-- Boot stages (in order)
 	Stages = {
 		SYNC        = 1,  -- Assets cloned to RuntimeAssets, folders extracted

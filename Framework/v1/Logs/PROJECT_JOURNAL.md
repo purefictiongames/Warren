@@ -911,16 +911,175 @@ When dynamically spawning models with unanchored parts:
 
 ---
 
+---
+
+### Day 12 (Jan 10, 2026) - Central Router & Configurable Anchor System
+
+**Session 24**
+
+**Major Success: Central Message Router (System.Router)**
+
+Replaced ad-hoc event wiring with a centralized message routing system, similar to a network router/firewall.
+
+**Problem Identified:**
+- Orchestrator.Output was only wired to WaveController.Input
+- Targeted commands (with `target` field) never reached their destinations
+- Asset enable/disable commands went to WaveController instead of actual assets
+
+**Solution: System.Router**
+
+Created `System/ReplicatedStorage/Router.lua` with dual routing modes:
+
+1. **Targeted Routing:** Messages with `target` field go directly to `target.Input`
+```lua
+System.Router:Send(assetName, {
+    target = "MarshmallowBag",
+    command = "reset",
+})
+-- Routes to: MarshmallowBag.Input
+```
+
+2. **Static Wiring Fallback:** Messages without `target` use GameManifest wiring
+```lua
+System.Router:Send(assetName, {
+    action = "gameStarted",
+})
+-- Routes to all destinations wired from assetName.Output
+```
+
+**Context-Based Filtering:**
+```lua
+System.Router:SetContext("gameActive", true)
+System.Router:AddRule({
+    action = "camperFed",
+    condition = function(ctx) return ctx.gameActive end,
+})
+```
+
+**Files Updated:**
+- Created `System/ReplicatedStorage/Router.lua`
+- Updated `System/ReplicatedStorage/System.lua` to export Router
+- Updated `System/Script.server.lua` to initialize Router with wiring config
+- Updated `Orchestrator` to use `System.Router:Send()` instead of direct fires
+- Updated `WaveController` to use Router for spawn commands
+- Cleaned up `GameManifest.lua` wiring (removed redundant routes)
+
+---
+
+**Major Success: Configurable Anchor System**
+
+Refactored the anchor concept to support both dedicated anchor parts AND body parts (like Head for Humanoids).
+
+**Problem:**
+- Static assets use dedicated invisible Anchor part for HUD/prompts
+- Humanoid NPCs need HUD to follow body parts naturally
+- Previous: HUD attached to Anchor which detached from NPC during physics
+
+**Solution: Visibility.resolveAnchor()**
+
+Created utility function with resolution priority:
+1. `AnchorPart` attribute (explicit body part name)
+2. Literal "Anchor" child part (dedicated anchor)
+3. Auto-detect for Humanoids (prefers Head, falls back to HumanoidRootPart)
+
+```lua
+local anchor, isBodyPart = Visibility.resolveAnchor(model)
+
+if isBodyPart then
+    -- Body part anchor (Head): keep visible, allow touch
+    anchor.CanTouch = true
+else
+    -- Dedicated Anchor: make invisible, anchored
+    anchor.Anchored = true
+    anchor.Transparency = 1
+    anchor.CanCollide = false
+end
+```
+
+**Updated Assets:**
+- `TimedEvaluatorModule.lua` - Uses resolveAnchor, handles body parts vs dedicated anchors
+- `TimedEvaluator/LocalScript.client.lua` - Uses resolveAnchor for BillboardGui adornee
+- `Visibility.lua` - Added resolveAnchor(), updated bindToAnchor() to skip Humanoids
+
+---
+
+**Bug Fixes: Humanoid Physics**
+
+**Issue 1: Campers having seizures**
+- Cause: AlignPosition/AlignOrientation constraints fighting with Humanoid physics
+- Fix: `bindToAnchor()` returns early for Humanoids (they handle their own physics)
+
+**Issue 2: Campers falling over on spawn**
+- Cause: Humanoid physics not initialized, parts falling through ground
+- Fix: Temporary anchoring + velocity zeroing + forced state changes (GettingUp → Running)
+
+```lua
+if humanoid then
+    rootPart.Anchored = true
+    rootPart.AssemblyLinearVelocity = Vector3.zero
+    rootPart.AssemblyAngularVelocity = Vector3.zero
+
+    task.delay(0.1, function()
+        rootPart.Anchored = false
+        humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+        task.delay(0.1, function()
+            humanoid:ChangeState(Enum.HumanoidStateType.Running)
+        end)
+    end)
+end
+```
+
+---
+
+**Architecture Insights**
+
+1. **Router vs Direct Wiring:** Central routing provides:
+   - Single point of message flow control
+   - Easy debugging (log all messages in one place)
+   - Context-based filtering for game state
+   - Cleaner GameManifest (declarative routes)
+
+2. **Anchor as Primary Part:** Making anchor configurable enables:
+   - Same code works for static assets and Humanoids
+   - HUD follows NPC naturally when anchor IS the Head
+   - No BillboardGui reparenting needed
+   - ProximityPrompts work on body parts
+
+3. **Humanoid Physics Separation:** Don't fight Roblox physics:
+   - Skip constraint binding for Humanoids
+   - Use temporary anchoring for spawn stability
+   - Force state changes to ensure standing position
+
+---
+
+**Files Changed This Session:**
+
+**New:**
+- `src/System/ReplicatedStorage/Router.lua`
+
+**Modified:**
+- `src/System/ReplicatedStorage/System.lua` (added Router export)
+- `src/System/ReplicatedStorage/Visibility.lua` (added resolveAnchor, updated bindToAnchor)
+- `src/System/Script.server.lua` (Router initialization)
+- `src/System/ReplicatedStorage/GameManifest.lua` (updated wiring)
+- `src/Assets/Orchestrator/_ServerScriptService/Script.server.lua` (use Router:Send)
+- `src/Assets/WaveController/_ServerScriptService/Script.server.lua` (use Router:Send, wave handlers)
+- `src/Assets/WaveController/init.meta.json` (className: Model)
+- `src/Assets/TimedEvaluator/ReplicatedStorage/TimedEvaluatorModule.lua` (use resolveAnchor)
+- `src/Assets/TimedEvaluator/StarterGui/LocalScript.client.lua` (use resolveAnchor)
+
+---
+
 ## Statistics
 
-- **Session Logs Written:** 23
-- **Commits:** ~36
-- **Lua Files:** 52+
+- **Session Logs Written:** 24
+- **Commits:** ~37
+- **Lua Files:** 53+
 - **Assets Built:** 11
 - **Templates Built:** 2
-- **System Modules Built:** 7 (added Camera)
-- **Lines of Code:** ~6,200 (estimate)
+- **System Modules Built:** 7
+- **Lines of Code:** ~6,400 (estimate)
 - **Debug Calls Migrated:** 97
-- **Major Pivots:** 6 (added Module Init Refactor plan)
+- **Major Pivots:** 7 (added Router architecture)
 - **Days to Working Game Loop:** 2
 - **Documentation Pages:** 3 (SYSTEM_REFERENCE, PROCEDURES, STYLING_SYSTEM)

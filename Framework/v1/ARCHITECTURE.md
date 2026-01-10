@@ -222,6 +222,95 @@ system:waitForAllComplete(stageName)
 
 ---
 
+## Message Routing System (v1.2)
+
+### System.Router - Central Message Bus
+
+Assets communicate via a central Router that handles both targeted and static message routing, similar to a network router/firewall.
+
+### Routing Modes
+
+**Targeted Routing:** Messages with a `target` field go directly to `target.Input`:
+```lua
+System.Router:Send(assetName, {
+    target = "MarshmallowBag",
+    command = "reset",
+})
+-- Routes to: MarshmallowBag.Input
+```
+
+**Static Wiring Fallback:** Messages without `target` use wiring from GameManifest:
+```lua
+System.Router:Send(assetName, {
+    action = "gameStarted",
+})
+-- Routes to all destinations wired from assetName.Output in GameManifest
+```
+
+### GameManifest Wiring
+
+Static routes defined in `System/ReplicatedStorage/GameManifest.lua`:
+```lua
+wiring = {
+    { from = "Orchestrator.Output", to = "WaveController.Input" },
+    { from = "CampPlacer.Output", to = "WaveController.Input" },
+    { from = "CampPlacer.Output", to = "Scoreboard.Input" },
+}
+```
+
+### Context-Based Filtering
+
+Router tracks context for rule-based filtering:
+```lua
+System.Router:SetContext("gameActive", true)
+System.Router:AddRule({
+    action = "camperFed",
+    condition = function(ctx) return ctx.gameActive end,
+})
+```
+
+---
+
+## Configurable Anchor System (v1.2)
+
+### The Problem
+
+Assets need an "anchor" point for HUDs, prompts, and positioning. Static assets use a dedicated invisible Anchor part. But Humanoid NPCs need the HUD to follow body parts naturally.
+
+### Resolution Order
+
+`Visibility.resolveAnchor(model)` returns `anchor, isBodyPart`:
+
+1. **AnchorPart attribute** - Explicit body part name (e.g., `"Head"`)
+2. **Literal "Anchor" part** - Dedicated invisible anchor
+3. **Auto-detect for Humanoids** - Prefers Head, falls back to HumanoidRootPart
+
+### Body Part vs Dedicated Anchor
+
+```lua
+local anchor, isBodyPart = Visibility.resolveAnchor(model)
+
+if isBodyPart then
+    -- Body part anchor (e.g., Head): keep visible, allow interactions
+    anchor.CanTouch = true
+else
+    -- Dedicated Anchor: make invisible, non-collideable, anchored
+    anchor.Anchored = true
+    anchor.Transparency = 1
+    anchor.CanCollide = false
+    anchor.CanTouch = false
+end
+```
+
+### Benefits
+
+- **Static assets**: Use dedicated "Anchor" part (invisible, anchored)
+- **Humanoids**: Auto-detect Head as anchor (visible, follows NPC naturally)
+- **Configurable**: Set `AnchorPart` attribute to specify any body part
+- **HUD follows NPC**: BillboardGui adorns to Head, which moves with NPC
+
+---
+
 ## Lessons Learned
 
 ### From v0 → v1 Migration

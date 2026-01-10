@@ -51,14 +51,26 @@ function TimedEvaluatorModule.initialize(config)
 	if targetMax == nil or targetMax <= 0 then targetMax = 100 end
 	if targetMin > targetMax then targetMin, targetMax = targetMax, targetMin end
 
-	-- Find components
-	local anchor = model:FindFirstChild("Anchor")
+	-- Resolve anchor (may be dedicated Anchor part or Humanoid body part like Head)
+	local anchor, isBodyPart = Visibility.resolveAnchor(model)
 	if not anchor then
-		System.Debug:Warn(assetName, "No Anchor found in", model.Name)
+		System.Debug:Warn(assetName, "No anchor resolved for", model.Name)
 		return nil
 	end
+	System.Debug:Message(assetName, "Anchor resolved to", anchor.Name, isBodyPart and "(body part)" or "(dedicated)")
 
-	-- Ground the model so its bottom sits at ground level (Y=0 or anchor Y)
+	-- Find Humanoid (if present)
+	local humanoid = model:FindFirstChildOfClass("Humanoid")
+	if not humanoid then
+		for _, desc in ipairs(model:GetDescendants()) do
+			if desc:IsA("Humanoid") then
+				humanoid = desc
+				break
+			end
+		end
+	end
+
+	-- Ground the model so its bottom sits at ground level (Y=0 or configured)
 	-- This ensures unanchored humanoid parts don't fall through the world
 	local groundY = model:GetAttribute("GroundY") or 0
 	local minY = math.huge
@@ -78,20 +90,61 @@ function TimedEvaluatorModule.initialize(config)
 		end
 	end
 
-	-- Bind humanoid/parts to follow anchor using physics constraints
-	-- This keeps the Walking NPC centered on the anchor when it moves
+	-- For Humanoids: stabilize on spawn to prevent falling over
+	if humanoid then
+		local rootPart = humanoid.RootPart
+		if not rootPart then
+			local humanoidModel = humanoid.Parent
+			rootPart = humanoidModel:FindFirstChild("HumanoidRootPart")
+				or humanoidModel:FindFirstChild("Torso")
+		end
+
+		if rootPart then
+			-- Stabilize: anchor briefly, zero velocity, then release with forced standing state
+			rootPart.Anchored = true
+			rootPart.AssemblyLinearVelocity = Vector3.zero
+			rootPart.AssemblyAngularVelocity = Vector3.zero
+
+			task.delay(0.1, function()
+				if not rootPart or not rootPart.Parent or not humanoid or not humanoid.Parent then
+					return
+				end
+
+				rootPart.Anchored = false
+				humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+
+				task.delay(0.1, function()
+					if humanoid and humanoid.Parent then
+						humanoid:ChangeState(Enum.HumanoidStateType.Running)
+					end
+				end)
+
+				System.Debug:Message(assetName, "Humanoid stabilized and standing")
+			end)
+		end
+	end
+
+	-- Bind non-humanoid parts to follow anchor using physics constraints
+	-- (For Humanoids/body parts, bindToAnchor returns early - they handle their own physics)
 	Visibility.bindToAnchor(model)
-	System.Debug:Message(assetName, "Bound model parts to anchor")
 
-	-- Configure Anchor: anchored, invisible, non-collideable, but interactable
-	anchor.Anchored = true -- Anchor stays in place, other parts follow via constraints
-	anchor.Transparency = 1
-	anchor:SetAttribute("VisibleTransparency", 1)
-	anchor.CanCollide = false
-	anchor:SetAttribute("VisibleCanCollide", false)
-	anchor.CanTouch = false
-	anchor:SetAttribute("VisibleCanTouch", false)
+	-- Configure anchor based on whether it's a dedicated part or body part
+	if isBodyPart then
+		-- Body part anchor (e.g., Head): keep visible, ensure prompt works
+		-- Don't anchor it - Humanoid controls its position
+		anchor.CanTouch = true -- Allow interactions
+	else
+		-- Dedicated Anchor part: make invisible, non-collideable, anchored
+		anchor.Anchored = true
+		anchor.Transparency = 1
+		anchor:SetAttribute("VisibleTransparency", 1)
+		anchor.CanCollide = false
+		anchor:SetAttribute("VisibleCanCollide", false)
+		anchor.CanTouch = false
+		anchor:SetAttribute("VisibleCanTouch", false)
+	end
 
+	-- Find or create ProximityPrompt on anchor
 	local prompt = anchor:FindFirstChild("ProximityPrompt")
 	if not prompt then
 		System.Debug:Warn(assetName, "No ProximityPrompt found in Anchor")

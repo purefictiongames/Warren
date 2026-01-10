@@ -31,9 +31,11 @@ return {
 		{ use = "ZoneController", as = "Campfire" },
 	},
 
-	-- Event wiring
+	-- Event wiring (static routes for non-targeted messages)
 	-- Format: { from = "AssetName.EventName", to = "AssetName.EventName" }
-	-- Connects Output events to Input events for black box communication
+	--
+	-- Note: Targeted messages (with message.target) are routed by System.Router
+	-- This wiring is for non-targeted action-based events that use static routing
 	wiring = {
 		-- Asset Outputs → Orchestrator Input (game flow events)
 		{ from = "PlayTimer.Output", to = "Orchestrator.Input" },
@@ -41,11 +43,8 @@ return {
 		{ from = "MarshmallowBag.Output", to = "Orchestrator.Input" },
 		{ from = "Scoreboard.Output", to = "Orchestrator.Input" },
 
-		-- Orchestrator → WaveController (game start/stop signals)
+		-- Orchestrator → WaveController (game signals: gameStarted, wavePaused, etc.)
 		{ from = "Orchestrator.Output", to = "WaveController.Input" },
-
-		-- WaveController → CampPlacer (spawn commands to individual droppers)
-		{ from = "WaveController.Output", to = "CampPlacer.Input" },
 
 		-- CampPlacer → WaveController (camper status: spawned/despawned/fed)
 		{ from = "CampPlacer.Output", to = "WaveController.Input" },

@@ -133,9 +133,63 @@ function Visibility.isHidden(model)
 	return false
 end
 
+--- Resolve the anchor part for a model
+--- The anchor is the authoritative part for HUD, prompts, and positioning logic
+--- Resolution order:
+---   1. AnchorPart attribute (e.g., "Head", "HumanoidRootPart")
+---   2. Literal "Anchor" child part
+---   3. For Humanoids: auto-detect Head or HumanoidRootPart
+---@param model Instance The model to resolve anchor for
+---@return BasePart? anchor The resolved anchor part (or nil if not found)
+---@return boolean isBodyPart True if anchor is a Humanoid body part (not a dedicated Anchor)
+function Visibility.resolveAnchor(model)
+	-- Check for explicit AnchorPart attribute
+	local anchorPartName = model:GetAttribute("AnchorPart")
+	if anchorPartName then
+		-- Search for the named part in model and descendants
+		local part = model:FindFirstChild(anchorPartName, true)
+		if part and part:IsA("BasePart") then
+			return part, true -- It's a body part, not a dedicated anchor
+		end
+	end
+
+	-- Check for literal "Anchor" part
+	local anchor = model:FindFirstChild("Anchor")
+	if anchor and anchor:IsA("BasePart") then
+		return anchor, false -- Dedicated anchor part
+	end
+
+	-- Auto-detect for Humanoids: use Head or HumanoidRootPart
+	local humanoid = model:FindFirstChildOfClass("Humanoid")
+	if not humanoid then
+		for _, desc in ipairs(model:GetDescendants()) do
+			if desc:IsA("Humanoid") then
+				humanoid = desc
+				break
+			end
+		end
+	end
+
+	if humanoid then
+		local humanoidModel = humanoid.Parent
+		-- Prefer Head for HUD visibility, fall back to HumanoidRootPart
+		local head = humanoidModel:FindFirstChild("Head")
+		if head and head:IsA("BasePart") then
+			return head, true
+		end
+
+		local rootPart = humanoid.RootPart or humanoidModel:FindFirstChild("HumanoidRootPart")
+		if rootPart and rootPart:IsA("BasePart") then
+			return rootPart, true
+		end
+	end
+
+	return nil, false
+end
+
 --- Bind model parts to follow the Anchor using physics constraints
 --- Parts maintain their relative offset from the Anchor when it moves
---- For Humanoids: binds HumanoidRootPart/Torso (body follows via Motor6D)
+--- For Humanoids: skips binding (they have their own physics)
 --- For other models: binds all unanchored root parts
 ---@param model Instance The model containing an Anchor part
 ---@param options table? Optional config { responsiveness = 200, maxForce = math.huge }
@@ -145,9 +199,14 @@ function Visibility.bindToAnchor(model, options)
 	local responsiveness = options.responsiveness or 200
 	local maxForce = options.maxForce or math.huge
 
-	local anchor = model:FindFirstChild("Anchor")
-	if not anchor or not anchor:IsA("BasePart") then
-		warn("[Visibility.bindToAnchor] No Anchor BasePart found in", model.Name)
+	local anchor, isBodyPart = Visibility.resolveAnchor(model)
+	if not anchor then
+		warn("[Visibility.bindToAnchor] No anchor resolved for", model.Name)
+		return {}
+	end
+
+	-- If anchor is a body part (Humanoid), skip binding - they handle their own physics
+	if isBodyPart then
 		return {}
 	end
 
@@ -200,44 +259,16 @@ function Visibility.bindToAnchor(model, options)
 		table.insert(constraints, alignOri)
 	end
 
-	-- Check for Humanoid (bind root part only - body follows via Motor6D)
-	local humanoid = model:FindFirstChildOfClass("Humanoid")
-	if not humanoid then
-		-- Check descendants (humanoid might be nested in Walking NPC model)
-		for _, desc in ipairs(model:GetDescendants()) do
-			if desc:IsA("Humanoid") then
-				humanoid = desc
-				break
-			end
-		end
-	end
-
-	if humanoid then
-		-- Find the root part (HumanoidRootPart for R15, Torso for R6)
-		local rootPart = humanoid.RootPart
-		if not rootPart then
-			-- Fallback: search for common root part names
-			local humanoidModel = humanoid.Parent
-			rootPart = humanoidModel:FindFirstChild("HumanoidRootPart")
-				or humanoidModel:FindFirstChild("Torso")
-		end
-
-		if rootPart then
-			bindPart(rootPart)
-		else
-			warn("[Visibility.bindToAnchor] Humanoid found but no root part in", model.Name)
-		end
-	else
-		-- No humanoid - bind all unanchored BaseParts that are direct children
-		for _, child in ipairs(model:GetChildren()) do
-			if child:IsA("BasePart") and child ~= anchor then
-				bindPart(child)
-			elseif child:IsA("Model") then
-				-- Check for nested models with unanchored parts
-				local primaryPart = child.PrimaryPart or child:FindFirstChildOfClass("BasePart")
-				if primaryPart and not primaryPart.Anchored then
-					bindPart(primaryPart)
-				end
+	-- Bind all unanchored BaseParts that are direct children
+	-- (We already returned early for Humanoid body parts via isBodyPart check)
+	for _, child in ipairs(model:GetChildren()) do
+		if child:IsA("BasePart") and child ~= anchor then
+			bindPart(child)
+		elseif child:IsA("Model") then
+			-- Check for nested models with unanchored parts
+			local primaryPart = child.PrimaryPart or child:FindFirstChildOfClass("BasePart")
+			if primaryPart and not primaryPart.Anchored then
+				bindPart(primaryPart)
 			end
 		end
 	end

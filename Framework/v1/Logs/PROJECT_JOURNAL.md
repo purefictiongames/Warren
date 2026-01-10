@@ -847,9 +847,73 @@ Plan saved to: `.claude/plans/quiet-hopping-hammock.md`
 
 ---
 
+---
+
+### Day 11 (Jan 9, 2026) - ArrayPlacer/Dropper Spawning Bug Fixes
+
+**Session 23**
+
+**Bug: Dynamically Spawned Walking NPCs Invisible**
+
+The ArrayPlacer → Dropper → TimedEvaluator spawn chain was working (HUDs visible with emoji), but the Walking NPC humanoid models inside the TimedEvaluators were not appearing.
+
+**Investigation Path:**
+1. Initial hypothesis: Visibility system issue - Walking NPC parts set to Transparency=1
+2. Checked Visibility.showModel() logic - appeared correct
+3. User confirmed Transparency=0 at runtime - visibility not the problem
+4. User suggested: parts might be falling through the world
+5. Confirmed: Walking NPC humanoid parts were **not anchored**
+6. Parts spawned below ground level and fell out of the map immediately
+
+**Root Cause:**
+The TimedEvaluator template contains a Walking NPC (R6 Humanoid with body parts + clothing). These parts are intentionally unanchored for future pathfinding. However, when spawned by DropperModule, the model's pivot placed the NPC at/below ground level, causing unanchored parts to fall through the baseplate.
+
+**Solution: Grounding Logic in TimedEvaluatorModule**
+
+Added grounding code to `TimedEvaluatorModule.initialize()` that:
+1. Finds the lowest point of all BaseParts in the model
+2. Calculates offset needed to place feet at ground level (GroundY attribute, defaults to 0)
+3. Pivots the entire model up by that offset before physics takes over
+
+```lua
+-- Ground the model so its bottom sits at ground level
+local groundY = model:GetAttribute("GroundY") or 0
+local minY = math.huge
+for _, part in ipairs(model:GetDescendants()) do
+    if part:IsA("BasePart") then
+        local bottomY = part.Position.Y - (part.Size.Y / 2)
+        if bottomY < minY then
+            minY = bottomY
+        end
+    end
+end
+if minY ~= math.huge then
+    local offset = groundY - minY
+    if math.abs(offset) > 0.01 then
+        model:PivotTo(model:GetPivot() + Vector3.new(0, offset, 0))
+    end
+end
+```
+
+**Result:** 4 camper NPCs now spawn correctly around the campfire, each with visible Walking NPC models and working HUDs.
+
+**Known Issue (Deferred):** Walking NPCs sometimes fall over due to incomplete Humanoid physics setup (no HumanoidRootPart or proper Motor6D joints). Will address when implementing pathfinding.
+
+---
+
+**Lesson Learned: Unanchored Part Spawning**
+
+When dynamically spawning models with unanchored parts:
+- Parts fall immediately when parented to Workspace
+- Model pivot position is critical - must account for part heights
+- Grounding logic should run BEFORE the model is parented, or immediately after
+- For humanoids: ensure feet are at ground level, not center of model
+
+---
+
 ## Statistics
 
-- **Session Logs Written:** 22
+- **Session Logs Written:** 23
 - **Commits:** ~36
 - **Lua Files:** 52+
 - **Assets Built:** 11

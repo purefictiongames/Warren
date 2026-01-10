@@ -57,6 +57,26 @@ function TimedEvaluatorModule.initialize(config)
 		return nil
 	end
 
+	-- Ground the model so its bottom sits at ground level (Y=0 or anchor Y)
+	-- This ensures unanchored humanoid parts don't fall through the world
+	local groundY = model:GetAttribute("GroundY") or 0
+	local minY = math.huge
+	for _, part in ipairs(model:GetDescendants()) do
+		if part:IsA("BasePart") then
+			local bottomY = part.Position.Y - (part.Size.Y / 2)
+			if bottomY < minY then
+				minY = bottomY
+			end
+		end
+	end
+	if minY ~= math.huge then
+		local offset = groundY - minY
+		if math.abs(offset) > 0.01 then
+			model:PivotTo(model:GetPivot() + Vector3.new(0, offset, 0))
+			System.Debug:Message(assetName, "Grounded model by", offset, "studs")
+		end
+	end
+
 	-- Configure Anchor: invisible, non-collideable, but interactable
 	anchor.Transparency = 1
 	anchor:SetAttribute("VisibleTransparency", 1)

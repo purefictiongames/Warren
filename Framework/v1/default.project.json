@@ -28,8 +28,11 @@
       "Permissions": {
         "$path": "src/Authentication/Shared/Permissions.shared.lua"
       },
-      "Assets": {
-        "$path": "src/Assets"
+      "Lib": {
+        "$path": "src/Lib"
+      },
+      "Game": {
+        "$path": "src/Game"
       },
       "Templates": {
         "$path": "src/Templates"

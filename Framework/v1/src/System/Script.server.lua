@@ -153,6 +153,182 @@ local function applyWiring(manifest, System)
 	end
 end
 
+-- Apply attributes from manifest entry to clone
+local function applyManifestAttributes(clone, entry, System, alias)
+	-- Legacy attribute mappings (for backward compatibility)
+	if entry.drops then
+		clone:SetAttribute("DropTemplate", entry.drops)
+		System.Debug:Message("System.Script", alias, "drops:", entry.drops)
+	end
+	if entry.spawns then
+		clone:SetAttribute("Spawns", entry.spawns)
+	end
+	if entry.around then
+		clone:SetAttribute("Around", entry.around)
+	end
+	if entry.count then
+		clone:SetAttribute("Count", entry.count)
+	end
+	if entry.radius then
+		clone:SetAttribute("Radius", entry.radius)
+	end
+	if entry.faceOffset then
+		clone:SetAttribute("FaceOffset", entry.faceOffset)
+	end
+	if entry.centerOn then
+		clone:SetAttribute("CenterOn", entry.centerOn)
+	end
+	if entry.anchorSizeX then
+		clone:SetAttribute("AnchorSizeX", entry.anchorSizeX)
+	end
+	if entry.anchorSizeY then
+		clone:SetAttribute("AnchorSizeY", entry.anchorSizeY)
+	end
+	if entry.anchorSizeZ then
+		clone:SetAttribute("AnchorSizeZ", entry.anchorSizeZ)
+	end
+
+	-- New grammar: extension and model paths
+	if entry.extension then
+		clone:SetAttribute("_ExtensionPath", entry.extension)
+	end
+	if entry.model then
+		clone:SetAttribute("_ModelPath", entry.model)
+	end
+
+	-- New grammar: attributes table (generic key-value pairs)
+	if entry.attributes then
+		for key, value in pairs(entry.attributes) do
+			clone:SetAttribute(key, value)
+		end
+	end
+end
+
+-- Create standardized events for an asset
+local function createAssetEvents(alias)
+	local eventTypes = {"Input", "Output", "Debug"}
+	for _, eventType in ipairs(eventTypes) do
+		local event = Instance.new("BindableEvent")
+		event.Name = alias .. "." .. eventType
+		event.Parent = ReplicatedStorage
+	end
+end
+
+-- Swap model parts from a Game folder override
+-- Replaces visual parts in clone with parts from the game-specific model
+local function swapModelParts(clone, gameModelFolder, System, alias)
+	if not gameModelFolder then return end
+
+	-- Find all .rbxm files in the game model folder (they become children)
+	for _, gameChild in ipairs(gameModelFolder:GetChildren()) do
+		-- Find matching part in clone by name
+		local clonePart = clone:FindFirstChild(gameChild.Name)
+
+		if clonePart then
+			-- Store the position/CFrame from the original
+			local originalCFrame = nil
+			if clonePart:IsA("BasePart") then
+				originalCFrame = clonePart.CFrame
+			elseif clonePart:IsA("Model") then
+				originalCFrame = clonePart:GetPivot()
+			end
+
+			-- Clone the game-specific part
+			local newPart = gameChild:Clone()
+
+			-- Preserve position from original if applicable
+			if originalCFrame then
+				if newPart:IsA("BasePart") then
+					newPart.CFrame = originalCFrame
+				elseif newPart:IsA("Model") then
+					newPart:PivotTo(originalCFrame)
+				end
+			end
+
+			-- Replace the part
+			newPart.Parent = clone
+			clonePart:Destroy()
+
+			System.Debug:Message("System.Script", alias, "- swapped model part:", gameChild.Name)
+		else
+			-- No matching part, just add it
+			local newPart = gameChild:Clone()
+			newPart.Parent = clone
+			System.Debug:Message("System.Script", alias, "- added model part:", gameChild.Name)
+		end
+	end
+end
+
+-- Deploy a single asset template (shared logic for all deployment methods)
+local function deployTemplate(template, templateName, alias, runtimeAssets, entry, System, deployedAliases, gameFolder)
+	-- Validation: Check for duplicate aliases
+	if deployedAliases[alias] then
+		System.Debug:Warn("System.Script", "Duplicate alias:", alias, "- skipping")
+		return false
+	end
+
+	if not template or not template:IsA("Model") then
+		System.Debug:Warn("System.Script", "Template not found:", templateName, "- skipping")
+		return false
+	end
+
+	-- Clone template
+	local clone = template:Clone()
+
+	-- Deep rename: Replace all occurrences of templateName with alias
+	if templateName ~= alias then
+		deepRename(clone, templateName, alias)
+	end
+
+	-- Extract service folders from renamed clone (ordered: events before scripts)
+	for _, folderName in ipairs(SERVICE_ORDER) do
+		local service = SERVICE_FOLDERS[folderName]
+		local serviceFolder = clone:FindFirstChild(folderName)
+		if serviceFolder then
+			deployServiceFolder(serviceFolder, service, alias)
+			serviceFolder:Destroy()
+		end
+	end
+
+	-- Swap model parts if game-specific model is specified
+	if entry.model and gameFolder then
+		-- Parse model path (e.g., "Game.MarshmallowBag.Model" -> Game/MarshmallowBag/Model)
+		local modelPath = entry.model
+		local parts = string.split(modelPath, ".")
+
+		-- Navigate to the model folder (skip "Game" prefix if present)
+		local modelFolder = gameFolder
+		local startIndex = 1
+		if parts[1] == "Game" then
+			startIndex = 2
+		end
+
+		for i = startIndex, #parts do
+			modelFolder = modelFolder:FindFirstChild(parts[i])
+			if not modelFolder then
+				System.Debug:Warn("System.Script", alias, "- model folder not found:", modelPath)
+				break
+			end
+		end
+
+		if modelFolder then
+			swapModelParts(clone, modelFolder, System, alias)
+		end
+	end
+
+	-- Parent cleaned clone to RuntimeAssets
+	clone.Parent = runtimeAssets
+	deployedAliases[alias] = true
+
+	-- Apply manifest configuration as attributes
+	applyManifestAttributes(clone, entry, System, alias)
+
+	-- Create standardized events for this asset
+	createAssetEvents(alias)
+
+	return true
+end
+
 -- Deploy assets from manifest
 local function bootstrapAssets(System)
 	System.Debug:Critical("System.Script", "=== BOOTSTRAP ASSETS START ===")
@@ -170,98 +346,162 @@ local function bootstrapAssets(System)
 	end
 
 	local manifest = require(manifestModule)
-	local assetsFolder = ReplicatedStorage:FindFirstChild("Assets")
 
-	if not assetsFolder then
-		System.Debug:Warn("System.Script", "Assets folder not found")
-		return
-	end
+	-- Get folder references (new Lib/Game structure or legacy Assets)
+	local libFolder = ReplicatedStorage:FindFirstChild("Lib")
+	local gameFolder = ReplicatedStorage:FindFirstChild("Game")
+	local assetsFolder = ReplicatedStorage:FindFirstChild("Assets")  -- Legacy fallback
 
 	-- Track deployed aliases for validation
 	local deployedAliases = {}
 
-	-- Deploy each manifest entry
-	for _, entry in ipairs(manifest.assets) do
-		local templateName = entry.use
-		local alias = entry.as
-
-		-- Validation: Check for duplicate aliases
-		if deployedAliases[alias] then
-			System.Debug:Warn("System.Script", "Duplicate alias:", alias, "- skipping")
-			continue
+	--------------------------------------------------------------------------------
+	-- CONFIGURED TEMPLATES: Pre-merge Lib bases with game models/attributes
+	-- Creates ready-to-clone templates in ReplicatedStorage._ConfiguredTemplates
+	-- Uses underscore prefix to avoid Rojo sync overwriting these runtime templates
+	-- These are NOT deployed to RuntimeAssets - they're for runtime spawning
+	--------------------------------------------------------------------------------
+	if manifest.configuredTemplates then
+		-- Create _ConfiguredTemplates folder (separate from Rojo-synced Templates)
+		local templatesFolder = ReplicatedStorage:FindFirstChild("_ConfiguredTemplates")
+		if not templatesFolder then
+			templatesFolder = Instance.new("Folder")
+			templatesFolder.Name = "_ConfiguredTemplates"
+			templatesFolder.Parent = ReplicatedStorage
 		end
 
-		-- Find template in Assets folder
-		local template = assetsFolder:FindFirstChild(templateName)
-		if not template or not template:IsA("Model") then
-			System.Debug:Warn("System.Script", "Template not found:", templateName, "- skipping")
-			continue
+		System.Debug:Message("System.Script", "Processing", #manifest.configuredTemplates, "configured templates")
+
+		for _, entry in ipairs(manifest.configuredTemplates) do
+			local baseName = entry.base
+			local alias = entry.alias or baseName
+
+			if not libFolder then
+				System.Debug:Warn("System.Script", "Lib folder not found - cannot create template:", baseName)
+				continue
+			end
+
+			local baseTemplate = libFolder:FindFirstChild(baseName)
+			if not baseTemplate then
+				System.Debug:Warn("System.Script", "Base template not found in Lib:", baseName)
+				continue
+			end
+
+			-- Clone the base template
+			local clone = baseTemplate:Clone()
+			clone.Name = alias
+
+			-- Store the base template name for module lookup
+			clone:SetAttribute("_BaseTemplate", baseName)
+
+			-- Apply model swap if specified
+			if entry.model and gameFolder then
+				local parts = string.split(entry.model, ".")
+				local current = gameFolder
+
+				-- Skip "Game" prefix if present
+				local startIndex = 1
+				if parts[1] == "Game" then
+					startIndex = 2
+				end
+
+				for i = startIndex, #parts do
+					current = current:FindFirstChild(parts[i])
+					if not current then break end
+				end
+
+				if current then
+					swapModelParts(clone, current, System, alias)
+					System.Debug:Message("System.Script", "Template", alias, "- applied model from", entry.model)
+				else
+					System.Debug:Warn("System.Script", "Template", alias, "- model path not found:", entry.model)
+				end
+			end
+
+			-- Apply attributes if specified
+			if entry.attributes then
+				for attrName, attrValue in pairs(entry.attributes) do
+					clone:SetAttribute(attrName, attrValue)
+				end
+				System.Debug:Message("System.Script", "Template", alias, "- applied",
+					#(table.pack(pairs(entry.attributes))) - 1, "attributes")
+			end
+
+			-- Store in Templates folder (NOT RuntimeAssets)
+			clone.Parent = templatesFolder
+			System.Debug:Critical("System.Script", "Created template:", alias, "from base", baseName)
 		end
+	end
 
-		-- Clone template
-		local clone = template:Clone()
+	--------------------------------------------------------------------------------
+	-- NEW GRAMMAR: instances (Lib-based assets with optional extensions)
+	--------------------------------------------------------------------------------
+	if manifest.instances then
+		System.Debug:Message("System.Script", "Processing", #manifest.instances, "Lib instances")
 
-		-- Deep rename: Replace all occurrences of templateName with alias
-		if templateName ~= alias then
-			deepRename(clone, templateName, alias)
-		end
+		for _, entry in ipairs(manifest.instances) do
+			local libName = entry.lib
+			local alias = entry.alias or libName
 
-		-- Extract service folders from renamed clone (ordered: events before scripts)
-		for _, folderName in ipairs(SERVICE_ORDER) do
-			local service = SERVICE_FOLDERS[folderName]
-			local serviceFolder = clone:FindFirstChild(folderName)
-			if serviceFolder then
-				deployServiceFolder(serviceFolder, service, alias)
-				serviceFolder:Destroy()
+			if not libFolder then
+				System.Debug:Warn("System.Script", "Lib folder not found - cannot deploy:", libName)
+				continue
+			end
+
+			local template = libFolder:FindFirstChild(libName)
+			if deployTemplate(template, libName, alias, runtimeAssets, entry, System, deployedAliases, gameFolder) then
+				System.Debug:Critical("System.Script", "Deployed Lib", libName, "as", alias,
+					entry.extension and ("+ extension " .. entry.extension) or "",
+					entry.model and ("+ model " .. entry.model) or "")
 			end
 		end
+	end
 
-		-- Parent cleaned clone to RuntimeAssets
-		clone.Parent = runtimeAssets
-		deployedAliases[alias] = true
+	--------------------------------------------------------------------------------
+	-- NEW GRAMMAR: gameAssets (Game-specific assets, no Lib base)
+	--------------------------------------------------------------------------------
+	if manifest.gameAssets then
+		System.Debug:Message("System.Script", "Processing", #manifest.gameAssets, "Game assets")
 
-		-- Apply manifest configuration as attributes
-		if entry.drops then
-			clone:SetAttribute("DropTemplate", entry.drops)
-			System.Debug:Message("System.Script", alias, "drops:", entry.drops)
-		end
-		if entry.spawns then
-			clone:SetAttribute("Spawns", entry.spawns)
-		end
-		if entry.around then
-			clone:SetAttribute("Around", entry.around)
-		end
-		if entry.count then
-			clone:SetAttribute("Count", entry.count)
-		end
-		if entry.radius then
-			clone:SetAttribute("Radius", entry.radius)
-		end
-		if entry.faceOffset then
-			clone:SetAttribute("FaceOffset", entry.faceOffset)
-		end
-		if entry.centerOn then
-			clone:SetAttribute("CenterOn", entry.centerOn)
-		end
-		if entry.anchorSizeX then
-			clone:SetAttribute("AnchorSizeX", entry.anchorSizeX)
-		end
-		if entry.anchorSizeY then
-			clone:SetAttribute("AnchorSizeY", entry.anchorSizeY)
-		end
-		if entry.anchorSizeZ then
-			clone:SetAttribute("AnchorSizeZ", entry.anchorSizeZ)
-		end
+		for _, entry in ipairs(manifest.gameAssets) do
+			local templateName = entry.use
+			local alias = entry.as or templateName
 
-		-- Create standardized events for this asset
-		local eventTypes = {"Input", "Output", "Debug"}
-		for _, eventType in ipairs(eventTypes) do
-			local event = Instance.new("BindableEvent")
-			event.Name = alias .. "." .. eventType
-			event.Parent = ReplicatedStorage
-		end
+			if not gameFolder then
+				System.Debug:Warn("System.Script", "Game folder not found - cannot deploy:", templateName)
+				continue
+			end
 
-		System.Debug:Critical("System.Script", "Deployed", templateName, "as", alias)
+			local template = gameFolder:FindFirstChild(templateName)
+			if deployTemplate(template, templateName, alias, runtimeAssets, entry, System, deployedAliases, gameFolder) then
+				System.Debug:Critical("System.Script", "Deployed Game asset", templateName, "as", alias)
+			end
+		end
+	end
+
+	--------------------------------------------------------------------------------
+	-- LEGACY GRAMMAR: assets (backward compatibility with old manifest format)
+	--------------------------------------------------------------------------------
+	if manifest.assets then
+		-- Determine source folder: prefer Lib, fallback to Assets
+		local sourceFolder = libFolder or assetsFolder
+
+		if not sourceFolder then
+			System.Debug:Warn("System.Script", "No Lib or Assets folder found")
+		else
+			local folderName = libFolder and "Lib" or "Assets"
+			System.Debug:Message("System.Script", "Processing", #manifest.assets, "legacy assets from", folderName)
+
+			for _, entry in ipairs(manifest.assets) do
+				local templateName = entry.use
+				local alias = entry.as
+
+				local template = sourceFolder:FindFirstChild(templateName)
+				if deployTemplate(template, templateName, alias, runtimeAssets, entry, System, deployedAliases, gameFolder) then
+					System.Debug:Critical("System.Script", "Deployed", templateName, "as", alias)
+				end
+			end
+		end
 	end
 
 	-- Apply wiring connections (for static event forwarding)

@@ -10,32 +10,129 @@
 
 -- GameManifest.ModuleScript
 -- Declarative configuration for asset deployment and wiring
--- Defines which asset templates to instantiate and how to connect them
+-- Defines which Lib/Game templates to instantiate and how to connect them
+--
+-- Grammar:
+--   configuredTemplates - Pre-merged templates (Lib base + game model/attributes)
+--   instances           - Lib-based assets with optional extensions (from src/Lib/)
+--   gameAssets          - Game-specific assets without Lib base (from src/Game/)
+--   wiring              - Event connections between assets
 
 return {
-	-- Asset instantiation
-	-- Each entry clones a template from Assets/ and deploys it with the given alias
-	-- Format: { use = "TemplateName", as = "InstanceName", drops = "Template" (for Droppers) }
-	assets = {
-		{ use = "Dispenser", as = "MarshmallowBag" },
-		{ use = "Camper", as = "Camper" },
-		{ use = "GlobalTimer", as = "PlayTimer" },
-		{ use = "GlobalTimer", as = "CountdownTimer" },
-		{ use = "Scoreboard", as = "Scoreboard" },
-		{ use = "WaveController", as = "WaveController" },
-		{ use = "ArrayPlacer", as = "CampPlacer", spawns = "Dropper", count = 4, centerOn = "Campfire", anchorSizeX = 20, anchorSizeY = 0.5, anchorSizeZ = 40 },
-		{ use = "Orchestrator", as = "Orchestrator" },
-		{ use = "RoastingStick", as = "RoastingStick" },
-		{ use = "LeaderBoard", as = "LeaderBoard" },
-		{ use = "MessageTicker", as = "MessageTicker" },
-		{ use = "ZoneController", as = "Campfire" },
+	--------------------------------------------------------------------------------
+	-- Configured Templates
+	-- Pre-merge Lib templates with game-specific models/attributes at bootstrap
+	-- These become available in ReplicatedStorage.Templates for runtime spawning
+	-- Format: { base = "LibName", alias = "TemplateName", model = "...", attributes = {} }
+	--------------------------------------------------------------------------------
+	configuredTemplates = {
+		-- CamperEvaluator: TimedEvaluator with game-specific camper visuals
+		{
+			base = "TimedEvaluator",
+			alias = "CamperEvaluator",
+			model = "Game.CamperEvaluator.Model",
+			attributes = {
+				TimeoutBehavior = "despawn", -- What to do when timer expires
+			},
+		},
+		-- CampDropper: Dropper configured to spawn CamperEvaluators
+		{
+			base = "Dropper",
+			alias = "CampDropper",
+			attributes = {
+				DropTemplate = "CamperEvaluator",
+				SpawnMode = "onDemand", -- WaveController controls spawning
+				SpawnOffset = Vector3.new(0, 2, -3), -- Move NPC up 2 and forward 3 (toward campfire, out of tent)
+			},
+		},
 	},
 
-	-- Event wiring (static routes for non-targeted messages)
-	-- Format: { from = "AssetName.EventName", to = "AssetName.EventName" }
-	--
-	-- Note: Targeted messages (with message.target) are routed by System.Router
-	-- This wiring is for non-targeted action-based events that use static routing
+	--------------------------------------------------------------------------------
+	-- Lib Instances
+	-- Generic library modules with optional game-specific extensions
+	-- Format: { lib = "LibName", alias = "InstanceName", extension = "Game.Folder.Extension" }
+	--------------------------------------------------------------------------------
+	instances = {
+		-- Dispenser with MarshmallowBag extension and game-specific model
+		{
+			lib = "Dispenser",
+			alias = "MarshmallowBag",
+			extension = "Game.MarshmallowBag.Extension",
+			model = "Game.MarshmallowBag.Model",
+			attributes = {
+				DispenseItem = "Marshmallow",
+				Capacity = 10,
+			},
+		},
+
+		-- Timers (generic, no extension needed)
+		{
+			lib = "GlobalTimer",
+			alias = "PlayTimer",
+			attributes = {
+				CountdownStart = 3.00,
+				TimerMode = "duration",
+			},
+		},
+		{
+			lib = "GlobalTimer",
+			alias = "CountdownTimer",
+			attributes = {
+				CountdownStart = 0.03,
+				TimerMode = "sequence",
+				TextSequence = "ready...,set...,go!",
+			},
+		},
+
+		-- WaveController with game-specific extension
+		{
+			lib = "WaveController",
+			alias = "WaveController",
+			extension = "Game.WaveController.Extension",
+			attributes = {
+				TentTemplate = "CampDropper", -- Matches ArrayPlacer spawn naming
+			},
+		},
+
+		-- ArrayPlacer for spawning CampDroppers (pre-configured Dropper+CamperEvaluator)
+		{
+			lib = "ArrayPlacer",
+			alias = "CampPlacer",
+			attributes = {
+				Spawns = "CampDropper", -- Pre-configured template from configuredTemplates
+				Count = 4,
+				CenterOn = "Campfire",
+				AnchorSizeX = 20,
+				AnchorSizeY = 0.5,
+				AnchorSizeZ = 40,
+			},
+		},
+
+		-- Generic UI/display assets (no extension needed)
+		{ lib = "LeaderBoard", alias = "LeaderBoard" },
+		{ lib = "MessageTicker", alias = "MessageTicker" },
+
+		-- Zone detection
+		{ lib = "ZoneController", alias = "Campfire" },
+	},
+
+	--------------------------------------------------------------------------------
+	-- Game Assets
+	-- Game-specific assets that live entirely in the Game folder
+	-- Format: { use = "TemplateName", as = "InstanceName" }
+	--------------------------------------------------------------------------------
+	gameAssets = {
+		{ use = "Orchestrator", as = "Orchestrator" },
+		{ use = "Scoreboard", as = "Scoreboard" },
+		{ use = "Camper", as = "Camper" },
+		{ use = "RoastingStick", as = "RoastingStick" },
+	},
+
+	--------------------------------------------------------------------------------
+	-- Event Wiring
+	-- Static routes for non-targeted messages
+	-- Targeted messages (with message.target) are routed by System.Router
+	--------------------------------------------------------------------------------
 	wiring = {
 		-- Asset Outputs → Orchestrator Input (game flow events)
 		{ from = "PlayTimer.Output", to = "Orchestrator.Input" },
@@ -57,5 +154,5 @@ return {
 
 		-- RunModes (system event)
 		{ from = "RunModes.ModeChanged", to = "Orchestrator.Input" },
-	}
+	},
 }

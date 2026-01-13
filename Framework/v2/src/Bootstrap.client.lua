@@ -1,0 +1,89 @@
+--[[
+    LibPureFiction Framework v2
+    Client Bootstrap
+
+    Copyright (c) 2025 Adam Stearns / Pure Fiction Records LLC
+    All rights reserved.
+
+    ============================================================================
+    OVERVIEW
+    ============================================================================
+
+    This is the client entry point. It mirrors the server bootstrap but:
+    - Uses Memory backend for Log (DataStore is server-only)
+    - Only creates client-domain node instances
+    - Runs in StarterPlayerScripts
+
+    Nothing in the framework runs until this script explicitly calls it.
+
+--]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+-- Wait for Lib to be available (Rojo sync)
+local Lib = require(ReplicatedStorage:WaitForChild("Lib"))
+local Debug = Lib.System.Debug
+
+--------------------------------------------------------------------------------
+-- STUDIO CLI ACCESS
+--------------------------------------------------------------------------------
+-- Expose globals for command bar testing in Studio
+-- These are stripped in production (non-Studio) builds
+
+if RunService:IsStudio() then
+    _G.Lib = Lib
+    _G.Node = Lib.Node
+    _G.Debug = Lib.System.Debug
+    _G.Log = Lib.System.Log
+    _G.IPC = Lib.System.IPC
+    _G.State = Lib.System.State
+    _G.View = Lib.System.View
+end
+
+--------------------------------------------------------------------------------
+-- CONFIGURATION
+--------------------------------------------------------------------------------
+
+-- Configure debug output
+Debug.configure({
+    level = "info",  -- "error", "warn", "info", "trace"
+})
+
+-- Configure persistent logging (Memory only on client)
+local Log = Lib.System.Log
+Log.configure({
+    backend = "Memory",  -- Always Memory on client (DataStore is server-only)
+})
+
+--------------------------------------------------------------------------------
+-- BOOTSTRAP
+--------------------------------------------------------------------------------
+
+Debug.info("Bootstrap", "LibPureFiction v" .. Lib._VERSION)
+Debug.info("Bootstrap", "Client starting...")
+
+-- Initialize Log subsystem (generates session ID, starts auto-flush)
+Log.init()
+
+-- Initialize IPC subsystem
+local IPC = Lib.System.IPC
+
+-- NOTE: Register client-domain nodes and define modes here before IPC.init()
+-- Client nodes handle UI, visual effects, and local player interaction
+-- Example:
+--   local UINode = Lib.Node.extend({ name = "UINode", domain = "client", ... })
+--   IPC.registerNode(UINode)
+--   IPC.createInstance("UINode", { id = "ui1" })
+
+-- Initialize IPC (calls onInit on all registered client instances)
+IPC.init()
+
+-- Start IPC (enables routing, calls onStart on all instances)
+IPC.start()
+
+-- TODO: Initialize other subsystems in order
+-- Lib.System.State.init()
+-- Lib.System.View.init()
+
+Debug.info("Bootstrap", "Client ready")

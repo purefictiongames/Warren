@@ -1,0 +1,36 @@
+{
+  "name": "LibPureFiction",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedFirst": {
+      "$className": "ReplicatedFirst",
+      "Config": {
+        "$path": "src/ReplicatedFirst/Config.lua"
+      }
+    },
+    "ReplicatedStorage": {
+      "$className": "ReplicatedStorage",
+      "Lib": {
+        "$path": "src/Lib"
+      },
+      "Game": {
+        "$path": "src/Game"
+      }
+    },
+    "ServerScriptService": {
+      "$className": "ServerScriptService",
+      "Bootstrap": {
+        "$path": "src/Bootstrap.server.lua"
+      }
+    },
+    "StarterPlayer": {
+      "$className": "StarterPlayer",
+      "StarterPlayerScripts": {
+        "$className": "StarterPlayerScripts",
+        "Bootstrap": {
+          "$path": "src/Bootstrap.client.lua"
+        }
+      }
+    }
+  }
+}

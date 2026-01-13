@@ -21,6 +21,26 @@
 
 local Tests = {}
 
-Tests.IPC = require(script:WaitForChild("IPC_Node_Tests"))
+-- Safe require wrapper that reports errors instead of failing silently
+local function safeRequire(name, module)
+    local success, result = pcall(function()
+        return require(module)
+    end)
+
+    if success then
+        return result
+    else
+        warn(string.format("[Tests] Failed to load '%s': %s", name, tostring(result)))
+        -- Return a stub that reports the error when accessed
+        return setmetatable({}, {
+            __index = function(_, key)
+                error(string.format("Test module '%s' failed to load: %s", name, tostring(result)), 2)
+            end,
+        })
+    end
+end
+
+Tests.IPC = safeRequire("IPC_Node_Tests", script:WaitForChild("IPC_Node_Tests"))
+Tests.Hatcher = safeRequire("Hatcher_Tests", script:WaitForChild("Hatcher_Tests"))
 
 return Tests

@@ -36,4 +36,7 @@ local Components = {}
 -- Navigation
 Components.PathFollower = require(script.PathFollower)
 
+-- Spawning
+Components.Hatcher = require(script.Hatcher)
+
 return Components

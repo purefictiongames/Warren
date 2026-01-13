@@ -338,11 +338,21 @@ Node.extend = makeExtendFunction(Node)
 --------------------------------------------------------------------------------
 -- NEW (Instance Creation)
 --------------------------------------------------------------------------------
+-- ID GENERATION (for Node:new when id not provided)
+--------------------------------------------------------------------------------
+local _classCounters = {}  -- { [className] = nextNumber }
+
+local function generateNodeId(className)
+    _classCounters[className] = (_classCounters[className] or 0) + 1
+    return className .. "_" .. _classCounters[className]
+end
+
+--------------------------------------------------------------------------------
 --[[
     Create a new instance of a node class.
 
     @param config table - Instance configuration
-        id: string (required) - Unique instance ID
+        id: string (optional) - Unique instance ID (auto-generated if nil)
         model: Instance (optional) - Associated Roblox Instance
         attributes: table (optional) - Initial attributes
 
@@ -351,14 +361,14 @@ Node.extend = makeExtendFunction(Node)
 function Node:new(config)
     config = config or {}
 
-    if not config.id then
-        error("[Node:new] Instance must have an id")
-    end
+    -- Auto-generate ID if not provided
+    local className = self.name or "Node"
+    local id = config.id or generateNodeId(className)
 
     local instance = setmetatable({}, self)
 
     -- Instance metadata
-    instance.id = config.id
+    instance.id = id
     instance.class = self.name or "Node"
     instance.domain = self.domain or "shared"
     instance.model = config.model
@@ -688,5 +698,535 @@ function Node:_flushMessageQueue()
         System.IPC.sendTo(self.id, signal, data)
     end
 end
+
+--------------------------------------------------------------------------------
+-- NODE REGISTRY
+--------------------------------------------------------------------------------
+--[[
+    NodeRegistry wraps CollectionService to provide Node-specific instance
+    tracking with queryable metadata.
+
+    Features:
+    - Auto-generates unique IDs when not provided
+    - Tracks Node objects alongside their Roblox Model (if any)
+    - Tags Models via CollectionService for efficient queries
+    - Stores metadata: class, inheritanceChain, spawnSource, status, etc.
+    - Query by class, tag, spawnSource, or custom filters
+
+    Usage:
+    ```lua
+    local Node = require(path.to.Node)
+    local Registry = Node.Registry
+
+    -- Register a node (auto-generates ID if not provided)
+    local id = Registry.register(myNode, {
+        spawnSource = "Tent_1",
+        status = "awaiting_path",
+    })
+
+    -- Query nodes
+    local campers = Registry.getByClass("Camper")
+    local fromTent1 = Registry.getBySpawnSource("Tent_1")
+    local needingPath = Registry.query({ status = "awaiting_path" })
+
+    -- Update status
+    Registry.setStatus(id, "pathing")
+
+    -- Unregister when done
+    Registry.unregister(id)
+    ```
+--]]
+
+local CollectionService = game:GetService("CollectionService")
+
+Node.Registry = (function()
+    local Registry = {}
+
+    ---------------------------------------------------------------------------
+    -- PRIVATE STATE
+    ---------------------------------------------------------------------------
+
+    local nodes = {}           -- { [id] = node }
+    local metadata = {}        -- { [id] = { class, spawnSource, status, ... } }
+    local classCounters = {}   -- { [className] = nextNumber } for auto-ID
+    local TAG_PREFIX = "Node_" -- Prefix for CollectionService tags
+
+    ---------------------------------------------------------------------------
+    -- ID GENERATION
+    ---------------------------------------------------------------------------
+
+    --[[
+        Generate a unique ID for a node class.
+        Format: ClassName_1, ClassName_2, etc.
+    --]]
+    local function generateId(className)
+        classCounters[className] = (classCounters[className] or 0) + 1
+        return className .. "_" .. classCounters[className]
+    end
+
+    ---------------------------------------------------------------------------
+    -- COLLECTION SERVICE HELPERS
+    ---------------------------------------------------------------------------
+
+    --[[
+        Add tags to a model via CollectionService.
+        Tags added:
+        - Node_{id} (unique instance tag)
+        - Node_Class_{className} (class tag)
+        - Any custom tags from metadata
+    --]]
+    local function tagModel(model, id, meta)
+        if not model then return end
+
+        -- Unique instance tag
+        CollectionService:AddTag(model, TAG_PREFIX .. id)
+
+        -- Class tag
+        if meta.class then
+            CollectionService:AddTag(model, TAG_PREFIX .. "Class_" .. meta.class)
+        end
+
+        -- Inheritance chain tags
+        if meta.inheritanceChain then
+            for _, ancestor in ipairs(meta.inheritanceChain) do
+                CollectionService:AddTag(model, TAG_PREFIX .. "Class_" .. ancestor)
+            end
+        end
+
+        -- Custom tags
+        if meta.tags then
+            for _, tag in ipairs(meta.tags) do
+                CollectionService:AddTag(model, TAG_PREFIX .. "Tag_" .. tag)
+            end
+        end
+    end
+
+    --[[
+        Remove all Node-related tags from a model.
+    --]]
+    local function untagModel(model, id, meta)
+        if not model then return end
+
+        CollectionService:RemoveTag(model, TAG_PREFIX .. id)
+
+        if meta.class then
+            CollectionService:RemoveTag(model, TAG_PREFIX .. "Class_" .. meta.class)
+        end
+
+        if meta.inheritanceChain then
+            for _, ancestor in ipairs(meta.inheritanceChain) do
+                CollectionService:RemoveTag(model, TAG_PREFIX .. "Class_" .. ancestor)
+            end
+        end
+
+        if meta.tags then
+            for _, tag in ipairs(meta.tags) do
+                CollectionService:RemoveTag(model, TAG_PREFIX .. "Tag_" .. tag)
+            end
+        end
+    end
+
+    ---------------------------------------------------------------------------
+    -- PUBLIC API
+    ---------------------------------------------------------------------------
+
+    --[[
+        Register a node with the registry.
+
+        @param node table - The Node instance
+        @param options table? - Optional metadata:
+            - id: string? - Explicit ID (auto-generated if nil)
+            - spawnSource: string? - ID of node that spawned this
+            - status: string? - Initial status
+            - tags: string[]? - Additional tags
+        @return string - The assigned ID
+    --]]
+    function Registry.register(node, options)
+        options = options or {}
+
+        -- Get or generate ID
+        local id = options.id or node.id
+        local className = node.class or node.name or "Node"
+
+        if not id then
+            id = generateId(className)
+        end
+
+        -- Build metadata
+        local meta = {
+            class = className,
+            inheritanceChain = node.getInheritanceChain and node:getInheritanceChain() or {},
+            spawnSource = options.spawnSource,
+            status = options.status,
+            tags = options.tags or {},
+            model = node.model,
+            registeredAt = os.clock(),
+        }
+
+        -- Store node and metadata
+        nodes[id] = node
+        metadata[id] = meta
+
+        -- Assign ID to node if not set
+        if not node.id then
+            node.id = id
+        end
+
+        -- Tag the model if present
+        if node.model then
+            tagModel(node.model, id, meta)
+
+            -- Also set attributes on the model for query filtering
+            node.model:SetAttribute("NodeId", id)
+            node.model:SetAttribute("NodeClass", className)
+            if options.spawnSource then
+                node.model:SetAttribute("NodeSpawnSource", options.spawnSource)
+            end
+            if options.status then
+                node.model:SetAttribute("NodeStatus", options.status)
+            end
+        end
+
+        return id
+    end
+
+    --[[
+        Unregister a node from the registry.
+
+        @param id string - The node ID
+        @return boolean - True if node was found and removed
+    --]]
+    function Registry.unregister(id)
+        local node = nodes[id]
+        local meta = metadata[id]
+
+        if not node then
+            return false
+        end
+
+        -- Remove tags from model
+        if meta and node.model then
+            untagModel(node.model, id, meta)
+        end
+
+        nodes[id] = nil
+        metadata[id] = nil
+
+        return true
+    end
+
+    --[[
+        Get a node by ID.
+
+        @param id string - The node ID
+        @return table? - The node, or nil if not found
+    --]]
+    function Registry.get(id)
+        return nodes[id]
+    end
+
+    --[[
+        Get metadata for a node.
+
+        @param id string - The node ID
+        @return table? - The metadata, or nil if not found
+    --]]
+    function Registry.getMetadata(id)
+        return metadata[id]
+    end
+
+    --[[
+        Get the model associated with a node.
+
+        @param id string - The node ID
+        @return Instance? - The model, or nil
+    --]]
+    function Registry.getModel(id)
+        local node = nodes[id]
+        return node and node.model
+    end
+
+    --[[
+        Get all nodes of a specific class.
+
+        @param className string - The class name
+        @return table - Array of nodes
+    --]]
+    function Registry.getByClass(className)
+        local results = {}
+        for id, meta in pairs(metadata) do
+            if meta.class == className then
+                table.insert(results, nodes[id])
+            end
+        end
+        return results
+    end
+
+    --[[
+        Get all nodes spawned by a specific source.
+
+        @param sourceId string - The spawn source ID
+        @return table - Array of nodes
+    --]]
+    function Registry.getBySpawnSource(sourceId)
+        local results = {}
+        for id, meta in pairs(metadata) do
+            if meta.spawnSource == sourceId then
+                table.insert(results, nodes[id])
+            end
+        end
+        return results
+    end
+
+    --[[
+        Get all nodes with a specific status.
+
+        @param status string - The status to match
+        @return table - Array of nodes
+    --]]
+    function Registry.getByStatus(status)
+        local results = {}
+        for id, meta in pairs(metadata) do
+            if meta.status == status then
+                table.insert(results, nodes[id])
+            end
+        end
+        return results
+    end
+
+    --[[
+        Get all nodes with a specific tag.
+
+        @param tag string - The tag to match
+        @return table - Array of nodes
+    --]]
+    function Registry.getByTag(tag)
+        local results = {}
+        for id, meta in pairs(metadata) do
+            if meta.tags then
+                for _, t in ipairs(meta.tags) do
+                    if t == tag then
+                        table.insert(results, nodes[id])
+                        break
+                    end
+                end
+            end
+        end
+        return results
+    end
+
+    --[[
+        Query nodes with flexible filter criteria.
+
+        @param filter table - Filter options:
+            - class: string? - Match class name
+            - spawnSource: string? - Match spawn source
+            - status: string? - Match status
+            - tag: string? - Must have this tag
+            - custom: function(node, meta)? - Custom filter function
+        @return table - Array of nodes matching all criteria
+    --]]
+    function Registry.query(filter)
+        filter = filter or {}
+        local results = {}
+
+        for id, meta in pairs(metadata) do
+            local matches = true
+
+            if filter.class and meta.class ~= filter.class then
+                matches = false
+            end
+
+            if matches and filter.spawnSource and meta.spawnSource ~= filter.spawnSource then
+                matches = false
+            end
+
+            if matches and filter.status and meta.status ~= filter.status then
+                matches = false
+            end
+
+            if matches and filter.tag then
+                local hasTag = false
+                if meta.tags then
+                    for _, t in ipairs(meta.tags) do
+                        if t == filter.tag then
+                            hasTag = true
+                            break
+                        end
+                    end
+                end
+                if not hasTag then
+                    matches = false
+                end
+            end
+
+            if matches and filter.custom then
+                matches = filter.custom(nodes[id], meta)
+            end
+
+            if matches then
+                table.insert(results, nodes[id])
+            end
+        end
+
+        return results
+    end
+
+    --[[
+        Update the status of a node.
+
+        @param id string - The node ID
+        @param status string - The new status
+        @return boolean - True if node was found and updated
+    --]]
+    function Registry.setStatus(id, status)
+        local meta = metadata[id]
+        if not meta then
+            return false
+        end
+
+        meta.status = status
+
+        -- Update model attribute if present
+        local node = nodes[id]
+        if node and node.model then
+            node.model:SetAttribute("NodeStatus", status)
+        end
+
+        return true
+    end
+
+    --[[
+        Add a tag to a node.
+
+        @param id string - The node ID
+        @param tag string - The tag to add
+        @return boolean - True if node was found and tag added
+    --]]
+    function Registry.addTag(id, tag)
+        local meta = metadata[id]
+        if not meta then
+            return false
+        end
+
+        meta.tags = meta.tags or {}
+
+        -- Check if tag already exists
+        for _, t in ipairs(meta.tags) do
+            if t == tag then
+                return true  -- Already has tag
+            end
+        end
+
+        table.insert(meta.tags, tag)
+
+        -- Update CollectionService if model present
+        local node = nodes[id]
+        if node and node.model then
+            CollectionService:AddTag(node.model, TAG_PREFIX .. "Tag_" .. tag)
+        end
+
+        return true
+    end
+
+    --[[
+        Remove a tag from a node.
+
+        @param id string - The node ID
+        @param tag string - The tag to remove
+        @return boolean - True if node was found and tag removed
+    --]]
+    function Registry.removeTag(id, tag)
+        local meta = metadata[id]
+        if not meta or not meta.tags then
+            return false
+        end
+
+        for i, t in ipairs(meta.tags) do
+            if t == tag then
+                table.remove(meta.tags, i)
+
+                -- Update CollectionService if model present
+                local node = nodes[id]
+                if node and node.model then
+                    CollectionService:RemoveTag(node.model, TAG_PREFIX .. "Tag_" .. tag)
+                end
+
+                return true
+            end
+        end
+
+        return false
+    end
+
+    --[[
+        Iterate over all registered nodes.
+
+        @param callback function(id, node, meta) - Called for each node
+        @param filter table? - Optional filter (same as query)
+    --]]
+    function Registry.forEach(callback, filter)
+        if filter then
+            local results = Registry.query(filter)
+            for _, node in ipairs(results) do
+                callback(node.id, node, metadata[node.id])
+            end
+        else
+            for id, node in pairs(nodes) do
+                callback(id, node, metadata[id])
+            end
+        end
+    end
+
+    --[[
+        Count registered nodes.
+
+        @param filter table? - Optional filter (same as query)
+        @return number - Count of matching nodes
+    --]]
+    function Registry.count(filter)
+        if filter then
+            return #Registry.query(filter)
+        else
+            local count = 0
+            for _ in pairs(nodes) do
+                count = count + 1
+            end
+            return count
+        end
+    end
+
+    --[[
+        Get all registered node IDs.
+
+        @return table - Array of IDs
+    --]]
+    function Registry.getAllIds()
+        local ids = {}
+        for id in pairs(nodes) do
+            table.insert(ids, id)
+        end
+        return ids
+    end
+
+    --[[
+        Reset the registry (for testing).
+    --]]
+    function Registry.reset()
+        -- Untag all models first
+        for id, node in pairs(nodes) do
+            local meta = metadata[id]
+            if node.model and meta then
+                untagModel(node.model, id, meta)
+            end
+        end
+
+        nodes = {}
+        metadata = {}
+        classCounters = {}
+    end
+
+    return Registry
+end)()
 
 return Node

@@ -367,10 +367,19 @@ function Demo.run(config)
     ---------------------------------------------------------------------------
 
     local function updateTurretGeometry()
-        local yawCFrame = yawBase.CFrame
+        -- Calculate from swivel angles directly (not from part CFrames which may be stale)
+        local yawAngle = yawSwivel:getCurrentAngle()
+        local pitchAngle = pitchSwivel:getCurrentAngle()
+
+        -- Build yaw rotation from scratch at base position
+        local yawCFrame = CFrame.new(position) * CFrame.Angles(0, math.rad(yawAngle), 0)
+        yawBase.CFrame = yawCFrame
+
+        -- Build pitch rotation on top of yaw
         local pitchOffset = CFrame.new(0, 1.5, 0)
-        local pitchRotation = CFrame.Angles(math.rad(-pitchSwivel:getCurrentAngle()), 0, 0)
+        local pitchRotation = CFrame.Angles(math.rad(-pitchAngle), 0, 0)
         local combinedCFrame = yawCFrame * pitchOffset * pitchRotation
+
         pitchArm.CFrame = combinedCFrame
         scanner.CFrame = combinedCFrame * CFrame.new(0, 0.5, -1.5)
         muzzle.CFrame = combinedCFrame * CFrame.new(0, 0, -2.5)
@@ -456,24 +465,29 @@ function Demo.run(config)
             while yawDiff > 180 do yawDiff = yawDiff - 360 end
             while yawDiff < -180 do yawDiff = yawDiff + 360 end
 
-            local aimThreshold = 5
+            -- Only fire when aimed within 1 degree (swivels stopped)
+            local yawAimed = math.abs(yawDiff) <= 1
+            local pitchAimed = math.abs(pitchDiff) <= 1
 
-            if math.abs(yawDiff) > 1 then
+            if not yawAimed then
                 local direction = yawDiff > 0 and "forward" or "reverse"
                 yawSwivel.In.onRotate(yawSwivel, { direction = direction })
             else
                 yawSwivel.In.onStop(yawSwivel)
             end
 
-            if math.abs(pitchDiff) > 1 then
+            if not pitchAimed then
                 local direction = pitchDiff > 0 and "reverse" or "forward"
                 pitchSwivel.In.onRotate(pitchSwivel, { direction = direction })
             else
                 pitchSwivel.In.onStop(pitchSwivel)
             end
 
-            if math.abs(yawDiff) < aimThreshold and math.abs(pitchDiff) < aimThreshold then
+            -- Only fire when BOTH swivels are aimed (stopped rotating)
+            if yawAimed and pitchAimed then
                 if launcher:isReady() then
+                    -- Update muzzle position to match current swivel angles before firing
+                    updateTurretGeometry()
                     -- Fire straight from muzzle - swivels handle aiming
                     launcher.In.onFire(launcher)
                 end

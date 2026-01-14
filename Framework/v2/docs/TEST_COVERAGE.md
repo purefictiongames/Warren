@@ -336,84 +336,6 @@ Error detection.
 
 ---
 
-## Projectile Tests (28 tests)
-
-Run with: `Tests.Projectile.runAll()`
-
-### Basics (4 tests)
-Core Projectile functionality.
-
-| Test | What It Validates |
-|------|-------------------|
-| Projectile extends Node | Inheritance |
-| Projectile creates instance | Instantiation |
-| Projectile initializes with defaults | Default attributes |
-| Projectile initializes flight state | Internal state |
-
-### Configuration (8 tests)
-Configuration via onConfigure handler.
-
-| Test | What It Validates |
-|------|-------------------|
-| onConfigure sets speed | Speed attribute |
-| onConfigure sets lifespan | Lifespan attribute |
-| onConfigure sets damage | Damage attribute |
-| onConfigure sets movement type | Movement type attribute |
-| onConfigure sets collision mode | Collision mode attribute |
-| onConfigure sets onHit behavior | OnHit attribute |
-| onConfigure sets multiple values | Batch configuration |
-| onConfigure stores collision filter | Filter storage |
-
-### Launch (8 tests)
-Launch behavior and validation.
-
-| Test | What It Validates |
-|------|-------------------|
-| onLaunch fires launched signal | Signal emission |
-| onLaunch sets flying state | State management |
-| onLaunch errors without origin | Required validation |
-| onLaunch errors without direction | Required validation |
-| onLaunch errors if already flying | Duplicate launch prevention |
-| onLaunch accepts speed override | Parameter override |
-| onLaunch accepts damage override | Parameter override |
-| onLaunch positions model at origin | Model positioning |
-
-### Abort (3 tests)
-Abort behavior.
-
-| Test | What It Validates |
-|------|-------------------|
-| onAbort stops flight | Flight cancellation |
-| onAbort fires expired signal with reason 'aborted' | Signal with reason |
-| onAbort does nothing if not flying | Guard condition |
-
-### Movement (4 tests)
-Movement and expiration.
-
-| Test | What It Validates |
-|------|-------------------|
-| Linear projectile moves in direction | Linear movement |
-| Projectile tracks distance traveled | Distance tracking |
-| Projectile expires after lifespan | Lifespan expiration |
-| Projectile expires after max distance | Distance expiration |
-
-### Ballistic (1 test)
-Ballistic (gravity-affected) movement.
-
-| Test | What It Validates |
-|------|-------------------|
-| Ballistic projectile falls with gravity | Gravity application |
-
-### Visual Demos
-
-```lua
-Tests.Projectile.demo()         -- Linear projectile hitting target
-Tests.Projectile.demoBallistic() -- Cannonball arc trajectory
-Tests.Projectile.cleanup()       -- Remove demo objects
-```
-
----
-
 ## Full Test Summary
 
 | Suite | Tests |
@@ -421,8 +343,7 @@ Tests.Projectile.cleanup()       -- Remove demo objects
 | IPC & Node | 66 |
 | SchemaValidator | 50 |
 | Orchestrator | 24 |
-| Projectile | 28 |
-| **Total** | **168** |
+| **Total** | **140** |
 
 ---
 

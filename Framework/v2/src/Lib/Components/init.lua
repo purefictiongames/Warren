@@ -51,7 +51,4 @@ Components.NodePool = require(script.NodePool)
 -- Composition
 Components.Orchestrator = require(script.Orchestrator)
 
--- Combat
-Components.Projectile = require(script.Projectile)
-
 return Components

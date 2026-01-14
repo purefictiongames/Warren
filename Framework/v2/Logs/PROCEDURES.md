@@ -999,6 +999,7 @@ end)
 
 **Ask First:**
 - Architectural decisions
+- **New component implementations** - Always discuss design/behavior before writing code
 - Deleting/removing features
 - Changing public APIs
 - Uncertain requirements
@@ -1010,6 +1011,16 @@ end)
 - Following established patterns
 - Bug fixes with obvious solutions
 - Implementation details within agreed design
+
+**CRITICAL: New Components Require Discussion**
+
+When implementing a new component (even if a plan file exists):
+1. Walk through the proposed signals (In/Out/Err)
+2. Explain the key behaviors and attributes
+3. Discuss implementation approach (what internal modules, patterns)
+4. Get confirmation before writing code
+
+A plan file is a starting point, not authorization to implement. The user needs to understand and approve the design before code is written.
 
 ## 12.6 When to Commit
 

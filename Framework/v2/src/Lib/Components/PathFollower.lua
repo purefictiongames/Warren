@@ -560,15 +560,9 @@ local PathFollower = Node.extend({
                 end
             end
 
-            -- Path complete (only if not stopped early)
-            if not self._stopped then
-                self.Out:Fire("pathComplete", {
-                    entityId = self._entityId,
-                })
-            end
-
             -- Restore original anchor state for tween-based entities
-            if self._originalAnchored ~= nil then
+            -- (Do this BEFORE firing pathComplete, as listeners may reset our state)
+            if self._originalAnchored ~= nil and self._entity then
                 local primaryPart = self._entity.PrimaryPart or self._entity:FindFirstChildWhichIsA("BasePart")
                 if primaryPart then
                     primaryPart.Anchored = self._originalAnchored
@@ -577,6 +571,14 @@ local PathFollower = Node.extend({
             end
 
             self._navigating = false
+
+            -- Path complete (only if not stopped early)
+            -- Fire this LAST as listeners (like NodePool) may reset our state
+            if not self._stopped then
+                self.Out:Fire("pathComplete", {
+                    entityId = self._entityId,
+                })
+            end
         end)
     end,
 })

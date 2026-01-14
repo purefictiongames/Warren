@@ -42,5 +42,7 @@ end
 
 Tests.IPC = safeRequire("IPC_Node_Tests", script:WaitForChild("IPC_Node_Tests"))
 Tests.Hatcher = safeRequire("Hatcher_Tests", script:WaitForChild("Hatcher_Tests"))
+Tests.Zone = safeRequire("Zone_Tests", script:WaitForChild("Zone_Tests"))
+Tests.ConveyorBelt = safeRequire("ConveyorBelt_Tests", script:WaitForChild("ConveyorBelt_Tests"))
 
 return Tests

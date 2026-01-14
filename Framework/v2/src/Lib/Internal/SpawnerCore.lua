@@ -245,6 +245,95 @@ function SpawnerCore.despawn(assetId)
 end
 
 --------------------------------------------------------------------------------
+-- BATCH DESPAWN
+--------------------------------------------------------------------------------
+
+--[[
+    Despawn multiple instances from a list.
+
+    Accepts an array of:
+    - assetId strings (direct lookup)
+    - Node objects (extracts AssetId from node.model)
+    - Roblox Instances (extracts AssetId attribute)
+
+    Designed to work with Node.Registry.query() results:
+
+    ```lua
+    -- Despawn all Campers spawned by Tent_1
+    local campers = Node.Registry.query({ class = "Camper", spawnSource = "Tent_1" })
+    SpawnerCore.despawnAll(campers)
+
+    -- Or with direct assetIds
+    SpawnerCore.despawnAll({ "spawn_1", "spawn_2", "spawn_3" })
+    ```
+
+    @param items table - Array of assetIds, Nodes, or Instances
+    @return number - Count of successfully despawned instances
+--]]
+function SpawnerCore.despawnAll(items)
+    if not items or #items == 0 then
+        return 0
+    end
+
+    local count = 0
+
+    for _, item in ipairs(items) do
+        local assetId = nil
+
+        -- Determine assetId from item type
+        if type(item) == "string" then
+            -- Direct assetId string
+            assetId = item
+        elseif type(item) == "table" and item.model then
+            -- Node object - get AssetId from model
+            if typeof(item.model) == "Instance" then
+                assetId = item.model:GetAttribute("AssetId")
+            end
+        elseif typeof(item) == "Instance" then
+            -- Roblox Instance - get AssetId attribute
+            assetId = item:GetAttribute("AssetId")
+        end
+
+        -- Despawn if we found an assetId
+        if assetId and SpawnerCore.despawn(assetId) then
+            count = count + 1
+        end
+    end
+
+    return count
+end
+
+--[[
+    Get assetId from a Node or Instance.
+
+    @param item table|Instance - Node object or Roblox Instance
+    @return string? - The assetId, or nil if not found
+--]]
+function SpawnerCore.getAssetId(item)
+    if type(item) == "string" then
+        return item
+    elseif type(item) == "table" and item.model then
+        if typeof(item.model) == "Instance" then
+            return item.model:GetAttribute("AssetId")
+        end
+    elseif typeof(item) == "Instance" then
+        return item:GetAttribute("AssetId")
+    end
+    return nil
+end
+
+--[[
+    Check if an instance is tracked by SpawnerCore.
+
+    @param item string|table|Instance - assetId, Node, or Instance
+    @return boolean - True if tracked
+--]]
+function SpawnerCore.isTracked(item)
+    local assetId = SpawnerCore.getAssetId(item)
+    return assetId ~= nil and _spawnedInstances[assetId] ~= nil
+end
+
+--------------------------------------------------------------------------------
 -- INSTANCE ACCESS
 --------------------------------------------------------------------------------
 

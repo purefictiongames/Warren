@@ -1226,6 +1226,270 @@ Node.Registry = (function()
         classCounters = {}
     end
 
+    ---------------------------------------------------------------------------
+    -- STANDARD FILTER MATCHING
+    ---------------------------------------------------------------------------
+
+    --[[
+        Standard Filter Schema
+        ======================
+
+        Filters provide a declarative way to match Nodes or Roblox Instances.
+        Used across Zone detection, SpawnerCore cleanup, and run mode transitions.
+
+        Filter Fields:
+            class: string | string[]
+                Match NodeClass attribute (single class or array of allowed classes)
+
+            spawnSource: string
+                Match NodeSpawnSource attribute (ID of spawner that created it)
+
+            status: string
+                Match NodeStatus attribute
+
+            tag: string
+                Match CollectionService tag (checks both raw tag and Node_Tag_ prefixed)
+
+            assetId: string
+                Match specific AssetId attribute
+
+            nodeId: string
+                Match specific NodeId attribute
+
+            attribute: { name: string, value: any, operator?: string }
+                Match custom attribute with optional operator
+                Operators: "=" (default), "!=", ">", "<", ">=", "<="
+
+            custom: function(target, meta?) -> boolean
+                Custom filter function (receives node/instance and optional metadata)
+
+        Usage:
+        ```lua
+        -- Filter for active Campers spawned by Tent_1
+        local filter = {
+            class = "Camper",
+            spawnSource = "Tent_1",
+            status = "active",
+        }
+
+        -- Check if entity matches
+        if Registry.matches(entity, filter) then
+            -- ...
+        end
+
+        -- Query matching nodes
+        local nodes = Registry.query(filter)
+
+        -- Used in Zone configuration
+        zone.In.onConfigure(zone, { filter = filter })
+        ```
+    --]]
+
+    --[[
+        Check if a target (Node or Instance) matches a filter.
+
+        Works with:
+        - Node objects (uses internal metadata)
+        - Roblox Instances (reads attributes directly)
+
+        @param target table|Instance - Node object or Roblox Instance
+        @param filter table - Filter criteria (see Standard Filter Schema)
+        @return boolean - True if target matches all filter criteria
+    --]]
+    function Registry.matches(target, filter)
+        if not target or not filter then
+            return target ~= nil and (filter == nil or next(filter) == nil)
+        end
+
+        -- Determine if target is a Node or Instance
+        local isNode = type(target) == "table" and target.class ~= nil
+        local isInstance = typeof(target) == "Instance"
+
+        if not isNode and not isInstance then
+            return false
+        end
+
+        -- Helper to get attribute value from target
+        local function getAttr(name)
+            if isNode then
+                -- Check node metadata first
+                local meta = metadata[target.id]
+                if name == "NodeClass" then
+                    return meta and meta.class or target.class
+                elseif name == "NodeSpawnSource" then
+                    return meta and meta.spawnSource
+                elseif name == "NodeStatus" then
+                    return meta and meta.status
+                elseif name == "NodeId" then
+                    return target.id
+                elseif name == "AssetId" then
+                    return target.model and target.model:GetAttribute("AssetId")
+                end
+                -- Check model attributes
+                if target.model then
+                    return target.model:GetAttribute(name)
+                end
+                return target._attributes and target._attributes[name]
+            else
+                -- Instance - read attributes directly
+                local success, value = pcall(function()
+                    return target:GetAttribute(name)
+                end)
+                return success and value or nil
+            end
+        end
+
+        -- Helper to check if target has a tag
+        local function hasTag(tagName)
+            if isNode then
+                -- Check node metadata tags
+                local meta = metadata[target.id]
+                if meta and meta.tags then
+                    for _, t in ipairs(meta.tags) do
+                        if t == tagName then
+                            return true
+                        end
+                    end
+                end
+                -- Check CollectionService on model
+                if target.model then
+                    return CollectionService:HasTag(target.model, tagName)
+                        or CollectionService:HasTag(target.model, TAG_PREFIX .. "Tag_" .. tagName)
+                end
+                return false
+            else
+                -- Instance - check CollectionService directly
+                return CollectionService:HasTag(target, tagName)
+                    or CollectionService:HasTag(target, TAG_PREFIX .. "Tag_" .. tagName)
+            end
+        end
+
+        -- Filter: class
+        if filter.class then
+            local targetClass = getAttr("NodeClass")
+            if type(filter.class) == "table" then
+                -- Array of allowed classes
+                local found = false
+                for _, allowedClass in ipairs(filter.class) do
+                    if targetClass == allowedClass then
+                        found = true
+                        break
+                    end
+                end
+                if not found then
+                    return false
+                end
+            else
+                -- Single class
+                if targetClass ~= filter.class then
+                    return false
+                end
+            end
+        end
+
+        -- Filter: spawnSource
+        if filter.spawnSource then
+            local targetSource = getAttr("NodeSpawnSource")
+            if targetSource ~= filter.spawnSource then
+                return false
+            end
+        end
+
+        -- Filter: status
+        if filter.status then
+            local targetStatus = getAttr("NodeStatus")
+            if targetStatus ~= filter.status then
+                return false
+            end
+        end
+
+        -- Filter: tag
+        if filter.tag then
+            if not hasTag(filter.tag) then
+                return false
+            end
+        end
+
+        -- Filter: assetId
+        if filter.assetId then
+            local targetAssetId = getAttr("AssetId")
+            if targetAssetId ~= filter.assetId then
+                return false
+            end
+        end
+
+        -- Filter: nodeId
+        if filter.nodeId then
+            local targetNodeId = getAttr("NodeId")
+            if targetNodeId ~= filter.nodeId then
+                return false
+            end
+        end
+
+        -- Filter: attribute (custom attribute with operator)
+        if filter.attribute then
+            local attrName = filter.attribute.name
+            local attrValue = filter.attribute.value
+            local operator = filter.attribute.operator or "="
+            local targetValue = getAttr(attrName)
+
+            if targetValue == nil then
+                return false
+            end
+
+            if operator == "=" then
+                if targetValue ~= attrValue then
+                    return false
+                end
+            elseif operator == "!=" then
+                if targetValue == attrValue then
+                    return false
+                end
+            elseif operator == ">" then
+                if not (targetValue > attrValue) then
+                    return false
+                end
+            elseif operator == "<" then
+                if not (targetValue < attrValue) then
+                    return false
+                end
+            elseif operator == ">=" then
+                if not (targetValue >= attrValue) then
+                    return false
+                end
+            elseif operator == "<=" then
+                if not (targetValue <= attrValue) then
+                    return false
+                end
+            end
+        end
+
+        -- Filter: custom function
+        if filter.custom then
+            local meta = isNode and metadata[target.id] or nil
+            if not filter.custom(target, meta) then
+                return false
+            end
+        end
+
+        return true
+    end
+
+    --[[
+        Find a Node by its associated model Instance.
+
+        @param instance Instance - The Roblox Instance to search for
+        @return table?, string? - The Node and its ID, or nil if not found
+    --]]
+    function Registry.getByModel(instance)
+        for id, node in pairs(nodes) do
+            if node.model == instance then
+                return node, id
+            end
+        end
+        return nil, nil
+    end
+
     return Registry
 end)()
 

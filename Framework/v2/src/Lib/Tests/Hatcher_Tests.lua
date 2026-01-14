@@ -717,4 +717,170 @@ test("Hatcher skips costCheck when cost is 0", "Hatcher", function()
     SpawnerCore.reset()
 end)
 
+--------------------------------------------------------------------------------
+-- VISUAL DEMO (for manual observation)
+--------------------------------------------------------------------------------
+
+--[[
+    Run a visual demonstration of SpawnerCore and Hatcher.
+    Spawns colorful objects you can see in the workspace.
+
+    Usage:
+        local Tests = require(game.ReplicatedStorage.Lib.Tests)
+        Tests.Hatcher.demo()       -- Run the demo
+        Tests.Hatcher.cleanup()    -- Clean up when done
+--]]
+
+local demoInstances = {}
+
+function Tests.demo()
+    print("\n========================================")
+    print("  Hatcher Visual Demo")
+    print("========================================")
+    print("Watch the workspace for spawning objects...\n")
+
+    -- Reset any previous demo
+    Tests.cleanup()
+    SpawnerCore.reset()
+
+    -- Create colorful templates
+    local templates = Instance.new("Folder")
+    templates.Name = "DemoTemplates"
+    templates.Parent = ReplicatedStorage
+    table.insert(demoInstances, templates)
+
+    -- Common (green cube)
+    local common = Instance.new("Part")
+    common.Name = "CommonReward"
+    common.Size = Vector3.new(3, 3, 3)
+    common.BrickColor = BrickColor.new("Bright green")
+    common.Material = Enum.Material.SmoothPlastic
+    common.Parent = templates
+
+    -- Rare (blue sphere)
+    local rare = Instance.new("Part")
+    rare.Name = "RareReward"
+    rare.Shape = Enum.PartType.Ball
+    rare.Size = Vector3.new(4, 4, 4)
+    rare.BrickColor = BrickColor.new("Bright blue")
+    rare.Material = Enum.Material.Neon
+    rare.Parent = templates
+
+    -- Legendary (gold cylinder)
+    local legendary = Instance.new("Part")
+    legendary.Name = "LegendaryReward"
+    legendary.Shape = Enum.PartType.Cylinder
+    legendary.Size = Vector3.new(4, 5, 5)
+    legendary.BrickColor = BrickColor.new("Bright yellow")
+    legendary.Material = Enum.Material.Neon
+    legendary.Parent = templates
+
+    -- Initialize SpawnerCore
+    SpawnerCore.init({ templates = templates })
+
+    -- Create a Hatcher instance
+    local hatcher = Hatcher:new({})
+    hatcher.Sys.onInit(hatcher)
+    hatcher:setAttribute("HatchTime", 1)  -- 1 second hatch time
+    hatcher:setAttribute("Cost", 0)        -- Free for demo
+
+    -- Configure pool with weights
+    local pool = {
+        { template = "CommonReward", rarity = "Common", weight = 60 },
+        { template = "RareReward", rarity = "Rare", weight = 30 },
+        { template = "LegendaryReward", rarity = "Legendary", weight = 10, pity = true },
+    }
+    hatcher.In.onConfigure(hatcher, { pool = pool })
+
+    -- Track spawned items for the demo
+    local spawnedItems = {}
+    local spawnIndex = 0
+
+    -- Override Out to capture hatched items
+    hatcher.Out = {
+        Fire = function(self, signal, data)
+            if signal == "hatchStarted" then
+                print(string.format("  [%.1fs] Hatching started (wait %.1fs)...",
+                    os.clock() % 100, data.hatchTime))
+            elseif signal == "hatched" then
+                print(string.format("  [%.1fs] Hatched: %s (%s) - ID: %s%s",
+                    os.clock() % 100,
+                    data.template,
+                    data.rarity,
+                    data.assetId,
+                    data.pityTriggered and " [PITY!]" or ""))
+
+                if data.instance then
+                    table.insert(spawnedItems, data.instance)
+                    table.insert(demoInstances, data.instance)
+                end
+            elseif signal == "hatchFailed" then
+                warn(string.format("  [%.1fs] Hatch failed: %s",
+                    os.clock() % 100, data.reason))
+            end
+        end,
+    }
+
+    -- Spawn position calculator (circle layout)
+    local function getSpawnPosition(index)
+        local radius = 15
+        local angle = (index / 8) * math.pi * 2
+        return Vector3.new(
+            math.cos(angle) * radius,
+            5 + (index * 0.5),  -- Stack slightly
+            math.sin(angle) * radius
+        )
+    end
+
+    print("Spawning 8 items with 1.5 second delays...\n")
+
+    -- Spawn items with delays so you can watch
+    task.spawn(function()
+        for i = 1, 8 do
+            spawnIndex = i
+
+            -- Temporarily override spawn position
+            local originalSpawn = SpawnerCore.spawn
+            SpawnerCore.spawn = function(config)
+                config.position = getSpawnPosition(spawnIndex)
+                config.parent = workspace
+                return originalSpawn(config)
+            end
+
+            -- Trigger hatch
+            hatcher.In.onHatch(hatcher, {})
+
+            -- Restore original
+            task.wait(0.1)
+            SpawnerCore.spawn = originalSpawn
+
+            -- Wait between spawns
+            if i < 8 then
+                task.wait(1.5)
+            end
+        end
+
+        print("\n========================================")
+        print("  Demo complete! 8 items spawned.")
+        print("  Run Tests.Hatcher.cleanup() to remove them.")
+        print("========================================")
+    end)
+end
+
+function Tests.cleanup()
+    print("Cleaning up demo instances...")
+
+    for _, instance in ipairs(demoInstances) do
+        if instance and instance.Parent then
+            instance:Destroy()
+        end
+    end
+    demoInstances = {}
+
+    SpawnerCore.cleanup()
+    SpawnerCore.reset()
+
+    print("Cleanup complete.")
+end
+
 return Tests

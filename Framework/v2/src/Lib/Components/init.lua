@@ -38,5 +38,12 @@ Components.PathFollower = require(script.PathFollower)
 
 -- Spawning
 Components.Hatcher = require(script.Hatcher)
+Components.Dropper = require(script.Dropper)
+
+-- Detection
+Components.Zone = require(script.Zone)
+
+-- Pool Management
+Components.NodePool = require(script.NodePool)
 
 return Components

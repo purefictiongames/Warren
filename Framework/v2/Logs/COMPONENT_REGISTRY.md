@@ -28,28 +28,34 @@ Each component is a **standalone, composable module** that can be mixed and matc
 
 ### Navigation & Movement
 
-#### PathFollower
+#### PathFollower ✅ IMPLEMENTED
 **Purpose:** Move an entity along a sequence of waypoints.
+**Status:** Implemented in `Lib/Components/PathFollower.lua`
 
 | Attribute | Type | Description |
 |-----------|------|-------------|
 | Speed | number | Movement speed in studs/second (default 16) |
 | WaitForAck | boolean | Pause at each waypoint until ack signal (default false) |
 | AckTimeout | number | Seconds to wait for ack before error (default 5) |
-
-**Future Enhancements (collision handling):**
-
-| Attribute | Type | Description |
-|-----------|------|-------------|
 | CollisionMode | string | "ignore" (stay anchored), "physics" (unanchor on hit) |
 | OnInterrupt | string | "stop", "pause_and_resume", "restart" |
 | ResumeDelay | number | Seconds to wait after collision before resuming |
 
-| Event | Payload | Description |
-|-------|---------|-------------|
-| WaypointReached | { index, position } | Fired when entity reaches a waypoint |
-| PathComplete | { } | Fired when entity reaches final waypoint |
-| PathProgress | { percent } | Fired periodically with 0-1 progress |
+| Signal (In) | Payload | Description |
+|-------------|---------|-------------|
+| onControl | { entity, entityId? } | Assign entity to control |
+| onWaypoints | { targets: Part[] } | Set waypoint sequence |
+| onPause | - | Pause navigation |
+| onResume | - | Resume navigation |
+| onSetSpeed | { speed } | Change movement speed |
+| onAck | - | Acknowledgment for sync mode |
+
+| Signal (Out) | Payload | Description |
+|--------------|---------|-------------|
+| waypointReached | { waypoint, index, entityId } | Fired when entity reaches a waypoint |
+| pathComplete | { entityId } | Fired when entity reaches final waypoint |
+
+Supports both Humanoid-based (MoveTo) and non-Humanoid (TweenService) movement.
 
 **Example Usage:**
 ```
@@ -244,6 +250,40 @@ Horror: Sheriff's gun, killer's weapon
 ```
 Fighting: Tiered armor in BedWars
 RPG: Equipment slots with resistances
+```
+
+---
+
+### Detection & Triggers
+
+#### Zone ✅ IMPLEMENTED
+**Purpose:** Region detection with declarative filtering.
+**Status:** Implemented in `Lib/Components/Zone.lua`
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| DebounceTime | number | Seconds between re-detections (default 0.5) |
+| DetectOnEnter | boolean | Fire on zone entry (default true) |
+| DetectOnExit | boolean | Fire on zone exit (default true) |
+
+| Signal (In) | Payload | Description |
+|-------------|---------|-------------|
+| onConfigure | { filter, debounceTime, ... } | Configure zone and filters |
+| onEnable | - | Enable detection |
+| onDisable | - | Disable detection |
+
+| Signal (Out) | Payload | Description |
+|--------------|---------|-------------|
+| entityEntered | { entity, entityId, assetId, ... } | Fired when matching entity enters |
+| entityExited | { entity, entityId } | Fired when entity exits |
+
+Supports Standard Filter Schema for declarative entity filtering.
+
+**Example Usage:**
+```
+Tower Defense: End zone for path completion
+Horror: Trap trigger zones
+Tycoon: Collection zones
 ```
 
 ---
@@ -457,22 +497,32 @@ Tycoon: Resource gathering
 
 ---
 
-#### Hatcher
+#### Hatcher ✅ IMPLEMENTED
 **Purpose:** Gacha/egg system - random rewards with weighted rarity.
+**Status:** Implemented in `Lib/Components/Hatcher.lua`
 
 | Attribute | Type | Description |
 |-----------|------|-------------|
 | HatchTime | number | Seconds to hatch (0 = instant) |
 | Cost | number | Currency cost per hatch |
 | CostType | string | Currency type required |
-| RarityWeights | string | JSON: {"Common": 60, "Rare": 30, "Legendary": 10} |
 | PityThreshold | number | Guaranteed rare after N hatches (0 = none) |
 
-| Event | Payload | Description |
-|-------|---------|-------------|
-| HatchStarted | { egg } | Fired when hatch begins |
-| Hatched | { result, rarity } | Fired when hatch completes |
-| PityTriggered | { result } | Fired when pity system activates |
+| Signal (In) | Payload | Description |
+|-------------|---------|-------------|
+| onConfigure | { pool } | Set reward pool with weights |
+| onHatch | { player? } | Trigger a hatch attempt |
+| onCostConfirmed | { player, approved } | Response to cost check |
+| onSetPity | { player, count } | Set pity counter for player |
+
+| Signal (Out) | Payload | Description |
+|--------------|---------|-------------|
+| costCheck | { player, cost, costType } | Fired before hatch (external validation) |
+| hatchStarted | { player, hatchTime } | Fired when hatch begins |
+| hatched | { player, result, rarity, assetId, pityTriggered } | Fired on completion |
+| hatchFailed | { player, reason } | Fired if hatch cannot proceed |
+
+Pool format: `{{ template = "CommonPet", rarity = "Common", weight = 60, pity = false }, ...}`
 
 **Example Usage:**
 ```
@@ -726,21 +776,33 @@ Fighting: Stun, knockback effects
 
 ### Tycoon Specific
 
-#### Dropper
-**Purpose:** Periodically spawn resource items. (Already exists in v1)
+#### Dropper ✅ IMPLEMENTED (v2)
+**Purpose:** Interval-based entity spawning with return handling.
+**Status:** Implemented in `Lib/Components/Dropper.lua`
 
 | Attribute | Type | Description |
 |-----------|------|-------------|
-| DropInterval | number | Seconds between drops |
-| DropValue | number | Currency value of drop |
-| DropTemplate | string | Model to spawn |
-| MaxDrops | number | Max active drops (0 = unlimited) |
+| Interval | number | Seconds between spawns (default 2) |
+| TemplateName | string | Template model name |
+| MaxActive | number | Max spawned at once (0 = unlimited) |
+| AutoStart | boolean | Start spawning on init (default false) |
 
-| Event | Payload | Description |
-|-------|---------|-------------|
-| Dropped | { item, value } | Fired when item spawned |
-| Collected | { item, player } | Fired when item picked up |
-| Upgraded | { level, newValue } | Fired when dropper upgraded |
+| Signal (In) | Payload | Description |
+|-------------|---------|-------------|
+| onConfigure | { templateName, interval, maxActive, ... } | Configure dropper |
+| onStart | - | Start spawn loop |
+| onStop | - | Stop spawn loop |
+| onReturn | { assetId } | Despawn entity by ID (from Zone, etc.) |
+| onDespawnAll | - | Despawn all spawned entities |
+
+| Signal (Out) | Payload | Description |
+|--------------|---------|-------------|
+| spawned | { assetId, instance, entityId } | Fired when entity spawned |
+| despawned | { assetId, entityId } | Fired when entity despawned |
+| loopStarted | - | Fired when spawn loop begins |
+| loopStopped | - | Fired when spawn loop ends |
+
+Uses SpawnerCore internally for spawn/despawn mechanics.
 
 ---
 
@@ -874,6 +936,53 @@ Simulator: Minigame tasks
 ---
 
 ### Infrastructure
+
+#### NodePool ✅ IMPLEMENTED
+**Purpose:** Generic node pooling with fixed or elastic modes.
+**Status:** Implemented in `Lib/Components/NodePool.lua`
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| PoolMode | string | "fixed" (pre-allocate) or "elastic" (grow/shrink) |
+| MinSize | number | Minimum pool size (elastic mode) |
+| MaxSize | number | Maximum pool size |
+| ShrinkDelay | number | Seconds idle before shrinking (elastic mode) |
+
+| Signal (In) | Payload | Description |
+|-------------|---------|-------------|
+| onConfigure | { nodeClass, poolMode, checkoutSignals, ... } | Configure pool |
+| onCheckout | { entity, entityId, ... } | Request a node from pool |
+| onRelease | { nodeId } | Return node to pool |
+
+| Signal (Out) | Payload | Description |
+|--------------|---------|-------------|
+| checkedOut | { nodeId, entityId } | Fired when node checked out |
+| released | { nodeId, entityId } | Fired when node released |
+| exhausted | { entityId, maxSize } | Fired when pool at capacity |
+| nodeCreated | { nodeId } | Fired when new node created (elastic) |
+| nodeDestroyed | { nodeId } | Fired when idle node destroyed (elastic) |
+
+Features:
+- **Checkout signals**: Auto-send configured signals to checked-out nodes
+- **Auto-release**: Listen for signal (e.g., "pathComplete") to auto-return nodes
+- **Context injection**: `$variableName` syntax for shared context in signal mapping
+
+**Example Usage:**
+```lua
+pool.In.onConfigure(pool, {
+    nodeClass = "PathFollower",
+    poolMode = "elastic",
+    minSize = 2, maxSize = 15,
+    checkoutSignals = {
+        { signal = "onControl", map = { entity = "entity" } },
+        { signal = "onWaypoints", map = { targets = "$waypoints" } },
+    },
+    releaseOn = "pathComplete",
+    context = { waypoints = { wp1, wp2, wp3 } },
+})
+```
+
+---
 
 #### Timer
 **Purpose:** Countdown or countup timer with events.

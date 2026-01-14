@@ -21,12 +21,22 @@ LibPureFiction/
 │   ├── Lib/
 │   │   ├── init.lua              <- Main entry (exports System, Node, Components)
 │   │   ├── System.lua            <- Core subsystems (Debug, IPC, Asset, etc.)
-│   │   ├── Node.lua              <- Base class for all game components
+│   │   ├── Node.lua              <- Base class + Registry for all components
 │   │   ├── Components/           <- Reusable component library
 │   │   │   ├── init.lua
-│   │   │   └── PathFollower.lua  <- Navigation component
+│   │   │   ├── PathFollower.lua  <- Waypoint navigation
+│   │   │   ├── Dropper.lua       <- Interval-based spawning
+│   │   │   ├── Hatcher.lua       <- Gacha/egg mechanics
+│   │   │   ├── Zone.lua          <- Region detection
+│   │   │   └── NodePool.lua      <- Generic node pooling
+│   │   ├── Internal/             <- Internal utilities (not public API)
+│   │   │   ├── init.lua
+│   │   │   └── SpawnerCore.lua   <- Shared spawn/despawn mechanics
 │   │   └── Tests/
-│   │       └── IPC_Node_Tests.lua
+│   │       ├── IPC_Node_Tests.lua
+│   │       ├── Hatcher_Tests.lua
+│   │       ├── Zone_Tests.lua
+│   │       └── ConveyorBelt_Tests.lua  <- Visual composition demo
 │   ├── Game/                     <- Game-specific nodes
 │   │   └── init.lua
 │   └── Bootstrap/
@@ -178,12 +188,26 @@ Reusable game components live in `Lib/Components/`. These extend the Node base c
 
 | Component | Purpose | Status |
 |-----------|---------|--------|
-| **PathFollower** | Navigate entities through waypoints | Implemented |
+| **PathFollower** | Navigate entities through waypoints (Humanoid or Tween) | Implemented |
+| **Dropper** | Interval-based entity spawning with return handling | Implemented |
+| **Hatcher** | Gacha/egg mechanics with weighted rarity and pity | Implemented |
+| **Zone** | Region detection with declarative filtering | Implemented |
+| **NodePool** | Generic node pooling (fixed or elastic mode) | Implemented |
 | **Projectile** | Spawn and manage projectiles | Planned |
 | **HealthSystem** | Damage, healing, death | Planned |
 | **Currency** | Player economy tracking | Planned |
 
 See `Logs/COMPONENT_REGISTRY.md` for the full catalog of planned components.
+
+### Internal Modules
+
+Internal utilities live in `Lib/Internal/`. These are NOT part of the public API:
+
+| Module | Purpose |
+|--------|---------|
+| **SpawnerCore** | Template lookup, cloning, asset ID tracking, despawn |
+
+SpawnerCore is used by Dropper, Hatcher, and future spawning components.
 
 ### Usage
 
@@ -249,6 +273,80 @@ end
 ```
 
 This enables synchronous request/response patterns while keeping the IPC architecture async.
+
+## Node Registry
+
+Node.lua includes a built-in Registry for tracking and querying active nodes:
+
+```lua
+local Node = require(game.ReplicatedStorage.Lib).Node
+
+-- Register a node (automatic on creation)
+Node.Registry.register(myNode)
+
+-- Query nodes with filter
+local enemies = Node.Registry.query({ class = "Enemy", status = "active" })
+
+-- Get node by ID
+local specific = Node.Registry.getById("Enemy_1")
+
+-- Get node by its model (Instance)
+local nodeForModel = Node.Registry.getByModel(someInstance)
+
+-- Check if an item matches a filter
+if Node.Registry.matches(target, { tag = "hostile" }) then
+    -- handle hostile target
+end
+```
+
+### Standard Filter Schema
+
+The framework uses a unified filter schema across components (Zone, Registry, SpawnerCore):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `class` | string \| string[] | Node class name(s) to match |
+| `spawnSource` | string | ID of the spawner that created the entity |
+| `status` | string | Node status ("active", "paused", etc.) |
+| `tag` | string | CollectionService tag on the entity |
+| `assetId` | string | Unique asset ID from SpawnerCore |
+| `nodeId` | string | Node's unique ID |
+| `attribute` | table | `{ name, value, operator }` where operator is "=", "!=", ">", "<", ">=", "<=" |
+| `custom` | function | `function(target, meta) -> boolean` for complex logic |
+
+Example filter usage:
+```lua
+-- Zone: Only detect entities from specific spawner
+zone.In.onConfigure(zone, {
+    filter = { spawnSource = "EnemyDropper" }
+})
+
+-- Registry: Query active enemies with health > 50
+local wounded = Node.Registry.query({
+    class = "Enemy",
+    status = "active",
+    attribute = { name = "Health", value = 50, operator = "<=" }
+})
+```
+
+## Component Composition
+
+Components are designed to be wired together like an ICU/breadboard:
+
+```
+Dropper                   NodePool<PathFollower>              Zone
+┌─────────┐              ┌──────────────────────┐        ┌──────────┐
+│ spawned ├─────────────►│ onCheckout           │        │          │
+│         │              │                      │        │          │
+│         │              │ (manages pool of     │        │          │
+│         │              │  PathFollower nodes) │        │          │
+│         │              │                      │        │          │
+│onReturn │◄─────────────┤ (auto-release on     │◄───────┤ entered  │
+│         │              │  pathComplete)       │        │          │
+└─────────┘              └──────────────────────┘        └──────────┘
+```
+
+The ConveyorBelt test (`Tests.ConveyorBelt.demo()`) demonstrates this pattern with visual entities spawning, following waypoints, and despawning when they reach the end zone.
 
 ## Licensing
 

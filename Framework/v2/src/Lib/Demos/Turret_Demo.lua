@@ -286,6 +286,9 @@ function Demo.run(config)
         axis = "X", mode = "continuous", speed = 90,
         minAngle = -30, maxAngle = 60,
     })
+    -- Make pitchSwivel "headless" - it tracks angle but demo handles positioning
+    -- (pitchArm position depends on yawBase which moves, so we can't let Swivel control it)
+    pitchSwivel.model = nil
 
     local targeter = Targeter:new({ id = "Turret_Targeter", model = scanner })
     targeter.Sys.onInit(targeter)
@@ -367,13 +370,10 @@ function Demo.run(config)
     ---------------------------------------------------------------------------
 
     local function updateTurretGeometry()
-        -- Calculate from swivel angles directly (not from part CFrames which may be stale)
-        local yawAngle = yawSwivel:getCurrentAngle()
+        -- Use yawBase.CFrame (controlled by Swivel) and pitch angle
+        -- Swivel controls yawBase rotation, we position the other parts relative to it
+        local yawCFrame = yawBase.CFrame
         local pitchAngle = pitchSwivel:getCurrentAngle()
-
-        -- Build yaw rotation from scratch at base position
-        local yawCFrame = CFrame.new(position) * CFrame.Angles(0, math.rad(yawAngle), 0)
-        yawBase.CFrame = yawCFrame
 
         -- Build pitch rotation on top of yaw
         local pitchOffset = CFrame.new(0, 1.5, 0)

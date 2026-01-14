@@ -31,7 +31,8 @@ LibPureFiction/
 │   │   │   ├── Zone.lua          <- Region detection
 │   │   │   ├── Checkpoint.lua    <- Direction-aware threshold
 │   │   │   ├── NodePool.lua      <- Generic node pooling
-│   │   │   └── Orchestrator.lua  <- Declarative composition & wiring
+│   │   │   ├── Orchestrator.lua  <- Declarative composition & wiring
+│   │   │   └── Projectile.lua    <- Projectile movement & collision
 │   │   ├── Internal/             <- Internal utilities (not public API)
 │   │   │   ├── init.lua
 │   │   │   ├── SpawnerCore.lua   <- Shared spawn/despawn mechanics
@@ -47,7 +48,8 @@ LibPureFiction/
 │   │       ├── Checkpoint_Tests.lua
 │   │       ├── ConveyorBelt_Tests.lua  <- Visual composition demo
 │   │       ├── SchemaValidator_Tests.lua
-│   │       └── Orchestrator_Tests.lua
+│   │       ├── Orchestrator_Tests.lua
+│   │       └── Projectile_Tests.lua
 │   ├── Game/                     <- Game-specific nodes
 │   │   └── init.lua
 │   └── Bootstrap/
@@ -207,7 +209,7 @@ Reusable game components live in `Lib/Components/`. These extend the Node base c
 | **Checkpoint** | Direction-aware threshold detection (6-face box) | Implemented |
 | **NodePool** | Generic node pooling (fixed or elastic mode) | Implemented |
 | **Orchestrator** | Declarative component composition with schema validation | Implemented |
-| **Projectile** | Spawn and manage projectiles | Planned |
+| **Projectile** | Projectile movement, collision, and impact behaviors | Implemented |
 | **HealthSystem** | Damage, healing, death | Planned |
 | **Currency** | Player economy tracking | Planned |
 

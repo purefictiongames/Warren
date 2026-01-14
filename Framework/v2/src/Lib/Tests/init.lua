@@ -49,5 +49,6 @@ Tests.PathedConveyor = safeRequire("PathedConveyor_Tests", script:WaitForChild("
 Tests.Checkpoint = safeRequire("Checkpoint_Tests", script:WaitForChild("Checkpoint_Tests"))
 Tests.SchemaValidator = safeRequire("SchemaValidator_Tests", script:WaitForChild("SchemaValidator_Tests"))
 Tests.Orchestrator = safeRequire("Orchestrator_Tests", script:WaitForChild("Orchestrator_Tests"))
+Tests.Projectile = safeRequire("Projectile_Tests", script:WaitForChild("Projectile_Tests"))
 
 return Tests

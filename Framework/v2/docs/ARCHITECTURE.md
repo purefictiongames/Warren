@@ -25,17 +25,24 @@ LibPureFiction/
 │   │   ├── Components/           <- Reusable component library
 │   │   │   ├── init.lua
 │   │   │   ├── PathFollower.lua  <- Waypoint navigation
+│   │   │   ├── PathedConveyor.lua <- Physics-based conveyor belt
 │   │   │   ├── Dropper.lua       <- Interval-based spawning
 │   │   │   ├── Hatcher.lua       <- Gacha/egg mechanics
 │   │   │   ├── Zone.lua          <- Region detection
+│   │   │   ├── Checkpoint.lua    <- Direction-aware threshold
 │   │   │   └── NodePool.lua      <- Generic node pooling
 │   │   ├── Internal/             <- Internal utilities (not public API)
 │   │   │   ├── init.lua
-│   │   │   └── SpawnerCore.lua   <- Shared spawn/despawn mechanics
+│   │   │   ├── SpawnerCore.lua   <- Shared spawn/despawn mechanics
+│   │   │   ├── PathFollowerCore.lua <- Shared path infrastructure
+│   │   │   └── EntityUtils.lua   <- Common entity helpers
 │   │   └── Tests/
 │   │       ├── IPC_Node_Tests.lua
 │   │       ├── Hatcher_Tests.lua
 │   │       ├── Zone_Tests.lua
+│   │       ├── Dropper_Tests.lua
+│   │       ├── PathedConveyor_Tests.lua
+│   │       ├── Checkpoint_Tests.lua
 │   │       └── ConveyorBelt_Tests.lua  <- Visual composition demo
 │   ├── Game/                     <- Game-specific nodes
 │   │   └── init.lua
@@ -189,9 +196,11 @@ Reusable game components live in `Lib/Components/`. These extend the Node base c
 | Component | Purpose | Status |
 |-----------|---------|--------|
 | **PathFollower** | Navigate entities through waypoints (Humanoid or Tween) | Implemented |
-| **Dropper** | Interval-based entity spawning with return handling | Implemented |
+| **PathedConveyor** | Physics-based conveyor belt with per-segment speeds | Implemented |
+| **Dropper** | Interval-based entity spawning with pool/capacity support | Implemented |
 | **Hatcher** | Gacha/egg mechanics with weighted rarity and pity | Implemented |
 | **Zone** | Region detection with declarative filtering | Implemented |
+| **Checkpoint** | Direction-aware threshold detection (6-face box) | Implemented |
 | **NodePool** | Generic node pooling (fixed or elastic mode) | Implemented |
 | **Projectile** | Spawn and manage projectiles | Planned |
 | **HealthSystem** | Damage, healing, death | Planned |
@@ -206,8 +215,12 @@ Internal utilities live in `Lib/Internal/`. These are NOT part of the public API
 | Module | Purpose |
 |--------|---------|
 | **SpawnerCore** | Template lookup, cloning, asset ID tracking, despawn |
+| **PathFollowerCore** | Waypoints, segments, per-segment speeds, direction calculation |
+| **EntityUtils** | Common entity helpers (getPosition, getId, passesFilter, isPlayer) |
 
 SpawnerCore is used by Dropper, Hatcher, and future spawning components.
+PathFollowerCore is used by PathFollower and PathedConveyor for shared path infrastructure.
+EntityUtils is used by Zone, Checkpoint, PathedConveyor for entity detection helpers.
 
 ### Usage
 

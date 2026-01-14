@@ -562,26 +562,39 @@ Adventure: Helper NPCs
 
 ### Game Flow & Objectives
 
-#### Checkpoint
-**Purpose:** Save player progress position, respawn on death.
+#### Checkpoint ✅ IMPLEMENTED (v2)
+**Purpose:** Direction-aware threshold detection with 6-face box detection.
+**Status:** Implemented in `Lib/Components/Checkpoint.lua`
 
 | Attribute | Type | Description |
 |-----------|------|-------------|
-| CheckpointNumber | number | Order in sequence |
-| SpawnOffset | Vector3 | Offset from checkpoint for spawn |
-| ActivateOnce | boolean | Can only be activated once |
-| ShowIndicator | boolean | Visual feedback on activation |
+| ActiveFace | string | Expected entry face: "Front", "Back", "Left", "Right", "Top", "Bottom" |
+| Cooldown | number | Seconds before same entity can trigger again (default 0.5) |
 
-| Event | Payload | Description |
-|-------|---------|-------------|
-| Activated | { player, number } | Fired when checkpoint reached |
-| PlayerRespawned | { player, checkpoint } | Fired when player respawns here |
+| Signal (In) | Payload | Description |
+|-------------|---------|-------------|
+| onConfigure | { activeFace, cooldown, filter } | Configure checkpoint |
+| onEnable | - | Enable detection |
+| onDisable | - | Disable detection |
+
+| Signal (Out) | Payload | Description |
+|--------------|---------|-------------|
+| crossed | { entity, entityId, face, isActiveFace, direction, position } | Fired when entity crosses threshold |
+| entityInside | { entity, entityId } | Fired when entity detected inside |
+| entityLeft | { entity, entityId } | Fired when entity leaves |
+
+Key features:
+- **6-face detection**: Determines which face of the box the entity entered from
+- **Active face**: Mark expected entry direction for path flow validation
+- **isActiveFace**: Signal includes whether entity crossed from the "correct" direction
+- **Filter support**: Standard filter schema for selective detection
 
 **Example Usage:**
 ```
-Obby: Progress saves through obstacle course
-Horror: Safe rooms in survival games
-Adventure: World exploration progress
+Conveyor Networks: Detect segment transitions with direction awareness
+Race Games: Lap checkpoints that validate direction
+Obby: Progress saves with anti-skip detection
+Horror: Safe rooms, trigger zones
 ```
 
 ---
@@ -806,26 +819,48 @@ Uses SpawnerCore internally for spawn/despawn mechanics.
 
 ---
 
-#### Conveyor
-**Purpose:** Move parts along a path to destination.
+#### PathedConveyor ✅ IMPLEMENTED (v2)
+**Purpose:** Physics-based conveyor belt with waypoint path and per-segment speeds.
+**Status:** Implemented in `Lib/Components/PathedConveyor.lua`
 
 | Attribute | Type | Description |
 |-----------|------|-------------|
-| Speed | number | Studs per second |
-| Direction | Vector3 | Movement direction |
-| Length | number | Conveyor length |
-| AcceptTag | string | Tag of items to move |
+| Speed | number | Default speed in studs/second (default 10) |
+| DetectionRadius | number | Radius for entity detection (default 5) |
+| UpdateRate | number | Seconds between physics updates (default 0.05) |
+| ForceMode | string | "velocity" (default) or "force" |
+| AffectsPlayers | boolean | Whether to move player characters (default true) |
 
-| Event | Payload | Description |
-|-------|---------|-------------|
-| ItemEntered | { item } | Fired when item enters |
-| ItemExited | { item } | Fired when item exits |
-| ItemProcessed | { item, destination } | Fired when item reaches end |
+| Signal (In) | Payload | Description |
+|-------------|---------|-------------|
+| onConfigure | { waypoints, speed, filter, ... } | Configure conveyor path |
+| onEnable | - | Start conveyor |
+| onDisable | - | Stop conveyor |
+| onSetSpeed | { speed, segment?, segments? } | Change speed (global or per-segment) |
+| onReverse | - | Toggle direction |
+| onSetDirection | { forward } | Set specific direction |
+
+| Signal (Out) | Payload | Description |
+|--------------|---------|-------------|
+| entityEntered | { entity, entityId, segment } | Fired when entity enters conveyor zone |
+| entityExited | { entity, entityId } | Fired when entity exits |
+| segmentChanged | { entity, entityId, fromSegment, toSegment, waypoint, waypointIndex } | Fired on segment transition |
+| directionChanged | { forward } | Fired when direction toggled |
+
+Key features:
+- **Waypoint-based path**: Define conveyor shape with waypoint parts
+- **Per-segment speeds**: Different speeds for different sections
+- **VectorForce for players**: Additive movement (walk with/against belt)
+- **BodyVelocity for objects**: Reliable physics-based transport
+- **Filter support**: Selective entity detection
+
+Uses PathFollowerCore internally for shared path infrastructure.
 
 **Example Usage:**
 ```
-Tycoon: Move drops to collector/upgrader
-Factory: Assembly line mechanics
+Tycoon: Move drops along factory lines
+Factory: Assembly line with multiple segments
+Puzzle: Moving platforms with direction control
 ```
 
 ---

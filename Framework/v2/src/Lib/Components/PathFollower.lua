@@ -1,6 +1,6 @@
 --[[
     LibPureFiction Framework v2
-    PathFollower.lua - Entity Navigation Component
+    PathFollower.lua - Entity Navigation Component (PathedController)
 
     Copyright (c) 2025 Adam Stearns / Pure Fiction Records LLC
     All rights reserved.
@@ -9,9 +9,11 @@
     OVERVIEW
     ============================================================================
 
-    PathFollower navigates an entity through a sequence of waypoints.
-    It supports both Humanoid-based movement (MoveTo) and non-Humanoid
-    movement (TweenService/CFrame interpolation).
+    PathFollower (aka PathedController) navigates an entity through a sequence
+    of waypoints. It supports both Humanoid-based movement (MoveTo) and
+    non-Humanoid movement (TweenService/CFrame interpolation).
+
+    Uses PathFollowerCore internally for path infrastructure.
 
     PathFollower is signal-driven: it waits for two signals before starting:
     - onControl: Provides the entity (Model) to control
@@ -38,8 +40,11 @@
         onResume()
             - Resumes navigation from paused state
 
-        onSetSpeed({ speed: number })
-            - Changes movement speed mid-navigation
+        onSetSpeed({ speed: number, segment?: number, segments?: table })
+            - Changes movement speed
+            - speed alone: sets default speed for all segments
+            - segment + speed: sets speed for specific segment
+            - segments: array of { segment, speed } for multiple
 
         onAck()
             - Acknowledgment signal for sync mode (WaitForAck = true)
@@ -56,7 +61,7 @@
     ============================================================================
 
     Speed: number (default 16)
-        Movement speed in studs per second
+        Default movement speed in studs per second
 
     WaitForAck: boolean (default false)
         If true, pauses at each waypoint until onAck received
@@ -101,12 +106,21 @@
     System.IPC.sendTo("PathFollower_Camper1", "waypoints", {
         targets = { seat1, seat2, seat3 },
     })
+
+    -- Set per-segment speeds
+    System.IPC.sendTo("PathFollower_Camper1", "setSpeed", {
+        segments = {
+            { segment = 1, speed = 20 },
+            { segment = 2, speed = 10 },
+        }
+    })
     ```
 
 --]]
 
 local TweenService = game:GetService("TweenService")
 local Node = require(script.Parent.Parent.Node)
+local PathFollowerCore = require(script.Parent.Parent.Internal.PathFollowerCore)
 
 local PathFollower = Node.extend({
     name = "PathFollower",
@@ -118,11 +132,15 @@ local PathFollower = Node.extend({
 
     Sys = {
         onInit = function(self)
-            -- Internal state
+            -- Path infrastructure (shared with PathedConveyor)
+            local defaultSpeed = self:getAttribute("Speed") or 16
+            self._path = PathFollowerCore.new({ defaultSpeed = defaultSpeed })
+
+            -- Entity state
             self._entity = nil
             self._entityId = nil
-            self._waypoints = nil
-            self._currentIndex = 0
+
+            -- Navigation state
             self._paused = false
             self._stopped = false
             self._navigating = false
@@ -209,7 +227,12 @@ local PathFollower = Node.extend({
                 return
             end
 
-            self._waypoints = data.targets
+            -- Store in PathFollowerCore
+            local success, err = self._path:setWaypoints(data.targets)
+            if not success then
+                self.Err:Fire({ reason = "invalid_waypoints", message = err })
+                return
+            end
 
             self:_tryStart()
         end,
@@ -237,10 +260,23 @@ local PathFollower = Node.extend({
 
         --[[
             Change movement speed.
+            - speed alone: sets default speed for all segments
+            - segment + speed: sets speed for specific segment
+            - segments: array of { segment, speed } for multiple
         --]]
         onSetSpeed = function(self, data)
-            if data and data.speed and type(data.speed) == "number" then
+            if not data then return end
+
+            if data.segments and type(data.segments) == "table" then
+                -- Set multiple segment speeds
+                self._path:setSegmentSpeeds(data.segments)
+            elseif data.segment and data.speed then
+                -- Set single segment speed
+                self._path:setSegmentSpeed(data.segment, data.speed)
+            elseif data.speed and type(data.speed) == "number" then
+                -- Set default speed for all
                 self:setAttribute("Speed", data.speed)
+                self._path:setDefaultSpeed(data.speed)
             end
         end,
 
@@ -281,7 +317,7 @@ local PathFollower = Node.extend({
         Try to start navigation if both entity and waypoints are ready.
     --]]
     _tryStart = function(self)
-        if self._entity and self._waypoints and not self._navigating then
+        if self._entity and self._path:getWaypointCount() > 0 and not self._navigating then
             self:_startNavigation()
         end
     end,
@@ -324,7 +360,8 @@ local PathFollower = Node.extend({
         end
 
         -- Ignore collisions with waypoints themselves
-        for _, wp in ipairs(self._waypoints or {}) do
+        for i = 1, self._path:getWaypointCount() do
+            local wp = self._path:getWaypoint(i)
             if otherPart == wp then
                 return
             end
@@ -344,7 +381,7 @@ local PathFollower = Node.extend({
             entityId = self._entityId,
             collidedWith = otherPart,
             collidedWithName = otherPart.Name,
-            waypointIndex = self._currentIndex,
+            waypointIndex = self._path:getCurrentIndex(),
             collisionMode = collisionMode,
             onInterrupt = onInterrupt,
         })
@@ -394,7 +431,7 @@ local PathFollower = Node.extend({
                     self.Err:Fire({
                         reason = "collision_resumed",
                         entityId = self._entityId,
-                        waypointIndex = self._currentIndex,
+                        waypointIndex = self._path:getCurrentIndex(),
                     })
                 end
             end)
@@ -418,7 +455,7 @@ local PathFollower = Node.extend({
                 if not self._stopped then
                     self._interrupted = false
                     self._navigating = false
-                    self._currentIndex = 0
+                    self._path:reset()
 
                     -- Fire detour signal indicating restart
                     self.Err:Fire({
@@ -455,10 +492,12 @@ local PathFollower = Node.extend({
         Move entity to a waypoint target.
 
         @param target Part - The waypoint to move to
+        @param segmentIndex number - The segment being traversed (for speed lookup)
     --]]
-    _moveToWaypoint = function(self, target)
+    _moveToWaypoint = function(self, target, segmentIndex)
         local movementType, humanoid = self:_detectMovementType()
-        local speed = self:getAttribute("Speed") or 16
+        -- Get segment-specific speed, or fall back to default
+        local speed = self._path:getSegmentSpeed(segmentIndex or 1)
 
         if movementType == "humanoid" then
             -- Use Humanoid:MoveTo()
@@ -505,10 +544,12 @@ local PathFollower = Node.extend({
     --]]
     _startNavigation = function(self)
         self._navigating = true
-        self._currentIndex = 0
+        self._path:reset()
 
         task.spawn(function()
-            for index, target in ipairs(self._waypoints) do
+            local waypointCount = self._path:getWaypointCount()
+
+            for index = 1, waypointCount do
                 -- Check if stopped
                 if self._stopped then
                     break
@@ -527,11 +568,16 @@ local PathFollower = Node.extend({
                     break
                 end
 
-                -- Update current index
-                self._currentIndex = index
+                -- Update current index in Core
+                self._path:setCurrentIndex(index)
 
-                -- Move to waypoint
-                self:_moveToWaypoint(target)
+                -- Get target waypoint
+                local target = self._path:getWaypoint(index)
+
+                -- Move to waypoint (segment index is index-1 for segment before this waypoint,
+                -- but for speed we want the segment we're traversing TO this waypoint)
+                local segmentIndex = math.max(1, index - 1)
+                self:_moveToWaypoint(target, segmentIndex)
 
                 -- Check if stopped during movement
                 if self._stopped then

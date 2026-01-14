@@ -35,6 +35,7 @@ local Components = {}
 
 -- Navigation
 Components.PathFollower = require(script.PathFollower)
+Components.PathedConveyor = require(script.PathedConveyor)
 
 -- Spawning
 Components.Hatcher = require(script.Hatcher)
@@ -42,6 +43,7 @@ Components.Dropper = require(script.Dropper)
 
 -- Detection
 Components.Zone = require(script.Zone)
+Components.Checkpoint = require(script.Checkpoint)
 
 -- Pool Management
 Components.NodePool = require(script.NodePool)

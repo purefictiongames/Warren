@@ -9,5 +9,7 @@
 local Internal = {}
 
 Internal.SpawnerCore = require(script.SpawnerCore)
+Internal.PathFollowerCore = require(script.PathFollowerCore)
+Internal.EntityUtils = require(script.EntityUtils)
 
 return Internal

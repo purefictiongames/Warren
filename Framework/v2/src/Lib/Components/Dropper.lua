@@ -1,6 +1,6 @@
 --[[
     LibPureFiction Framework v2
-    Dropper.lua - Interval-Based Spawner Component
+    Dropper.lua - Versatile Spawner Component
 
     Copyright (c) 2025 Adam Stearns / Pure Fiction Records LLC
     All rights reserved.
@@ -9,18 +9,25 @@
     OVERVIEW
     ============================================================================
 
-    Dropper spawns entities at regular intervals and manages their lifecycle.
+    Dropper spawns entities via interval loop or on-demand signals.
     It uses SpawnerCore internally for spawn/despawn/tracking operations.
 
     Key features:
-    - Interval-based spawning (configurable rate)
+    - Interval-based spawning (timer loop)
+    - On-demand spawning (onDispense signal)
+    - Template pool with sequential/random selection
+    - Optional capacity (total spawn limit) with refill
+    - Optional maxActive (concurrent spawn limit)
     - Tracks all spawned entities
-    - Despawns entities via onReturn signal (e.g., from Zone detection)
-    - Optional max active limit
 
     Dropper is designed to work with other components via wiring:
     - PathFollower: Guide spawned entities along paths
     - Zone: Detect when entities reach destination, signal back to Dropper
+
+    Use cases:
+    - Tycoon dropper (interval loop, single template)
+    - Tool dispenser (on-demand, pool of items, finite capacity)
+    - NPC spawner (interval or on-demand, maxActive limit)
 
     ============================================================================
     SIGNALS
@@ -33,28 +40,39 @@
         onStop()
             - Stop the spawn loop (does not despawn existing entities)
 
+        onDispense({ count?, templateName? })
+            - One-shot spawn, bypasses interval loop
+            - count: number of items to spawn (default 1)
+            - templateName: override template for this dispense
+
         onReturn({ assetId: string })
             - Despawn a specific entity by assetId
             - Typically wired from Zone.entityEntered
 
-        onConfigure({ interval?, templateName?, maxActive?, spawnPosition? })
-            - Configure dropper settings
+        onConfigure({ interval?, templateName?, maxActive?, ... })
+            - Configure dropper settings (see CONFIGURATION)
+
+        onRefill({ amount? })
+            - Restore capacity (nil = full refill)
 
         onDespawnAll()
             - Despawn all entities spawned by this dropper
 
     OUT (emits):
-        spawned({ assetId: string, instance: Instance, entityId: string })
+        spawned({ assetId, instance, entityId, templateName, dropperId })
             - Fired when an entity is spawned
             - Wire to PathFollower.onControl to assign entity for navigation
 
-        despawned({ assetId: string, entityId: string })
+        despawned({ assetId, entityId, dropperId })
             - Fired when an entity is despawned
 
-        loopStarted()
+        depleted({ dropperId })
+            - Fired when capacity is exhausted
+
+        loopStarted({ dropperId })
             - Fired when spawn loop begins
 
-        loopStopped()
+        loopStopped({ dropperId })
             - Fired when spawn loop ends
 
     ============================================================================
@@ -62,19 +80,39 @@
     ============================================================================
 
     Interval: number (default 2)
-        Seconds between spawns
+        Seconds between spawns in loop mode
 
     TemplateName: string (default "")
-        Name of template to spawn from ReplicatedStorage.Templates
+        Name of template to spawn (single template mode)
 
     MaxActive: number (default 0)
         Maximum concurrent spawned entities (0 = unlimited)
+
+    Capacity: number (default nil)
+        Total spawn limit (nil = unlimited)
+
+    PoolMode: string (default "single")
+        Template selection mode: "single", "sequential", "random"
 
     AutoStart: boolean (default false)
         If true, begins spawning on init
 
     SpawnOffset: Vector3 (default 0,0,0)
         Offset from dropper position for spawn location
+
+    ============================================================================
+    CONFIGURATION
+    ============================================================================
+
+    onConfigure accepts:
+        interval: number - Seconds between spawns
+        templateName: string - Single template name
+        pool: table - Array of template names for multi-template mode
+        poolMode: string - "single", "sequential", "random"
+        maxActive: number - Concurrent limit (0 = unlimited)
+        capacity: number - Total limit (nil = unlimited)
+        spawnOffset: Vector3 - Offset from model position
+        spawnPosition: Vector3 - Absolute spawn position (overrides offset)
 
     ============================================================================
     USAGE
@@ -138,6 +176,12 @@ local Dropper = Node.extend({
             self._spawnedAssetIds = {}  -- { [assetId] = true }
             self._spawnCounter = 0
 
+            -- Pool state
+            self._pool = nil           -- Array of template names
+            self._poolIndex = 0        -- Current index for sequential mode
+            self._capacity = nil       -- Total spawn limit (nil = unlimited)
+            self._remaining = nil      -- Remaining spawns (nil = unlimited)
+
             -- Ensure SpawnerCore is initialized
             if not SpawnerCore.isInitialized() then
                 SpawnerCore.init({
@@ -154,6 +198,9 @@ local Dropper = Node.extend({
             end
             if not self:getAttribute("MaxActive") then
                 self:setAttribute("MaxActive", 0)
+            end
+            if not self:getAttribute("PoolMode") then
+                self:setAttribute("PoolMode", "single")
             end
             if self:getAttribute("AutoStart") == nil then
                 self:setAttribute("AutoStart", false)
@@ -205,6 +252,23 @@ local Dropper = Node.extend({
 
             if data.spawnOffset then
                 self:setAttribute("SpawnOffset", data.spawnOffset)
+            end
+
+            -- Pool configuration
+            if data.pool then
+                self._pool = data.pool
+                self._poolIndex = 0
+            end
+
+            if data.poolMode then
+                self:setAttribute("PoolMode", data.poolMode)
+            end
+
+            -- Capacity configuration
+            if data.capacity ~= nil then
+                self._capacity = data.capacity
+                self._remaining = data.capacity
+                self:setAttribute("Capacity", data.capacity)
             end
         end,
 
@@ -262,6 +326,53 @@ local Dropper = Node.extend({
         onDespawnAll = function(self)
             self:_despawnAll()
         end,
+
+        --[[
+            One-shot spawn - bypasses interval loop.
+            Use for dispenser-style on-demand spawning.
+        --]]
+        onDispense = function(self, data)
+            data = data or {}
+            local count = data.count or 1
+            local templateOverride = data.templateName
+
+            for _ = 1, count do
+                -- Check if we can spawn (capacity + maxActive)
+                if not self:_canSpawn() then
+                    break
+                end
+
+                -- Spawn with optional template override
+                self:_spawn(templateOverride)
+            end
+        end,
+
+        --[[
+            Restore capacity.
+            amount = nil: full refill to original capacity
+            amount = number: add that amount (capped at capacity)
+        --]]
+        onRefill = function(self, data)
+            data = data or {}
+
+            if self._capacity == nil then
+                -- Unlimited capacity, nothing to refill
+                return
+            end
+
+            if data.amount then
+                -- Partial refill
+                self._remaining = math.min(
+                    (self._remaining or 0) + data.amount,
+                    self._capacity
+                )
+            else
+                -- Full refill
+                self._remaining = self._capacity
+            end
+
+            self:setAttribute("Remaining", self._remaining)
+        end,
     },
 
     ----------------------------------------------------------------------------
@@ -269,8 +380,9 @@ local Dropper = Node.extend({
     ----------------------------------------------------------------------------
 
     Out = {
-        spawned = {},    -- { assetId, instance, entityId, dropperId }
+        spawned = {},    -- { assetId, instance, entityId, templateName, dropperId }
         despawned = {},  -- { assetId, entityId, dropperId }
+        depleted = {},   -- { dropperId }
         loopStarted = {},
         loopStopped = {},
     },
@@ -333,21 +445,60 @@ local Dropper = Node.extend({
     end,
 
     --[[
-        Check if we can spawn (respects MaxActive).
+        Check if we can spawn (respects MaxActive and Capacity).
     --]]
     _canSpawn = function(self)
-        local maxActive = self:getAttribute("MaxActive") or 0
-        if maxActive <= 0 then
-            return true  -- Unlimited
+        -- Check capacity (total limit)
+        if self._remaining ~= nil and self._remaining <= 0 then
+            return false
         end
-        return self:_getActiveCount() < maxActive
+
+        -- Check maxActive (concurrent limit)
+        local maxActive = self:getAttribute("MaxActive") or 0
+        if maxActive > 0 and self:_getActiveCount() >= maxActive then
+            return false
+        end
+
+        return true
+    end,
+
+    --[[
+        Select template name based on pool mode.
+        Returns template name string.
+    --]]
+    _selectTemplate = function(self, override)
+        -- If override provided, use it
+        if override then
+            return override
+        end
+
+        -- If no pool, use single template
+        local pool = self._pool
+        if not pool or #pool == 0 then
+            return self:getAttribute("TemplateName")
+        end
+
+        -- Select based on pool mode
+        local mode = self:getAttribute("PoolMode") or "single"
+
+        if mode == "sequential" then
+            self._poolIndex = (self._poolIndex % #pool) + 1
+            return pool[self._poolIndex]
+        elseif mode == "random" then
+            return pool[math.random(#pool)]
+        else
+            -- "single" mode - just use first item
+            return pool[1]
+        end
     end,
 
     --[[
         Spawn a single entity.
+        templateOverride: optional template name to use instead of pool selection
     --]]
-    _spawn = function(self)
-        local templateName = self:getAttribute("TemplateName")
+    _spawn = function(self, templateOverride)
+        -- Select template (from pool, single, or override)
+        local templateName = self:_selectTemplate(templateOverride)
         if not templateName or templateName == "" then
             self.Err:Fire({
                 reason = "no_template",
@@ -357,7 +508,7 @@ local Dropper = Node.extend({
             return nil
         end
 
-        -- Check max active limit
+        -- Check limits (capacity + maxActive)
         if not self:_canSpawn() then
             return nil
         end
@@ -391,11 +542,23 @@ local Dropper = Node.extend({
         -- Track this spawn
         self._spawnedAssetIds[result.assetId] = true
 
+        -- Decrement capacity if finite
+        if self._remaining ~= nil then
+            self._remaining = self._remaining - 1
+            self:setAttribute("Remaining", self._remaining)
+
+            -- Fire depleted if capacity exhausted
+            if self._remaining <= 0 then
+                self.Out:Fire("depleted", { dropperId = self.id })
+            end
+        end
+
         -- Fire spawned signal
         self.Out:Fire("spawned", {
             assetId = result.assetId,
             instance = result.instance,
             entityId = entityId,
+            templateName = templateName,
             dropperId = self.id,
         })
 

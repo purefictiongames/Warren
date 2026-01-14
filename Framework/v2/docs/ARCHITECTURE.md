@@ -30,12 +30,14 @@ LibPureFiction/
 │   │   │   ├── Hatcher.lua       <- Gacha/egg mechanics
 │   │   │   ├── Zone.lua          <- Region detection
 │   │   │   ├── Checkpoint.lua    <- Direction-aware threshold
-│   │   │   └── NodePool.lua      <- Generic node pooling
+│   │   │   ├── NodePool.lua      <- Generic node pooling
+│   │   │   └── Orchestrator.lua  <- Declarative composition & wiring
 │   │   ├── Internal/             <- Internal utilities (not public API)
 │   │   │   ├── init.lua
 │   │   │   ├── SpawnerCore.lua   <- Shared spawn/despawn mechanics
 │   │   │   ├── PathFollowerCore.lua <- Shared path infrastructure
-│   │   │   └── EntityUtils.lua   <- Common entity helpers
+│   │   │   ├── EntityUtils.lua   <- Common entity helpers
+│   │   │   └── SchemaValidator.lua <- Payload validation for Orchestrator
 │   │   └── Tests/
 │   │       ├── IPC_Node_Tests.lua
 │   │       ├── Hatcher_Tests.lua
@@ -43,7 +45,9 @@ LibPureFiction/
 │   │       ├── Dropper_Tests.lua
 │   │       ├── PathedConveyor_Tests.lua
 │   │       ├── Checkpoint_Tests.lua
-│   │       └── ConveyorBelt_Tests.lua  <- Visual composition demo
+│   │       ├── ConveyorBelt_Tests.lua  <- Visual composition demo
+│   │       ├── SchemaValidator_Tests.lua
+│   │       └── Orchestrator_Tests.lua
 │   ├── Game/                     <- Game-specific nodes
 │   │   └── init.lua
 │   └── Bootstrap/
@@ -202,6 +206,7 @@ Reusable game components live in `Lib/Components/`. These extend the Node base c
 | **Zone** | Region detection with declarative filtering | Implemented |
 | **Checkpoint** | Direction-aware threshold detection (6-face box) | Implemented |
 | **NodePool** | Generic node pooling (fixed or elastic mode) | Implemented |
+| **Orchestrator** | Declarative component composition with schema validation | Implemented |
 | **Projectile** | Spawn and manage projectiles | Planned |
 | **HealthSystem** | Damage, healing, death | Planned |
 | **Currency** | Player economy tracking | Planned |
@@ -217,10 +222,12 @@ Internal utilities live in `Lib/Internal/`. These are NOT part of the public API
 | **SpawnerCore** | Template lookup, cloning, asset ID tracking, despawn |
 | **PathFollowerCore** | Waypoints, segments, per-segment speeds, direction calculation |
 | **EntityUtils** | Common entity helpers (getPosition, getId, passesFilter, isPlayer) |
+| **SchemaValidator** | Payload validation with type checking, enum, range, custom validators |
 
 SpawnerCore is used by Dropper, Hatcher, and future spawning components.
 PathFollowerCore is used by PathFollower and PathedConveyor for shared path infrastructure.
 EntityUtils is used by Zone, Checkpoint, PathedConveyor for entity detection helpers.
+SchemaValidator is used by Orchestrator for message contract validation.
 
 ### Usage
 
@@ -360,6 +367,71 @@ Dropper                   NodePool<PathFollower>              Zone
 ```
 
 The ConveyorBelt test (`Tests.ConveyorBelt.demo()`) demonstrates this pattern with visual entities spawning, following waypoints, and despawning when they reach the end zone.
+
+## Orchestrator Component
+
+The Orchestrator is a meta-component that manages other components through declarative configuration. It provides:
+
+- **Node instantiation** from configuration tables
+- **Signal wiring** between managed nodes
+- **Schema validation** on message payloads
+- **Mode-based wiring** configurations
+
+### Basic Usage
+
+```lua
+local Lib = require(game.ReplicatedStorage.Lib)
+local Orchestrator = Lib.Components.Orchestrator
+
+local orch = Orchestrator:new({ id = "GameOrchestrator" })
+orch.Sys.onInit(orch)
+orch.In.onConfigure(orch, {
+    -- Named schemas for payload validation
+    schemas = {
+        SpawnedPayload = {
+            entity = { type = "Instance", required = true },
+            entityId = { type = "string", required = true },
+        },
+    },
+
+    -- Nodes to instantiate
+    nodes = {
+        Spawner = { class = "Dropper", config = { interval = 2 } },
+        EndZone = { class = "Zone" },
+    },
+
+    -- Signal wiring
+    wiring = {
+        {
+            from = "Spawner",
+            signal = "spawned",
+            to = "EndZone",
+            handler = "onConfigure",
+            schema = "SpawnedPayload",  -- Optional validation
+            validate = true,            -- Block invalid payloads
+        },
+    },
+
+    -- Mode-specific wiring (additive to default)
+    modes = {
+        tutorial = { wiring = { ... } },
+        gameplay = { wiring = { ... } },
+    },
+})
+
+orch.In.onEnable(orch)  -- Start routing
+orch.In.onSetMode(orch, { mode = "gameplay" })  -- Switch modes
+```
+
+### Schema Validation
+
+SchemaValidator supports these types:
+- **Lua**: string, number, boolean, table, function, any
+- **Roblox**: Instance, Player, Model, Part, Vector3, CFrame, Color3
+
+Field options: `type`, `required`, `enum`, `range`, `default`, `validator`
+
+See `docs/ORCHESTRATOR_DESIGN.md` for full specification.
 
 ## Licensing
 

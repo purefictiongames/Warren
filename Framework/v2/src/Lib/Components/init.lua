@@ -48,4 +48,7 @@ Components.Checkpoint = require(script.Checkpoint)
 -- Pool Management
 Components.NodePool = require(script.NodePool)
 
+-- Composition
+Components.Orchestrator = require(script.Orchestrator)
+
 return Components

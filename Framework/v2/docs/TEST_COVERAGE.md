@@ -173,7 +173,177 @@ Utility functions.
 | Error Handling | 2 |
 | Mode Pins | 2 |
 | IPC Utilities | 1 |
-| **Total** | **66** |
+| **IPC Subtotal** | **66** |
+
+---
+
+## SchemaValidator Tests (50 tests)
+
+Run with: `Tests.SchemaValidator.runAll()`
+
+### Type Checking (14 tests)
+Type checker functions for all supported types.
+
+| Test | What It Validates |
+|------|-------------------|
+| getTypeChecker returns function for valid types | Function retrieval |
+| getTypeChecker returns nil for unknown types | Unknown handling |
+| isValidType returns true for valid types | Type validation |
+| isValidType returns false for invalid types | Invalid handling |
+| string/number/boolean/table type checkers | Lua types |
+| any type checker accepts everything | Any type |
+| Vector3/CFrame/Instance/Part/Model checkers | Roblox types |
+
+### Field Validation (12 tests)
+Individual field validation logic.
+
+| Test | What It Validates |
+|------|-------------------|
+| validateField passes/fails type checks | Type enforcement |
+| validateField handles required fields | Required enforcement |
+| validateField validates enum values | Enum constraint |
+| validateField validates number ranges | Range constraint |
+| validateField runs custom validators | Custom logic |
+
+### Schema Validation (6 tests)
+Full schema validation.
+
+| Test | What It Validates |
+|------|-------------------|
+| validate passes valid payloads | Happy path |
+| validate fails missing required | Required detection |
+| validate fails wrong types | Type detection |
+| validate collects multiple errors | Error aggregation |
+
+### Validate and Process (3 tests)
+Validation with default injection.
+
+| Test | What It Validates |
+|------|-------------------|
+| validateAndProcess injects defaults | Default injection |
+| validateAndProcess preserves values | No overwrite |
+| validateAndProcess validates after defaults | Post-default validation |
+
+### Sanitize (3 tests)
+Payload sanitization for security.
+
+| Test | What It Validates |
+|------|-------------------|
+| sanitize removes undeclared fields | Field whitelist |
+| sanitize injects defaults | Default injection |
+| sanitize handles nil inputs | Edge cases |
+
+### Schema Definition (6 tests)
+Schema definition validation.
+
+| Test | What It Validates |
+|------|-------------------|
+| validateSchema passes valid schema | Happy path |
+| validateSchema fails missing type | Required type |
+| validateSchema fails unknown type | Type validation |
+| validateSchema fails enum on non-string | Constraint matching |
+| validateSchema fails range on non-number | Constraint matching |
+| validateSchema fails non-function validator | Validator type |
+
+### Utilities (4 tests)
+Utility functions.
+
+| Test | What It Validates |
+|------|-------------------|
+| mergeSchemas combines schemas | Schema composition |
+| formatErrors creates readable string | Error formatting |
+| getSupportedTypes returns types | Type enumeration |
+
+### Sender Validation (2 tests)
+Client→Server security.
+
+| Test | What It Validates |
+|------|-------------------|
+| validateSender passes matching player | Valid sender |
+| validateSender fails non-table payload | Input validation |
+
+---
+
+## Orchestrator Tests (24 tests)
+
+Run with: `Tests.Orchestrator.runAll()`
+
+### Basics (3 tests)
+Core Orchestrator functionality.
+
+| Test | What It Validates |
+|------|-------------------|
+| Orchestrator extends Node | Inheritance |
+| Orchestrator creates instance | Instantiation |
+| Orchestrator initializes internal state | State setup |
+
+### Configuration (6 tests)
+Configuration handling.
+
+| Test | What It Validates |
+|------|-------------------|
+| onConfigure accepts empty config | Empty handling |
+| onConfigure registers schemas | Schema storage |
+| onConfigure rejects invalid schema | Schema validation |
+| onConfigure spawns nodes | Node creation |
+| onConfigure rejects unknown class | Class validation |
+| onConfigure fires configured signal | Signal emission |
+
+### Node Management (4 tests)
+Dynamic node management.
+
+| Test | What It Validates |
+|------|-------------------|
+| onAddNode adds single node | Dynamic add |
+| onRemoveNode removes node | Dynamic remove |
+| getNodeIds returns all node IDs | Node enumeration |
+| nodes receive onInit during configuration | Lifecycle |
+
+### Wiring (3 tests)
+Signal routing.
+
+| Test | What It Validates |
+|------|-------------------|
+| wiring routes signals between nodes | Signal routing |
+| wiring validates config structure | Config validation |
+| enable/disable controls routing | Routing toggle |
+
+### Schema Validation (3 tests)
+Payload validation on wiring.
+
+| Test | What It Validates |
+|------|-------------------|
+| wiring validates payload against schema | Schema enforcement |
+| strict validation blocks invalid payload | Strict mode |
+| inline schema works | Inline schemas |
+
+### Mode System (3 tests)
+Mode-based wiring.
+
+| Test | What It Validates |
+|------|-------------------|
+| onSetMode switches modes | Mode switching |
+| mode switch fires modeChanged signal | Signal emission |
+| mode-specific wiring adds to default | Additive wiring |
+
+### Error Handling (2 tests)
+Error detection.
+
+| Test | What It Validates |
+|------|-------------------|
+| errors on invalid config data | Config validation |
+| errors on missing target node | Target validation |
+
+---
+
+## Full Test Summary
+
+| Suite | Tests |
+|-------|-------|
+| IPC & Node | 66 |
+| SchemaValidator | 50 |
+| Orchestrator | 24 |
+| **Total** | **140** |
 
 ---
 

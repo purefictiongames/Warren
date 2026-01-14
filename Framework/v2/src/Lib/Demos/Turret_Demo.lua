@@ -474,7 +474,8 @@ function Demo.run(config)
 
             if math.abs(yawDiff) < aimThreshold and math.abs(pitchDiff) < aimThreshold then
                 if launcher:isReady() then
-                    launcher.In.onFire(launcher, { targetPosition = targetPos })
+                    -- Fire straight from muzzle - swivels handle aiming
+                    launcher.In.onFire(launcher)
                 end
             end
         else

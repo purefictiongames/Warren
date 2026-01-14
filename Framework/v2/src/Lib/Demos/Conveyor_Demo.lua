@@ -40,6 +40,15 @@ function Demo.run(config)
     local position = config.position or Vector3.new(0, 5, 0)
 
     ---------------------------------------------------------------------------
+    -- CLEANUP EXISTING DEMO (handles Studio persistence between runs)
+    ---------------------------------------------------------------------------
+
+    local existingDemo = workspace:FindFirstChild("Conveyor_Demo")
+    if existingDemo then
+        existingDemo:Destroy()
+    end
+
+    ---------------------------------------------------------------------------
     -- ANNOUNCEMENT SYSTEM
     ---------------------------------------------------------------------------
 

@@ -40,6 +40,15 @@ function Demo.run(config)
     local position = config.position or Vector3.new(0, 10, 0)
 
     ---------------------------------------------------------------------------
+    -- CLEANUP EXISTING DEMO (handles Studio persistence between runs)
+    ---------------------------------------------------------------------------
+
+    local existingDemo = workspace:FindFirstChild("Launcher_Demo")
+    if existingDemo then
+        existingDemo:Destroy()
+    end
+
+    ---------------------------------------------------------------------------
     -- CREATE PROJECTILE TEMPLATE
     ---------------------------------------------------------------------------
 

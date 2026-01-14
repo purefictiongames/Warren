@@ -40,6 +40,24 @@ function Demo.run(config)
     local position = config.position or Vector3.new(0, 5, 0)
 
     ---------------------------------------------------------------------------
+    -- CLEANUP EXISTING DEMO (handles Studio persistence between runs)
+    ---------------------------------------------------------------------------
+
+    local existingDemo = workspace:FindFirstChild("Turret_Demo")
+    if existingDemo then
+        existingDemo:Destroy()
+    end
+
+    -- Clean up old template to ensure fresh tracer settings
+    local templateFolder = ReplicatedStorage:FindFirstChild("Templates")
+    if templateFolder then
+        local oldBullet = templateFolder:FindFirstChild("TurretBullet")
+        if oldBullet then
+            oldBullet:Destroy()
+        end
+    end
+
+    ---------------------------------------------------------------------------
     -- ANNOUNCEMENT SYSTEM
     ---------------------------------------------------------------------------
 

@@ -66,4 +66,7 @@ Lib.Components = require(script.Components)
 -- Test suite is NOT auto-loaded to avoid circular dependency
 -- Access via: require(game.ReplicatedStorage.Lib.Tests)
 
+-- Visual demos are NOT auto-loaded to avoid circular dependency
+-- Access via: require(game.ReplicatedStorage.Lib.Demos)
+
 return Lib

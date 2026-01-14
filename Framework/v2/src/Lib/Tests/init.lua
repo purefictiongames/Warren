@@ -50,4 +50,9 @@ Tests.Checkpoint = safeRequire("Checkpoint_Tests", script:WaitForChild("Checkpoi
 Tests.SchemaValidator = safeRequire("SchemaValidator_Tests", script:WaitForChild("SchemaValidator_Tests"))
 Tests.Orchestrator = safeRequire("Orchestrator_Tests", script:WaitForChild("Orchestrator_Tests"))
 
+-- Turret System
+Tests.Swivel = safeRequire("Swivel_Tests", script:WaitForChild("Swivel_Tests"))
+Tests.Targeter = safeRequire("Targeter_Tests", script:WaitForChild("Targeter_Tests"))
+Tests.Launcher = safeRequire("Launcher_Tests", script:WaitForChild("Launcher_Tests"))
+
 return Tests

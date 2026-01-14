@@ -314,6 +314,23 @@ local PathFollower = Node.extend({
     ----------------------------------------------------------------------------
 
     --[[
+        Get the primary part of the entity (handles both Parts and Models).
+    --]]
+    _getPrimaryPart = function(self)
+        if not self._entity then
+            return nil
+        end
+
+        if self._entity:IsA("BasePart") then
+            return self._entity
+        elseif self._entity:IsA("Model") then
+            return self._entity.PrimaryPart or self._entity:FindFirstChildWhichIsA("BasePart")
+        end
+
+        return nil
+    end,
+
+    --[[
         Try to start navigation if both entity and waypoints are ready.
     --]]
     _tryStart = function(self)
@@ -332,7 +349,7 @@ local PathFollower = Node.extend({
             return  -- No collision handling needed
         end
 
-        local primaryPart = self._entity.PrimaryPart or self._entity:FindFirstChildWhichIsA("BasePart")
+        local primaryPart = self:_getPrimaryPart()
         if not primaryPart then
             return
         end
@@ -389,7 +406,7 @@ local PathFollower = Node.extend({
         -- Handle based on CollisionMode
         if collisionMode == "physics" then
             -- Unanchor to let physics take over
-            local primaryPart = self._entity.PrimaryPart or self._entity:FindFirstChildWhichIsA("BasePart")
+            local primaryPart = self:_getPrimaryPart()
             if primaryPart then
                 primaryPart.Anchored = false
             end
@@ -416,7 +433,7 @@ local PathFollower = Node.extend({
 
                     -- Re-anchor if we unanchored
                     if collisionMode == "physics" then
-                        local primaryPart = self._entity.PrimaryPart or self._entity:FindFirstChildWhichIsA("BasePart")
+                        local primaryPart = self:_getPrimaryPart()
                         if primaryPart then
                             primaryPart.Anchored = true
                         end
@@ -441,7 +458,7 @@ local PathFollower = Node.extend({
 
             -- Re-anchor if we unanchored
             if collisionMode == "physics" then
-                local primaryPart = self._entity.PrimaryPart or self._entity:FindFirstChildWhichIsA("BasePart")
+                local primaryPart = self:_getPrimaryPart()
                 if primaryPart then
                     primaryPart.Anchored = true
                 end
@@ -505,7 +522,7 @@ local PathFollower = Node.extend({
             humanoid.MoveToFinished:Wait()
         else
             -- Use TweenService for non-Humanoid entities
-            local primaryPart = self._entity.PrimaryPart or self._entity:FindFirstChildWhichIsA("BasePart")
+            local primaryPart = self:_getPrimaryPart()
             if not primaryPart then
                 self.Err:Fire({ reason = "no_primary_part", message = "Entity has no PrimaryPart for tween movement" })
                 return
@@ -609,7 +626,7 @@ local PathFollower = Node.extend({
             -- Restore original anchor state for tween-based entities
             -- (Do this BEFORE firing pathComplete, as listeners may reset our state)
             if self._originalAnchored ~= nil and self._entity then
-                local primaryPart = self._entity.PrimaryPart or self._entity:FindFirstChildWhichIsA("BasePart")
+                local primaryPart = self:_getPrimaryPart()
                 if primaryPart then
                     primaryPart.Anchored = self._originalAnchored
                 end

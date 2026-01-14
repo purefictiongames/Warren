@@ -117,6 +117,14 @@ Node.defaults = {
         onSpawned = function(self) end,
         onDespawning = function(self) end,
     },
+    In = {
+        -- Internal ack handler for sync signals
+        -- This is called when a sync signal's ack is received
+        _onAck = function(self, data)
+            -- This is handled by waitForSignal, but we define it here
+            -- so the handler exists and can be invoked
+        end,
+    },
 }
 
 Node.required = {
@@ -131,23 +139,68 @@ Node.required = {
 local OutChannel = {}
 OutChannel.__index = OutChannel
 
+-- Correlation ID counter for sync signals
+local _correlationCounter = 0
+local function generateCorrelationId()
+    _correlationCounter = _correlationCounter + 1
+    return "sync_" .. _correlationCounter .. "_" .. tostring(os.clock()):gsub("%.", "")
+end
+
 function OutChannel.new(node)
     local self = setmetatable({}, OutChannel)
     self._node = node
     return self
 end
 
-function OutChannel:Fire(signal, data)
-    -- This will be replaced by IPC routing
-    -- For now, just log if Debug is available
+--[[
+    Fire a signal to connected nodes.
+
+    @param signal string - Signal name
+    @param data table? - Signal payload
+    @param options table? - Options:
+        - sync: boolean - If true, block until receiver acknowledges
+        - timeout: number - Sync timeout in seconds (default 5)
+    @return boolean, any - Success and ack data (for sync mode)
+--]]
+function OutChannel:Fire(signal, data, options)
+    data = data or {}
+    options = options or {}
+
     local System = self._node._System
     if System and System.Debug then
-        System.Debug.trace(self._node.id or "Node", "Out:Fire", signal)
+        System.Debug.trace(self._node.id or "Node", "Out:Fire", signal, options.sync and "(sync)" or "")
     end
 
-    -- Store for IPC to pick up
-    if self._node._ipcSend then
-        self._node._ipcSend(self._node.id, signal, data)
+    -- Sync mode: add correlation metadata and wait for ack
+    if options.sync then
+        local correlationId = generateCorrelationId()
+        data._sync = {
+            id = correlationId,
+            replyTo = self._node.id,
+        }
+
+        -- Fire the signal
+        if self._node._ipcSend then
+            self._node._ipcSend(self._node.id, signal, data)
+        end
+
+        -- Wait for ack
+        local timeout = options.timeout or 5
+        local ackData = self._node:waitForSignal("_onAck", timeout)
+
+        -- Check if ack matches our correlation ID
+        if ackData and ackData._correlationId == correlationId then
+            return true, ackData
+        else
+            -- Timeout or mismatched ack
+            return false, nil
+        end
+    else
+        -- Async mode: fire and forget
+        if self._node._ipcSend then
+            self._node._ipcSend(self._node.id, signal, data)
+        end
+        return true
     end
 end
 

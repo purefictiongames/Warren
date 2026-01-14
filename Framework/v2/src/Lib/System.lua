@@ -1417,6 +1417,25 @@ System.IPC = (function()
             System.Debug.trace("IPC", "Handler", handlerName, "not found or failed on", targetId)
         end
 
+        -- Auto-ack for sync mode: if handler succeeded and signal has sync metadata,
+        -- send ack event back to the sender through IPC
+        if success and data._sync and data._sync.replyTo then
+            local ackData = {
+                _correlationId = data._sync.id,
+                _ackFor = signal,
+                targetId = targetId,
+            }
+            -- Use deferred dispatch to avoid blocking
+            task.defer(function()
+                if instances[data._sync.replyTo] then
+                    local ackMsgId = nextMessageId
+                    nextMessageId = nextMessageId + 1
+                    dispatchToTarget(data._sync.replyTo, "_ack", ackData, ackMsgId)
+                end
+            end)
+            System.Debug.trace("IPC", "Auto-ack sent for sync signal:", signal, "->", data._sync.replyTo)
+        end
+
         return success
     end
 

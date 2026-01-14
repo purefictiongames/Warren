@@ -311,16 +311,14 @@ local Launcher = Node.extend({
             if part:IsA("BasePart") then
                 part.Anchored = false
                 part.CanCollide = true
-                -- Disable gravity so projectiles fly straight (tracer behavior)
-                part.CustomPhysicalProperties = PhysicalProperties.new(
-                    0.7,  -- Density
-                    0.3,  -- Friction
-                    0.5,  -- Elasticity
-                    1,    -- FrictionWeight
-                    1     -- ElasticityWeight
-                )
-                -- This is the key - no gravity drop
-                part.AssemblyGravityModifier = 0
+
+                -- Add BodyForce to counteract gravity (tracer behavior)
+                -- This is more compatible than AssemblyGravityModifier
+                local mass = part:GetMass()
+                local antiGravity = Instance.new("BodyForce")
+                antiGravity.Name = "AntiGravity"
+                antiGravity.Force = Vector3.new(0, mass * workspace.Gravity, 0)
+                antiGravity.Parent = part
             end
         end
 

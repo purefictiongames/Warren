@@ -32,10 +32,147 @@ local RunService = game:GetService("RunService")
 local Debris = game:GetService("Debris")
 local Lib = require(ReplicatedStorage:WaitForChild("Lib"))
 
+-- Use framework's InputCapture system for exclusive input focus
+local InputCapture = Lib.System.InputCapture
+
 local Node = require(ReplicatedStorage.Lib.Node)
 -- Note: Not using Swivel component - using HingeConstraint servos for smooth physics-based motion
 
 local Demo = {}
+
+--------------------------------------------------------------------------------
+-- TURRET MANUAL CONTROLLER NODE
+-- Declarative control mapping for manual turret control
+--------------------------------------------------------------------------------
+
+local TurretManualController = Node.extend({
+    name = "TurretManualController",
+    domain = "client",
+
+    -- Declarative control mapping
+    Controls = {
+        -- Directional aiming (digital keys + analog stick)
+        aimUp = {
+            keys = { Enum.KeyCode.Up },
+            buttons = { Enum.KeyCode.DPadUp },
+            axis = { stick = "Thumbstick1", direction = "Y+", deadzone = 0.2 },
+        },
+        aimDown = {
+            keys = { Enum.KeyCode.Down },
+            buttons = { Enum.KeyCode.DPadDown },
+            axis = { stick = "Thumbstick1", direction = "Y-", deadzone = 0.2 },
+        },
+        aimLeft = {
+            keys = { Enum.KeyCode.Left },
+            buttons = { Enum.KeyCode.DPadLeft },
+            axis = { stick = "Thumbstick1", direction = "X-", deadzone = 0.2 },
+        },
+        aimRight = {
+            keys = { Enum.KeyCode.Right },
+            buttons = { Enum.KeyCode.DPadRight },
+            axis = { stick = "Thumbstick1", direction = "X+", deadzone = 0.2 },
+        },
+
+        -- Fire action (instant trigger)
+        fire = {
+            keys = { Enum.KeyCode.Space },
+            buttons = { Enum.KeyCode.ButtonA, Enum.KeyCode.ButtonR2 },
+        },
+
+        -- Exit action (hold-to-trigger)
+        exit = {
+            keys = { Enum.KeyCode.E },
+            buttons = { Enum.KeyCode.ButtonY },
+            holdDuration = 1.5,
+        },
+    },
+
+    Sys = {
+        onInit = function(self)
+            self._keysHeld = {
+                up = false,
+                down = false,
+                left = false,
+                right = false,
+            }
+            self._exitProgress = 0
+            self._onFire = nil       -- Callback for firing
+            self._onExit = nil       -- Callback for exiting manual mode
+        end,
+    },
+
+    In = {
+        onActionBegan = function(self, action)
+            if action == "aimUp" then
+                self._keysHeld.up = true
+            elseif action == "aimDown" then
+                self._keysHeld.down = true
+            elseif action == "aimLeft" then
+                self._keysHeld.left = true
+            elseif action == "aimRight" then
+                self._keysHeld.right = true
+            elseif action == "fire" then
+                if self._onFire then
+                    self._onFire()
+                end
+            end
+        end,
+
+        onActionEnded = function(self, action)
+            if action == "aimUp" then
+                self._keysHeld.up = false
+            elseif action == "aimDown" then
+                self._keysHeld.down = false
+            elseif action == "aimLeft" then
+                self._keysHeld.left = false
+            elseif action == "aimRight" then
+                self._keysHeld.right = false
+            elseif action == "exit" then
+                -- Reset exit progress if released early
+                self._exitProgress = 0
+            end
+        end,
+
+        onActionHeld = function(self, action, progress)
+            if action == "exit" then
+                self._exitProgress = progress
+            end
+        end,
+
+        onActionTriggered = function(self, action)
+            if action == "exit" then
+                if self._onExit then
+                    self._onExit()
+                end
+            end
+        end,
+
+        onControlReleased = function(self)
+            -- Reset all state
+            self._keysHeld = {
+                up = false,
+                down = false,
+                left = false,
+                right = false,
+            }
+            self._exitProgress = 0
+        end,
+    },
+
+    -- Public methods
+    getKeysHeld = function(self)
+        return self._keysHeld
+    end,
+
+    getExitProgress = function(self)
+        return self._exitProgress
+    end,
+
+    setCallbacks = function(self, onFire, onExit)
+        self._onFire = onFire
+        self._onExit = onExit
+    end,
+})
 
 --------------------------------------------------------------------------------
 -- TRACER PROJECTILE CREATION
@@ -267,6 +404,20 @@ function Demo.run(config)
     basePlatform.Material = Enum.Material.DiamondPlate
     basePlatform.Parent = demoFolder
 
+    ---------------------------------------------------------------------------
+    -- PROXIMITY PROMPT: Take/Release manual control
+    ---------------------------------------------------------------------------
+
+    local controlPrompt = Instance.new("ProximityPrompt")
+    controlPrompt.ObjectText = "Turret"
+    controlPrompt.ActionText = "Take Control"
+    controlPrompt.HoldDuration = 1.5  -- Hold for 1.5 seconds to activate
+    controlPrompt.MaxActivationDistance = 20  -- Larger range for turret POV
+    controlPrompt.RequiresLineOfSight = false
+    controlPrompt.KeyboardKeyCode = Enum.KeyCode.E
+    controlPrompt.GamepadKeyCode = Enum.KeyCode.ButtonY  -- Y button on controller
+    controlPrompt.Parent = basePlatform
+
     -- Yaw base (rotates left/right) - UNANCHORED, connected via HingeConstraint
     local yawBase = Instance.new("Part")
     yawBase.Name = "YawBase"
@@ -422,8 +573,8 @@ function Demo.run(config)
 
     local statusFrame = Instance.new("Frame")
     statusFrame.Name = "StatusFrame"
-    statusFrame.Size = UDim2.new(0, 250, 0, 80)
-    statusFrame.Position = UDim2.new(1, -260, 1, -90)  -- Bottom-right with margin
+    statusFrame.Size = UDim2.new(0, 250, 0, 100)
+    statusFrame.Position = UDim2.new(1, -260, 1, -110)  -- Bottom-right with margin
     statusFrame.BackgroundTransparency = 0.2
     statusFrame.BackgroundColor3 = Color3.new(0, 0, 0)
     statusFrame.BorderSizePixel = 0
@@ -496,53 +647,203 @@ function Demo.run(config)
     }
 
     ---------------------------------------------------------------------------
-    -- MAIN LOOP - Moves target, fires signals, and shoots projectiles
+    -- CONTROL STATE
     ---------------------------------------------------------------------------
 
-    local state = { running = true }
+    local state = {
+        running = true,
+        mode = "auto",  -- "auto" or "manual"
+        manualYaw = 0,
+        manualPitch = 0,
+    }
+
     local targetTime = 0
     local lastFireTime = 0
-    local fireInterval = 0.15  -- Fire rate (seconds between shots)
-    local projectileSpeed = 150  -- Studs per second
+    local fireInterval = 0.15
+    local projectileSpeed = 150
+
+    -- InputCapture claim (created when taking control)
+    local inputClaim = nil
+
+    -- Camera state (saved when entering manual mode)
+    local savedCameraState = nil
+    local camera = workspace.CurrentCamera
+
+    ---------------------------------------------------------------------------
+    -- MANUAL CONTROL: Using declarative TurretManualController
+    ---------------------------------------------------------------------------
+
+    -- Create manual controller node
+    local manualController = TurretManualController:new({ id = "Turret_ManualController" })
+    manualController.Sys.onInit(manualController)
+
+    -- Forward declaration for stopManualControl
+    local stopManualControl
+
+    -- Set up controller callbacks
+    manualController:setCallbacks(
+        function()  -- onFire
+            fireTracer(muzzle, projectilesFolder, 200)
+        end,
+        function()  -- onExit (called when hold duration reached)
+            stopManualControl()
+        end
+    )
+
+    local function startManualControl()
+        state.mode = "manual"
+        state.manualYaw = 0
+        state.manualPitch = 0
+
+        -- Update prompt
+        controlPrompt.ActionText = "Release Control"
+        trackingBeam.Color = ColorSequence.new(Color3.new(1, 0, 0))  -- Red beam
+
+        -- Save camera state and switch to turret POV
+        savedCameraState = {
+            cameraType = camera.CameraType,
+            cameraSubject = camera.CameraSubject,
+            cFrame = camera.CFrame,
+        }
+        camera.CameraType = Enum.CameraType.Scriptable
+
+        -- Claim input focus using declarative control mapping
+        -- InputCapture reads Controls from the node and routes actions to In handlers
+        inputClaim = InputCapture.claimForNode(manualController, { disableCharacter = true })
+
+        print("[Turret] MANUAL MODE - Arrows/D-pad/Stick to aim, Space/A to fire, hold E/Y to release")
+    end
+
+    stopManualControl = function()
+        -- Prevent re-entry if already in auto mode
+        if state.mode == "auto" then return end
+
+        state.mode = "auto"
+
+        -- Update prompt
+        controlPrompt.ActionText = "Take Control"
+        trackingBeam.Color = ColorSequence.new(Color3.new(0, 1, 0))  -- Green beam
+
+        -- Release input claim
+        if inputClaim then
+            local claim = inputClaim
+            inputClaim = nil
+            claim:release()
+        end
+
+        -- Restore camera
+        if savedCameraState then
+            camera.CameraType = savedCameraState.cameraType
+            camera.CameraSubject = savedCameraState.cameraSubject
+            savedCameraState = nil
+        end
+
+        print("[Turret] AUTO MODE - Tracking target")
+    end
+
+    -- ProximityPrompt toggle
+    controlPrompt.Triggered:Connect(function(player)
+        print("[Turret] ProximityPrompt triggered, current mode:", state.mode)
+        if state.mode == "auto" then
+            startManualControl()
+        else
+            stopManualControl()
+        end
+    end)
+
+    -- Debug: show when prompt becomes visible/hidden
+    controlPrompt.PromptShown:Connect(function()
+        print("[Turret] ProximityPrompt shown")
+    end)
+    controlPrompt.PromptHidden:Connect(function()
+        print("[Turret] ProximityPrompt hidden")
+    end)
+
+    ---------------------------------------------------------------------------
+    -- MAIN LOOP
+    ---------------------------------------------------------------------------
 
     local mainConnection = RunService.Heartbeat:Connect(function(dt)
         if not demoFolder.Parent or not state.running then return end
 
-        -- Move target
-        targetTime = targetTime + dt * 0.5
-        local targetPos = position + Vector3.new(
-            math.sin(targetTime) * 25,
-            5 + math.sin(targetTime * 1.3) * 8,
-            -30 + math.cos(targetTime * 0.7) * 15
-        )
-        target.Position = targetPos
-
-        -- Controller calculates aim and fires signals to swivels
-        controller:updateAim(targetPos)
-
-        -- Update tracking beam: extend from muzzle in direction it's pointing
+        -- Update tracking beam
         local muzzlePos = muzzle.Position
-        local muzzleDir = muzzle.CFrame.LookVector  -- Direction muzzle is facing
-        local beamLength = 100
-        beamEndpoint.Position = muzzlePos + muzzleDir * beamLength
+        local muzzleDir = muzzle.CFrame.LookVector
+        beamEndpoint.Position = muzzlePos + muzzleDir * 100
 
-        -- Fire projectiles at interval
-        local currentTime = tick()
-        if currentTime - lastFireTime >= fireInterval then
-            lastFireTime = currentTime
-            fireTracer(muzzle, projectilesFolder, projectileSpeed)
+        if state.mode == "auto" then
+            -- AUTO MODE: Track moving target
+            targetTime = targetTime + dt * 0.5
+            local targetPos = position + Vector3.new(
+                math.sin(targetTime) * 25,
+                5 + math.sin(targetTime * 1.3) * 8,
+                -30 + math.cos(targetTime * 0.7) * 15
+            )
+            target.Position = targetPos
+            target.Transparency = 0
+
+            -- Auto aim
+            controller:updateAim(targetPos)
+
+            -- Auto fire
+            local currentTime = tick()
+            if currentTime - lastFireTime >= fireInterval then
+                lastFireTime = currentTime
+                fireTracer(muzzle, projectilesFolder, projectileSpeed)
+            end
+
+            -- Update status
+            local yaw, pitch = controller:calculateAimAngles(targetPos)
+            local projectileCount = #projectilesFolder:GetChildren()
+            statusLabel.Text = string.format(
+                "TURRET DEMO - AUTO\n" ..
+                "Yaw: %6.1f°  Pitch: %5.1f°\n" ..
+                "Hold E/Y to take control",
+                yaw, pitch
+            )
+            statusLabel.TextColor3 = Color3.new(0, 1, 0)
+        else
+            -- MANUAL MODE: Using declarative control mapping via TurretManualController
+            target.Transparency = 1  -- Hide target
+
+            -- Get keys held from controller
+            local keysHeld = manualController:getKeysHeld()
+
+            -- Apply held keys to adjust angles
+            local turnSpeed = 90 * dt  -- 90 degrees per second
+            if keysHeld.left then state.manualYaw = state.manualYaw + turnSpeed end
+            if keysHeld.right then state.manualYaw = state.manualYaw - turnSpeed end
+            if keysHeld.up then state.manualPitch = state.manualPitch + turnSpeed end
+            if keysHeld.down then state.manualPitch = state.manualPitch - turnSpeed end
+
+            -- Clamp to limits
+            state.manualYaw = math.clamp(state.manualYaw, -180, 180)
+            state.manualPitch = math.clamp(state.manualPitch, -45, 60)
+
+            -- Apply manual angles to hinges
+            yawHinge.TargetAngle = state.manualYaw
+            pitchHinge.TargetAngle = state.manualPitch
+
+            -- Update camera to turret POV
+            local muzzleCF = muzzle.CFrame
+            local cameraOffset = muzzleCF * CFrame.new(0, 0.5, 2)
+            camera.CFrame = CFrame.new(cameraOffset.Position, cameraOffset.Position + muzzleCF.LookVector)
+
+            -- Update status (with exit progress from controller)
+            local exitProgress = ""
+            local progress = manualController:getExitProgress()
+            if progress > 0 then
+                local pct = math.floor(progress * 100)
+                exitProgress = string.format("\nReleasing... %d%%", pct)
+            end
+            statusLabel.Text = string.format(
+                "TURRET DEMO - MANUAL\n" ..
+                "Yaw: %6.1f°  Pitch: %5.1f°\n" ..
+                "Hold E/Y to release%s",
+                state.manualYaw, state.manualPitch, exitProgress
+            )
+            statusLabel.TextColor3 = Color3.new(1, 0.5, 0)
         end
-
-        -- Update status
-        local yaw, pitch = controller:calculateAimAngles(targetPos)
-        local projectileCount = #projectilesFolder:GetChildren()
-        statusLabel.Text = string.format(
-            "TURRET DEMO\n" ..
-            "Yaw: %6.1f°  Pitch: %5.1f°\n" ..
-            "Active rounds: %d",
-            yaw, pitch,
-            projectileCount
-        )
     end)
 
     ---------------------------------------------------------------------------
@@ -554,6 +855,10 @@ function Demo.run(config)
     function controls.cleanup()
         state.running = false
         mainConnection:Disconnect()
+        -- Stop manual control if active
+        if state.mode == "manual" then
+            stopManualControl()
+        end
         -- Cleanup UI
         if screenGui then
             screenGui:Destroy()
@@ -562,22 +867,31 @@ function Demo.run(config)
         print("Demo cleaned up")
     end
 
+    function controls.setMode(mode)
+        if mode == "manual" and state.mode == "auto" then
+            startManualControl()
+        elseif mode == "auto" and state.mode == "manual" then
+            stopManualControl()
+        end
+    end
+
     print("============================================")
-    print("  PHYSICS-BASED TURRET DEMO")
+    print("  TURRET DEMO - AUTO/MANUAL")
     print("============================================")
     print("")
-    print("Architecture (all physics-driven):")
-    print("  basePlatform - Anchored (fixed to world)")
-    print("  yawBase      - HingeConstraint servo (Y axis)")
-    print("  pitchArm     - HingeConstraint servo (X axis)")
-    print("  muzzle       - Welded to pitchArm")
+    print("AUTO MODE (default):")
+    print("  - Turret tracks red target automatically")
+    print("  - Green beam")
     print("")
-    print("Features:")
-    print("  - Green beam shows aim direction")
-    print("  - Tracer rounds fire continuously")
-    print("  - Projectiles fly straight (gravity-cancelled)")
+    print("MANUAL MODE:")
+    print("  - Walk to turret and HOLD E/Y (1.5s)")
+    print("  - Arrows / D-pad / Left stick to aim")
+    print("  - Space / A / RT to fire")
+    print("  - Camera snaps to turret POV")
+    print("  - HOLD E/Y (1.5s) to release")
+    print("  - Red beam")
     print("")
-    print("To stop: demo.cleanup()")
+    print("demo.cleanup() to stop")
     print("")
 
     return controls

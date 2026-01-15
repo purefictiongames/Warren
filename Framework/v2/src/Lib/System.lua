@@ -2494,6 +2494,715 @@ System.Asset = (function()
     return Asset
 end)()
 
+--[[
+    ============================================================================
+    INPUTCAPTURE SUBSYSTEM
+    ============================================================================
+
+    InputCapture is a client-side service that manages raw input capture with
+    exclusive focus. Only one consumer can "claim" input at a time.
+
+    This is the system-level input routing layer. It captures raw inputs from
+    UserInputService and routes them to the current claimant.
+
+    DESIGN
+    ------
+
+    InputCapture follows a "claim/release" model:
+    - A consumer calls claim() to take exclusive input focus
+    - While claimed, all inputs are routed to the claimant's handlers
+    - The claimant calls release() when done
+    - Only one claim can be active at a time
+
+    This is intentionally low-level. Higher-level abstractions (like
+    InputTranslator component) can build on top of this.
+
+    USAGE
+    -----
+
+    ```lua
+    local InputCapture = Lib.System.InputCapture
+
+    -- Claim input focus
+    local claim = InputCapture.claim({
+        onInputBegan = function(input, gameProcessed)
+            if input.KeyCode == Enum.KeyCode.Space then
+                print("Space pressed!")
+            end
+        end,
+        onInputEnded = function(input, gameProcessed)
+            -- Handle key release
+        end,
+        onInputChanged = function(input, gameProcessed)
+            -- Handle analog input (thumbsticks, mouse movement)
+        end,
+    })
+
+    -- Later, release the claim
+    claim:release()
+
+    -- Or check status
+    if InputCapture.hasClaim() then
+        print("Something has input focus")
+    end
+    ```
+
+    CLIENT-ONLY
+    -----------
+
+    This subsystem only runs on clients. On server, all methods are no-ops
+    that return nil or false.
+
+--]]
+
+System.InputCapture = (function()
+    ---------------------------------------------------------------------------
+    -- SERVICES
+    ---------------------------------------------------------------------------
+
+    local UserInputService = game:GetService("UserInputService")
+    local Players = game:GetService("Players")
+
+    ---------------------------------------------------------------------------
+    -- PRIVATE STATE (closure-protected)
+    ---------------------------------------------------------------------------
+
+    local currentClaim = nil          -- Current active claim object
+    local claimIdCounter = 0          -- Unique ID generator
+    local connections = {}            -- UserInputService connections
+    local savedControlsState = nil    -- Saved player controls state for restoration
+
+    -- Control mapping state (for claimForNode)
+    local mappingLookups = nil        -- Built from Node.Controls
+    local activeActions = {}          -- actionName -> true/false
+    local holdState = {}              -- actionName -> { startTime = number }
+    local heartbeatConnection = nil   -- For hold-action progress updates
+    local mappedNode = nil            -- Node instance receiving action callbacks
+
+    ---------------------------------------------------------------------------
+    -- PRIVATE FUNCTIONS
+    ---------------------------------------------------------------------------
+
+    --[[
+        Set up UserInputService connections when first claim is made.
+    --]]
+    --[[
+        Disable player movement controls.
+        Saves state for restoration later.
+    --]]
+    local function disablePlayerControls()
+        if System.isServer then
+            System.Debug.info("InputCapture", "disablePlayerControls: skipping (server)")
+            return
+        end
+
+        local player = Players.LocalPlayer
+        if not player then
+            System.Debug.info("InputCapture", "disablePlayerControls: no LocalPlayer")
+            return
+        end
+
+        local character = player.Character
+        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+
+        -- Save original speeds and set to 0
+        if humanoid then
+            savedControlsState = {
+                walkSpeed = humanoid.WalkSpeed,
+                jumpPower = humanoid.JumpPower,
+                jumpHeight = humanoid.JumpHeight,
+                humanoid = humanoid,
+            }
+            humanoid.WalkSpeed = 0
+            humanoid.JumpPower = 0
+            humanoid.JumpHeight = 0
+            System.Debug.info("InputCapture", "Player movement disabled (WalkSpeed=0)")
+        else
+            System.Debug.info("InputCapture", "disablePlayerControls: no Humanoid found")
+        end
+    end
+
+    --[[
+        Restore player movement controls.
+    --]]
+    local function enablePlayerControls()
+        if System.isServer then return end
+
+        if savedControlsState and savedControlsState.humanoid then
+            local humanoid = savedControlsState.humanoid
+            if humanoid and humanoid.Parent then
+                humanoid.WalkSpeed = savedControlsState.walkSpeed or 16
+                humanoid.JumpPower = savedControlsState.jumpPower or 50
+                humanoid.JumpHeight = savedControlsState.jumpHeight or 7.2
+                System.Debug.info("InputCapture", "Player movement restored")
+            end
+            savedControlsState = nil
+        end
+    end
+
+    local function setupConnections()
+        if #connections > 0 then
+            return  -- Already connected
+        end
+
+        -- InputBegan (key/button press)
+        connections[1] = UserInputService.InputBegan:Connect(function(input, gameProcessed)
+            System.Debug.info("InputCapture", "InputBegan:", input.KeyCode.Name, "hasClaim:", currentClaim ~= nil)
+            if currentClaim and currentClaim.handlers.onInputBegan then
+                currentClaim.handlers.onInputBegan(input, gameProcessed)
+            end
+        end)
+
+        -- InputEnded (key/button release)
+        connections[2] = UserInputService.InputEnded:Connect(function(input, gameProcessed)
+            if currentClaim and currentClaim.handlers.onInputEnded then
+                currentClaim.handlers.onInputEnded(input, gameProcessed)
+            end
+        end)
+
+        -- InputChanged (analog input: thumbsticks, mouse movement)
+        connections[3] = UserInputService.InputChanged:Connect(function(input, gameProcessed)
+            if currentClaim and currentClaim.handlers.onInputChanged then
+                currentClaim.handlers.onInputChanged(input, gameProcessed)
+            end
+        end)
+
+        System.Debug.info("InputCapture", "Connections established")
+    end
+
+    --[[
+        Tear down UserInputService connections when no claims exist.
+    --]]
+    local function teardownConnections()
+        for _, connection in ipairs(connections) do
+            if connection then
+                connection:Disconnect()
+            end
+        end
+        connections = {}
+        System.Debug.trace("InputCapture", "Connections torn down")
+    end
+
+    ---------------------------------------------------------------------------
+    -- CONTROL MAPPING SYSTEM
+    ---------------------------------------------------------------------------
+
+    --[[
+        Build reverse lookup tables from a Controls mapping.
+
+        @param controls table - Control mapping from Node.Controls
+        @return table - { keyToActions, buttonToActions, axisConfigs, holdActions }
+
+        Example input:
+            {
+                aimUp = {
+                    keys = { Enum.KeyCode.Up },
+                    buttons = { Enum.KeyCode.DPadUp },
+                    axis = { stick = "Thumbstick1", direction = "Y+", deadzone = 0.2 },
+                },
+                fire = {
+                    keys = { Enum.KeyCode.Space },
+                    buttons = { Enum.KeyCode.ButtonA },
+                },
+                exit = {
+                    keys = { Enum.KeyCode.E },
+                    holdDuration = 1.5,
+                },
+            }
+    --]]
+    local function buildMappingLookups(controls)
+        local keyToActions = {}      -- KeyCode -> { actionName, ... }
+        local buttonToActions = {}   -- KeyCode -> { actionName, ... }
+        local axisConfigs = {}       -- "Thumbstick1" -> { { action, axis, direction, deadzone }, ... }
+        local holdActions = {}       -- actionName -> holdDuration
+
+        for actionName, config in pairs(controls) do
+            -- Keys (keyboard)
+            if config.keys then
+                for _, keyCode in ipairs(config.keys) do
+                    keyToActions[keyCode] = keyToActions[keyCode] or {}
+                    table.insert(keyToActions[keyCode], actionName)
+                end
+            end
+
+            -- Buttons (gamepad)
+            if config.buttons then
+                for _, buttonCode in ipairs(config.buttons) do
+                    buttonToActions[buttonCode] = buttonToActions[buttonCode] or {}
+                    table.insert(buttonToActions[buttonCode], actionName)
+                end
+            end
+
+            -- Axis (analog stick)
+            if config.axis then
+                local axisConfig = config.axis
+                local stick = axisConfig.stick or "Thumbstick1"
+                local direction = axisConfig.direction or "Y+"
+                local deadzone = axisConfig.deadzone or 0.2
+
+                -- Parse direction: "X+", "X-", "Y+", "Y-"
+                local axisLetter = direction:sub(1, 1)  -- "X" or "Y"
+                local axisSign = direction:sub(2, 2)    -- "+" or "-"
+
+                axisConfigs[stick] = axisConfigs[stick] or {}
+                table.insert(axisConfigs[stick], {
+                    action = actionName,
+                    axis = axisLetter,
+                    positive = (axisSign == "+"),
+                    deadzone = deadzone,
+                })
+            end
+
+            -- Hold duration
+            if config.holdDuration then
+                holdActions[actionName] = config.holdDuration
+            end
+        end
+
+        return {
+            keyToActions = keyToActions,
+            buttonToActions = buttonToActions,
+            axisConfigs = axisConfigs,
+            holdActions = holdActions,
+        }
+    end
+
+    ---------------------------------------------------------------------------
+    -- CLAIM OBJECT
+    ---------------------------------------------------------------------------
+
+    --[[
+        Create a claim object that represents ownership of input focus.
+
+        @param id number - Unique claim ID
+        @param handlers table - Handler functions
+        @return table - Claim object with :release() method
+    --]]
+    local function createClaimObject(id, handlers)
+        local claim = {
+            id = id,
+            handlers = handlers,
+            active = true,
+        }
+
+        --[[
+            Release this claim, giving up input focus.
+
+            Safe to call multiple times (subsequent calls are no-ops).
+        --]]
+        function claim:release()
+            if not self.active then
+                return  -- Already released
+            end
+
+            self.active = false
+
+            -- Only clear if this is still the current claim
+            if currentClaim and currentClaim.id == self.id then
+                currentClaim = nil
+
+                -- Restore player controls if we disabled them
+                if self.disabledCharacter then
+                    enablePlayerControls()
+                end
+
+                -- Call onRelease handler if provided
+                if self.handlers.onRelease then
+                    self.handlers.onRelease()
+                end
+
+                System.Debug.info("InputCapture", "Claim released:", self.id)
+
+                -- Note: We keep connections alive for efficiency
+                -- They'll be cleaned up if InputCapture.shutdown() is called
+            end
+        end
+
+        --[[
+            Check if this claim is still active.
+
+            @return boolean
+        --]]
+        function claim:isActive()
+            return self.active and currentClaim and currentClaim.id == self.id
+        end
+
+        return claim
+    end
+
+    ---------------------------------------------------------------------------
+    -- PUBLIC API
+    ---------------------------------------------------------------------------
+
+    local InputCapture = {}
+
+    --[[
+        Claim exclusive input focus.
+
+        Only one claim can be active at a time. If another claim exists,
+        it will be forcibly released before the new claim takes over.
+
+        @param handlers table - Handler functions:
+            onInputBegan(input, gameProcessed) - Called on key/button press
+            onInputEnded(input, gameProcessed) - Called on key/button release
+            onInputChanged(input, gameProcessed) - Called on analog input
+            onRelease() - Called when this claim is released
+        @param options table (optional) - Options:
+            disableCharacter: boolean - Disable player movement while claimed
+        @return table|nil - Claim object with :release() method, or nil on server
+    --]]
+    function InputCapture.claim(handlers, options)
+        -- Client-only
+        if System.isServer then
+            System.Debug.info("InputCapture", "Claim ignored on server")
+            return nil
+        end
+
+        System.Debug.info("InputCapture", "Claiming input focus...")
+
+        handlers = handlers or {}
+        options = options or {}
+
+        -- If there's an existing claim, release it first
+        if currentClaim then
+            System.Debug.info("InputCapture", "Releasing existing claim:", currentClaim.id)
+            currentClaim:release()
+        end
+
+        -- Ensure connections are set up
+        setupConnections()
+
+        -- Create new claim
+        claimIdCounter = claimIdCounter + 1
+        local claim = createClaimObject(claimIdCounter, handlers)
+        claim.disabledCharacter = options.disableCharacter or false
+        currentClaim = claim
+
+        -- Disable player controls if requested
+        if claim.disabledCharacter then
+            disablePlayerControls()
+        end
+
+        -- Call onClaim handler if provided
+        if handlers.onClaim then
+            handlers.onClaim()
+        end
+
+        System.Debug.info("InputCapture", "New claim established:", claim.id, "disableCharacter:", claim.disabledCharacter)
+        return claim
+    end
+
+    --[[
+        Claim exclusive input focus for a Node with declarative Controls mapping.
+
+        The node must have a Controls table defined. InputCapture will translate
+        raw inputs to named actions and call the node's In handlers:
+            - In.onActionBegan(self, actionName)
+            - In.onActionEnded(self, actionName)
+            - In.onActionHeld(self, actionName, progress)  -- for hold-duration actions
+            - In.onActionTriggered(self, actionName)       -- when hold-duration reached
+            - In.onControlReleased(self)                   -- if forcibly released
+
+        @param node table - Node instance with Controls table
+        @param options table (optional) - Options:
+            disableCharacter: boolean - Disable player movement while claimed
+        @return table|nil - Claim object with :release() method, or nil on server/error
+    --]]
+    function InputCapture.claimForNode(node, options)
+        -- Client-only
+        if System.isServer then
+            System.Debug.info("InputCapture", "claimForNode ignored on server")
+            return nil
+        end
+
+        -- Validate node has Controls
+        local controls = node.Controls or (node._definition and node._definition.Controls)
+        if not controls then
+            System.Debug.warn("InputCapture", "claimForNode: node has no Controls table")
+            return nil
+        end
+
+        System.Debug.info("InputCapture", "claimForNode for:", node.id or node.name or "unknown")
+
+        options = options or {}
+
+        -- Build mapping lookups
+        mappingLookups = buildMappingLookups(controls)
+        mappedNode = node
+
+        -- Reset action state
+        activeActions = {}
+        holdState = {}
+
+        -- Internal handlers that translate raw input to actions
+        local function handleInputBegan(input, gameProcessed)
+            local keyCode = input.KeyCode
+
+            -- Check keys and buttons
+            local actions = mappingLookups.keyToActions[keyCode]
+                or mappingLookups.buttonToActions[keyCode]
+
+            if actions then
+                for _, actionName in ipairs(actions) do
+                    if not activeActions[actionName] then
+                        activeActions[actionName] = true
+
+                        -- Start hold tracking if this is a hold-action
+                        if mappingLookups.holdActions[actionName] then
+                            holdState[actionName] = { startTime = tick() }
+                        end
+
+                        -- Call node's onActionBegan
+                        if mappedNode.In and mappedNode.In.onActionBegan then
+                            mappedNode.In.onActionBegan(mappedNode, actionName)
+                        end
+                    end
+                end
+            end
+        end
+
+        local function handleInputEnded(input, gameProcessed)
+            local keyCode = input.KeyCode
+
+            -- Check keys and buttons
+            local actions = mappingLookups.keyToActions[keyCode]
+                or mappingLookups.buttonToActions[keyCode]
+
+            if actions then
+                for _, actionName in ipairs(actions) do
+                    if activeActions[actionName] then
+                        activeActions[actionName] = false
+
+                        -- Clear hold state
+                        holdState[actionName] = nil
+
+                        -- Call node's onActionEnded
+                        if mappedNode.In and mappedNode.In.onActionEnded then
+                            mappedNode.In.onActionEnded(mappedNode, actionName)
+                        end
+                    end
+                end
+            end
+        end
+
+        local function handleInputChanged(input, gameProcessed)
+            local keyCode = input.KeyCode
+
+            -- Check for thumbstick input
+            local stickName = nil
+            if keyCode == Enum.KeyCode.Thumbstick1 then
+                stickName = "Thumbstick1"
+            elseif keyCode == Enum.KeyCode.Thumbstick2 then
+                stickName = "Thumbstick2"
+            end
+
+            if stickName and mappingLookups.axisConfigs[stickName] then
+                local pos = input.Position
+
+                for _, axisConfig in ipairs(mappingLookups.axisConfigs[stickName]) do
+                    local actionName = axisConfig.action
+                    local deadzone = axisConfig.deadzone
+                    local axisValue = (axisConfig.axis == "X") and pos.X or pos.Y
+
+                    -- Check if axis is past deadzone in the correct direction
+                    local isActive = false
+                    if axisConfig.positive then
+                        isActive = axisValue > deadzone
+                    else
+                        isActive = axisValue < -deadzone
+                    end
+
+                    -- Handle state change
+                    local wasActive = activeActions[actionName]
+                    if isActive and not wasActive then
+                        activeActions[actionName] = true
+
+                        -- Start hold tracking if this is a hold-action
+                        if mappingLookups.holdActions[actionName] then
+                            holdState[actionName] = { startTime = tick() }
+                        end
+
+                        if mappedNode.In and mappedNode.In.onActionBegan then
+                            mappedNode.In.onActionBegan(mappedNode, actionName)
+                        end
+                    elseif not isActive and wasActive then
+                        activeActions[actionName] = false
+                        holdState[actionName] = nil
+
+                        if mappedNode.In and mappedNode.In.onActionEnded then
+                            mappedNode.In.onActionEnded(mappedNode, actionName)
+                        end
+                    end
+                end
+            end
+        end
+
+        -- Set up Heartbeat for hold-action progress
+        local RunService = game:GetService("RunService")
+        if heartbeatConnection then
+            heartbeatConnection:Disconnect()
+        end
+
+        heartbeatConnection = RunService.Heartbeat:Connect(function(dt)
+            if not mappedNode then return end
+
+            for actionName, state in pairs(holdState) do
+                local holdDuration = mappingLookups.holdActions[actionName]
+                if holdDuration and state.startTime then
+                    local elapsed = tick() - state.startTime
+                    local progress = math.clamp(elapsed / holdDuration, 0, 1)
+
+                    -- Call onActionHeld with progress
+                    if mappedNode.In and mappedNode.In.onActionHeld then
+                        mappedNode.In.onActionHeld(mappedNode, actionName, progress)
+                    end
+
+                    -- Check if hold duration reached
+                    if elapsed >= holdDuration and not state.triggered then
+                        state.triggered = true
+
+                        if mappedNode.In and mappedNode.In.onActionTriggered then
+                            mappedNode.In.onActionTriggered(mappedNode, actionName)
+                        end
+                    end
+                end
+            end
+        end)
+
+        -- Create handlers for base claim
+        local handlers = {
+            onInputBegan = handleInputBegan,
+            onInputEnded = handleInputEnded,
+            onInputChanged = handleInputChanged,
+            onRelease = function()
+                -- Clean up mapping state
+                if heartbeatConnection then
+                    heartbeatConnection:Disconnect()
+                    heartbeatConnection = nil
+                end
+
+                mappingLookups = nil
+                activeActions = {}
+                holdState = {}
+
+                -- Call node's onControlReleased
+                if mappedNode and mappedNode.In and mappedNode.In.onControlReleased then
+                    mappedNode.In.onControlReleased(mappedNode)
+                end
+
+                mappedNode = nil
+            end,
+        }
+
+        -- Use base claim() to handle connections and player controls
+        return InputCapture.claim(handlers, options)
+    end
+
+    --[[
+        Check if there is an active claim.
+
+        @return boolean
+    --]]
+    function InputCapture.hasClaim()
+        return currentClaim ~= nil and currentClaim.active
+    end
+
+    --[[
+        Get the current claim object (if any).
+
+        @return table|nil - Current claim or nil
+    --]]
+    function InputCapture.getCurrentClaim()
+        return currentClaim
+    end
+
+    --[[
+        Force release any active claim.
+
+        Use sparingly - prefer letting the claimant release naturally.
+    --]]
+    function InputCapture.forceRelease()
+        if currentClaim then
+            currentClaim:release()
+        end
+    end
+
+    --[[
+        Get input device information.
+
+        @return table - { keyboard, mouse, touch, gamepad }
+    --]]
+    function InputCapture.getDeviceInfo()
+        if System.isServer then
+            return { keyboard = false, mouse = false, touch = false, gamepad = false }
+        end
+
+        return {
+            keyboard = UserInputService.KeyboardEnabled,
+            mouse = UserInputService.MouseEnabled,
+            touch = UserInputService.TouchEnabled,
+            gamepad = UserInputService.GamepadEnabled,
+        }
+    end
+
+    --[[
+        Check if a specific key is currently pressed.
+
+        @param keyCode Enum.KeyCode - The key to check
+        @return boolean
+    --]]
+    function InputCapture.isKeyDown(keyCode)
+        if System.isServer then
+            return false
+        end
+        return UserInputService:IsKeyDown(keyCode)
+    end
+
+    --[[
+        Check if a gamepad button is currently pressed.
+
+        @param gamepad Enum.UserInputType - The gamepad (e.g., Gamepad1)
+        @param button Enum.KeyCode - The button to check
+        @return boolean
+    --]]
+    function InputCapture.isGamepadButtonDown(gamepad, button)
+        if System.isServer then
+            return false
+        end
+
+        local success, result = pcall(function()
+            return UserInputService:IsGamepadButtonDown(gamepad, button)
+        end)
+
+        return success and result
+    end
+
+    --[[
+        Shutdown the InputCapture system.
+
+        Releases any active claim and disconnects all UserInputService listeners.
+    --]]
+    function InputCapture.shutdown()
+        if currentClaim then
+            currentClaim:release()
+        end
+        teardownConnections()
+        System.Debug.info("InputCapture", "Shutdown complete")
+    end
+
+    --[[
+        Reset all state (for testing).
+    --]]
+    function InputCapture.reset()
+        InputCapture.shutdown()
+        currentClaim = nil
+        claimIdCounter = 0
+        System.Debug.info("InputCapture", "Reset complete")
+    end
+
+    return InputCapture
+end)()
+
 --------------------------------------------------------------------------------
 -- PLACEHOLDER SUBSYSTEMS (to be implemented)
 --------------------------------------------------------------------------------

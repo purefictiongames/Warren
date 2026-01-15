@@ -150,6 +150,7 @@ All system code lives in `System.lua` as nested modules:
 | **Asset** | Template registry, spawning, lifecycle | - | ✓ |
 | **Store** | DataStore abstraction, persistence | - | ✓ |
 | **View** | Presentation (GUI, 3D, audio, tweens) | ✓ | - |
+| **InputCapture** | Exclusive input focus, declarative control mapping | ✓ | - |
 
 ### IPC Details
 
@@ -167,6 +168,78 @@ The View subsystem handles all presentation:
 - TweenService integration
 - SoundService integration
 - Lighting/atmosphere (future)
+
+### InputCapture Details
+
+The InputCapture subsystem (client-only) provides exclusive input focus with a claim/release pattern. Only one consumer can claim input at a time.
+
+#### Basic Usage (Raw Input)
+
+```lua
+local InputCapture = Lib.System.InputCapture
+
+local claim = InputCapture.claim({
+    onInputBegan = function(input, gameProcessed)
+        if input.KeyCode == Enum.KeyCode.Space then
+            -- Handle space press
+        end
+    end,
+    onInputEnded = function(input, gameProcessed) end,
+    onInputChanged = function(input, gameProcessed) end,  -- Analog input
+    onRelease = function() end,  -- Called if forcibly released
+}, { disableCharacter = true })  -- Freezes player movement
+
+-- Later:
+claim:release()
+```
+
+#### Declarative Control Mapping (Recommended)
+
+For nodes with complex input requirements, use declarative control mappings:
+
+```lua
+local TurretController = Node.extend({
+    name = "TurretController",
+    domain = "client",
+
+    -- Declarative control mapping
+    Controls = {
+        aimUp = {
+            keys = { Enum.KeyCode.Up },
+            buttons = { Enum.KeyCode.DPadUp },
+            axis = { stick = "Thumbstick1", direction = "Y+", deadzone = 0.2 },
+        },
+        fire = {
+            keys = { Enum.KeyCode.Space },
+            buttons = { Enum.KeyCode.ButtonA, Enum.KeyCode.ButtonR2 },
+        },
+        exit = {
+            keys = { Enum.KeyCode.E },
+            buttons = { Enum.KeyCode.ButtonY },
+            holdDuration = 1.5,  -- Hold-to-trigger
+        },
+    },
+
+    In = {
+        onActionBegan = function(self, action)
+            if action == "fire" then self:fire() end
+        end,
+        onActionEnded = function(self, action) end,
+        onActionHeld = function(self, action, progress) end,  -- 0.0-1.0
+        onActionTriggered = function(self, action) end,       -- Hold complete
+        onControlReleased = function(self) end,               -- Forcibly released
+    },
+})
+
+-- Claim input with declarative mapping
+local claim = InputCapture.claimForNode(controller, { disableCharacter = true })
+```
+
+Benefits:
+- **Device-agnostic**: Keyboard, gamepad, thumbstick map to same actions
+- **Declarative**: Control schema on node class, not imperative if/else chains
+- **Remappable**: Change bindings without touching node logic (future)
+- **Hold-to-trigger**: Built-in support for hold-duration actions
 
 ## Boot Stages
 

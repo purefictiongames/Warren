@@ -104,7 +104,7 @@ local MyNode = Node.extend({
 | [src/Lib/Tests/Swivel_Tests.lua](https://raw.githubusercontent.com/purefictiongames/LibPureFiction/refs/heads/main/Framework/v2/src/Lib/Tests/Swivel_Tests.lua) | Swivel component tests |
 | [src/Lib/Tests/Targeter_Tests.lua](https://raw.githubusercontent.com/purefictiongames/LibPureFiction/refs/heads/main/Framework/v2/src/Lib/Tests/Targeter_Tests.lua) | Targeter component tests |
 | [src/Lib/Tests/Launcher_Tests.lua](https://raw.githubusercontent.com/purefictiongames/LibPureFiction/refs/heads/main/Framework/v2/src/Lib/Tests/Launcher_Tests.lua) | Launcher component tests |
-| [src/Lib/Tests/PathedConveyor_Tests.lua](https://raw.githubusercontent.com/purefictiongames/LibPureFiction/refs/heads/main/Framework/v2/src/Lib/Tests/PathedConveyor_Tests.lua) | PathedConveyor tests |
+| [src/Lib/Tests/PathedConveyor_Tests.lua](https://raw.githubusercontent.com/purefictiongames/LibPureFiction/refs/heads/main/Framework/v2/src/Lib/Tests/PathedConveyor_Tests.lua) | PathFollower tests |
 | [src/Lib/Tests/Checkpoint_Tests.lua](https://raw.githubusercontent.com/purefictiongames/LibPureFiction/refs/heads/main/Framework/v2/src/Lib/Tests/Checkpoint_Tests.lua) | Checkpoint tests |
 | [src/Lib/Tests/Zone_Tests.lua](https://raw.githubusercontent.com/purefictiongames/LibPureFiction/refs/heads/main/Framework/v2/src/Lib/Tests/Zone_Tests.lua) | Zone tests |
 | [src/Lib/Tests/Hatcher_Tests.lua](https://raw.githubusercontent.com/purefictiongames/LibPureFiction/refs/heads/main/Framework/v2/src/Lib/Tests/Hatcher_Tests.lua) | Hatcher tests |

@@ -1,8 +1,8 @@
 --[[
     LibPureFiction Framework v2
-    Launcher Component Demo
+    Launcher Component Demo - Signal-Based Architecture
 
-    Demonstrates physics-based projectile firing with visual feedback.
+    Uses Out:Fire / In signal pattern, not direct handler calls.
 
     ============================================================================
     USAGE
@@ -28,12 +28,72 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local Lib = require(ReplicatedStorage:WaitForChild("Lib"))
+
+local Node = require(ReplicatedStorage.Lib.Node)
 local Launcher = Lib.Components.Launcher
 
 -- Internal access for template setup
 local SpawnerCore = require(ReplicatedStorage.Lib.Internal.SpawnerCore)
 
 local Demo = {}
+
+--------------------------------------------------------------------------------
+-- LAUNCHER CONTROLLER NODE
+-- Fires signals to control launcher, receives signals back
+--------------------------------------------------------------------------------
+
+local LauncherController = Node.extend({
+    name = "LauncherController",
+    domain = "server",
+
+    Sys = {
+        onInit = function(self)
+            self._shotsFired = 0
+        end,
+    },
+
+    In = {
+        -- Receive fire confirmation from Launcher
+        onFired = function(self, data)
+            self._shotsFired = self._shotsFired + 1
+        end,
+
+        -- Receive error (cooldown) from Launcher
+        onError = function(self, data)
+            -- Could display cooldown feedback
+        end,
+    },
+
+    Out = {
+        fire = {},        -- -> Launcher.In.onFire
+        configure = {},   -- -> Launcher.In.onConfigure
+    },
+
+    -- Controller methods that fire signals
+    fireProjectile = function(self, targetPosition)
+        if targetPosition then
+            self.Out:Fire("fire", { targetPosition = targetPosition })
+        else
+            self.Out:Fire("fire", {})
+        end
+    end,
+
+    setForce = function(self, force)
+        self.Out:Fire("configure", { launchForce = force })
+    end,
+
+    setMethod = function(self, method)
+        self.Out:Fire("configure", { launchMethod = method })
+    end,
+
+    setCooldown = function(self, cooldown)
+        self.Out:Fire("configure", { cooldown = cooldown })
+    end,
+})
+
+--------------------------------------------------------------------------------
+-- DEMO
+--------------------------------------------------------------------------------
 
 function Demo.run(config)
     config = config or {}
@@ -195,7 +255,7 @@ function Demo.run(config)
     statusLabel.TextColor3 = Color3.new(0, 1, 0)
     statusLabel.TextScaled = true
     statusLabel.Font = Enum.Font.Code
-    statusLabel.Text = "LAUNCHER: READY\nShots: 0"
+    statusLabel.Text = "SIGNAL-BASED\nLAUNCHER: READY"
     statusLabel.Parent = billboardGui
 
     -- Projectile tracking
@@ -204,7 +264,7 @@ function Demo.run(config)
     projectileFolder.Parent = demoFolder
 
     ---------------------------------------------------------------------------
-    -- CREATE LAUNCHER COMPONENT
+    -- CREATE NODES
     ---------------------------------------------------------------------------
 
     local launcher = Launcher:new({
@@ -213,7 +273,7 @@ function Demo.run(config)
     })
     launcher.Sys.onInit(launcher)
 
-    -- Configure launcher
+    -- Configure launcher (setup phase - direct call OK per ARCHITECTURE.md)
     launcher.In.onConfigure(launcher, {
         projectileTemplate = "DemoBullet",
         launchForce = 80,  -- Slower for visible tracer flight
@@ -221,15 +281,35 @@ function Demo.run(config)
         cooldown = 0.3,
     })
 
+    -- Controller
+    local controller = LauncherController:new({ id = "Demo_LauncherController" })
+    controller.Sys.onInit(controller)
+
     -- Track stats
     local shotsFired = 0
 
-    -- Wire output
+    ---------------------------------------------------------------------------
+    -- WIRE SIGNALS (manual wiring for demo - in production IPC does this)
+    ---------------------------------------------------------------------------
+
+    -- Controller.Out -> Launcher.In
+    controller.Out = {
+        Fire = function(self, signal, data)
+            if signal == "fire" then
+                launcher.In.onFire(launcher, data)
+            elseif signal == "configure" then
+                launcher.In.onConfigure(launcher, data)
+            end
+        end,
+    }
+
+    -- Launcher.Out -> Controller.In + UI updates
     launcher.Out = {
         Fire = function(self, signal, data)
             if signal == "fired" then
+                controller.In.onFired(controller, data)
                 shotsFired = shotsFired + 1
-                statusLabel.Text = string.format("FIRED!\nShots: %d", shotsFired)
+                statusLabel.Text = string.format("SIGNAL-BASED\nFIRED! Shots: %d", shotsFired)
                 statusLabel.TextColor3 = Color3.new(1, 0.5, 0)
 
                 -- Muzzle flash effect
@@ -248,7 +328,7 @@ function Demo.run(config)
                 -- Reset status after short delay
                 task.delay(0.2, function()
                     if statusLabel.Parent then
-                        statusLabel.Text = string.format("LAUNCHER: READY\nShots: %d", shotsFired)
+                        statusLabel.Text = string.format("SIGNAL-BASED\nLAUNCHER: READY\nShots: %d", shotsFired)
                         statusLabel.TextColor3 = Color3.new(0, 1, 0)
                     end
                 end)
@@ -256,12 +336,12 @@ function Demo.run(config)
         end,
     }
 
-    -- Wire error output
+    -- Launcher.Err -> Controller.In.onError + UI
     launcher.Err = {
         Fire = function(self, data)
+            controller.In.onError(controller, data)
             if data.reason == "cooldown" then
-                statusLabel.Text = string.format("COOLDOWN: %.1fs\nShots: %d",
-                    data.remaining, shotsFired)
+                statusLabel.Text = string.format("SIGNAL-BASED\nCOOLDOWN: %.1fs", data.remaining)
                 statusLabel.TextColor3 = Color3.new(1, 0, 0)
             end
         end,
@@ -287,32 +367,32 @@ function Demo.run(config)
     end)
 
     ---------------------------------------------------------------------------
-    -- DEMO CONTROLS
+    -- DEMO CONTROLS (fire signals through controller)
     ---------------------------------------------------------------------------
 
     local controls = {}
 
     function controls.fire()
-        launcher.In.onFire(launcher)
+        controller:fireProjectile()
     end
 
     function controls.fireAt(targetPosition)
         targetPosition = targetPosition or targetRing.Position
-        launcher.In.onFire(launcher, { targetPosition = targetPosition })
+        controller:fireProjectile(targetPosition)
     end
 
     function controls.setForce(force)
-        launcher.In.onConfigure(launcher, { launchForce = force })
+        controller:setForce(force)
         print("Launch force set to:", force)
     end
 
     function controls.setMethod(method)
-        launcher.In.onConfigure(launcher, { launchMethod = method })
+        controller:setMethod(method)
         print("Launch method set to:", method)
     end
 
     function controls.setCooldown(cooldown)
-        launcher.In.onConfigure(launcher, { cooldown = cooldown })
+        controller:setCooldown(cooldown)
         print("Cooldown set to:", cooldown)
     end
 
@@ -353,6 +433,10 @@ function Demo.run(config)
         return launcher
     end
 
+    function controls.getController()
+        return controller
+    end
+
     ---------------------------------------------------------------------------
     -- AUTO-DEMO (optional)
     ---------------------------------------------------------------------------
@@ -367,13 +451,21 @@ function Demo.run(config)
         end)
     end
 
-    print("Launcher Demo running. Controls:")
-    print("  demo.fire()              - Fire in muzzle direction")
-    print("  demo.fireAt(pos)         - Fire at target position")
-    print("  demo.setForce(200)       - Change launch force")
-    print("  demo.setMethod('spring') - Change launch method")
-    print("  demo.setCooldown(0.2)    - Change cooldown")
+    print("============================================")
+    print("  SIGNAL-BASED LAUNCHER DEMO")
+    print("============================================")
+    print("")
+    print("Controller fires signals -> Launcher receives and fires")
+    print("Proper Out:Fire / In pattern")
+    print("")
+    print("Controls:")
+    print("  demo.fire()              - Fire signal (muzzle direction)")
+    print("  demo.fireAt(pos)         - Fire signal (at target)")
+    print("  demo.setForce(200)       - Configure signal (force)")
+    print("  demo.setMethod('spring') - Configure signal (method)")
+    print("  demo.setCooldown(0.2)    - Configure signal (cooldown)")
     print("  demo.cleanup()           - Remove demo")
+    print("")
 
     return controls
 end

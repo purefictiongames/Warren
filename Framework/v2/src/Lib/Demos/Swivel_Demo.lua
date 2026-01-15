@@ -1,8 +1,9 @@
 --[[
     LibPureFiction Framework v2
-    Swivel Component Demo
+    Swivel Component Demo - Physics-Based with Signal Architecture
 
-    Demonstrates single-axis rotation with visual feedback.
+    Demonstrates physics-based Swivel using HingeConstraint servos.
+    Uses Out:Fire / In signal pattern, not direct handler calls.
 
     ============================================================================
     USAGE
@@ -25,10 +26,84 @@
 --]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 local Lib = require(ReplicatedStorage:WaitForChild("Lib"))
+
+local Node = require(ReplicatedStorage.Lib.Node)
 local Swivel = Lib.Components.Swivel
 
 local Demo = {}
+
+--------------------------------------------------------------------------------
+-- SWIVEL CONTROLLER NODE
+-- Fires signals to control swivel, receives signals back
+--------------------------------------------------------------------------------
+
+local SwivelController = Node.extend({
+    name = "SwivelController",
+    domain = "server",
+
+    Sys = {
+        onInit = function(self)
+            self._currentAngle = 0
+        end,
+    },
+
+    In = {
+        -- Receive rotation updates from Swivel
+        onRotated = function(self, data)
+            self._currentAngle = data.angle
+        end,
+
+        onLimitReached = function(self, data)
+            -- Could trigger reverse, notification, etc.
+        end,
+
+        onStopped = function(self)
+            -- Rotation stopped
+        end,
+    },
+
+    Out = {
+        rotate = {},      -- -> Swivel.In.onRotate
+        stop = {},        -- -> Swivel.In.onStop
+        setAngle = {},    -- -> Swivel.In.onSetAngle
+        configure = {},   -- -> Swivel.In.onConfigure
+    },
+
+    -- Controller methods that fire signals
+    rotateForward = function(self)
+        self.Out:Fire("rotate", { direction = "forward" })
+    end,
+
+    rotateReverse = function(self)
+        self.Out:Fire("rotate", { direction = "reverse" })
+    end,
+
+    stopRotation = function(self)
+        self.Out:Fire("stop", {})
+    end,
+
+    setTargetAngle = function(self, degrees)
+        self.Out:Fire("setAngle", { degrees = degrees })
+    end,
+
+    setMode = function(self, mode)
+        self.Out:Fire("configure", { mode = mode })
+    end,
+
+    setSpeed = function(self, speed)
+        self.Out:Fire("configure", { speed = speed })
+    end,
+
+    setLimits = function(self, min, max)
+        self.Out:Fire("configure", { minAngle = min, maxAngle = max })
+    end,
+})
+
+--------------------------------------------------------------------------------
+-- DEMO
+--------------------------------------------------------------------------------
 
 function Demo.run(config)
     config = config or {}
@@ -61,27 +136,29 @@ function Demo.run(config)
     base.Material = Enum.Material.Metal
     base.Parent = demoFolder
 
-    -- Rotating turret head
+    -- Rotating turret head (will be unanchored by Swivel for physics)
     local turretHead = Instance.new("Part")
     turretHead.Name = "TurretHead"
     turretHead.Size = Vector3.new(4, 2, 4)
     turretHead.CFrame = CFrame.new(position)
-    turretHead.Anchored = true
+    turretHead.Anchored = false  -- Physics-driven
+    turretHead.CanCollide = false
     turretHead.BrickColor = BrickColor.new("Bright blue")
     turretHead.Material = Enum.Material.SmoothPlastic
     turretHead.Parent = demoFolder
 
-    -- Direction indicator (barrel)
+    -- Direction indicator (barrel) - welded to turretHead
     local barrel = Instance.new("Part")
     barrel.Name = "Barrel"
     barrel.Size = Vector3.new(0.8, 0.8, 4)
     barrel.CFrame = turretHead.CFrame * CFrame.new(0, 0, -2)
-    barrel.Anchored = true
+    barrel.Anchored = false  -- Physics-driven via weld
+    barrel.CanCollide = false
     barrel.BrickColor = BrickColor.new("Really red")
     barrel.Material = Enum.Material.Neon
     barrel.Parent = demoFolder
 
-    -- Weld barrel to turret head
+    -- Weld barrel to turret head (physics constraint keeps them together)
     local weld = Instance.new("WeldConstraint")
     weld.Part0 = turretHead
     weld.Part1 = barrel
@@ -101,20 +178,23 @@ function Demo.run(config)
     angleLabel.TextColor3 = Color3.new(1, 1, 1)
     angleLabel.TextScaled = true
     angleLabel.Font = Enum.Font.Code
-    angleLabel.Text = "Angle: 0°"
+    angleLabel.Text = "PHYSICS-BASED\nAngle: 0"
     angleLabel.Parent = billboardGui
 
     ---------------------------------------------------------------------------
-    -- CREATE SWIVEL COMPONENT
+    -- CREATE NODES
     ---------------------------------------------------------------------------
 
+    -- Swivel with anchor (base) - creates HingeConstraint for smooth physics rotation
     local swivel = Swivel:new({
         id = "Demo_Swivel",
         model = turretHead,
+        anchor = base,  -- Hinge attaches turretHead to base
     })
     swivel.Sys.onInit(swivel)
+    swivel.Sys.onStart(swivel)  -- Start monitoring for angle signals
 
-    -- Configure swivel
+    -- Configure swivel (setup phase - direct call OK per ARCHITECTURE.md)
     swivel.In.onConfigure(swivel, {
         axis = "Y",
         mode = "continuous",
@@ -123,12 +203,37 @@ function Demo.run(config)
         maxAngle = 90,
     })
 
-    -- Wire output to update display
+    -- Controller
+    local controller = SwivelController:new({ id = "Demo_SwivelController" })
+    controller.Sys.onInit(controller)
+
+    ---------------------------------------------------------------------------
+    -- WIRE SIGNALS (manual wiring for demo - in production IPC does this)
+    ---------------------------------------------------------------------------
+
+    -- Controller.Out -> Swivel.In
+    controller.Out = {
+        Fire = function(self, signal, data)
+            if signal == "rotate" then
+                swivel.In.onRotate(swivel, data)
+            elseif signal == "stop" then
+                swivel.In.onStop(swivel)
+            elseif signal == "setAngle" then
+                swivel.In.onSetAngle(swivel, data)
+            elseif signal == "configure" then
+                swivel.In.onConfigure(swivel, data)
+            end
+        end,
+    }
+
+    -- Swivel.Out -> Controller.In + UI updates
     swivel.Out = {
         Fire = function(self, signal, data)
             if signal == "rotated" then
-                angleLabel.Text = string.format("Angle: %.1f°", data.angle)
+                controller.In.onRotated(controller, data)
+                angleLabel.Text = string.format("PHYSICS-BASED\nAngle: %.1f", data.angle)
             elseif signal == "limitReached" then
+                controller.In.onLimitReached(controller, data)
                 angleLabel.Text = string.format("LIMIT: %s", data.limit:upper())
                 -- Flash the barrel
                 local originalColor = barrel.BrickColor
@@ -138,59 +243,61 @@ function Demo.run(config)
                         barrel.BrickColor = originalColor
                     end
                 end)
+            elseif signal == "stopped" then
+                angleLabel.Text = string.format("PHYSICS-BASED\nStopped: %.1f", swivel:getCurrentAngle())
             end
         end,
     }
 
-    -- Update barrel position with turret head
-    local connection = game:GetService("RunService").Heartbeat:Connect(function()
-        if turretHead.Parent and barrel.Parent then
-            barrel.CFrame = turretHead.CFrame * CFrame.new(0, 0, -2)
-        end
-    end)
+    -- No manual CFrame updates needed - physics handles everything via:
+    -- - HingeConstraint servo rotates turretHead
+    -- - WeldConstraint keeps barrel attached to turretHead
 
     ---------------------------------------------------------------------------
-    -- DEMO CONTROLS
+    -- DEMO CONTROLS (fire signals through controller)
     ---------------------------------------------------------------------------
 
     local controls = {}
 
     function controls.rotateForward()
-        swivel.In.onRotate(swivel, { direction = "forward" })
+        controller:rotateForward()
     end
 
     function controls.rotateReverse()
-        swivel.In.onRotate(swivel, { direction = "reverse" })
+        controller:rotateReverse()
     end
 
     function controls.stop()
-        swivel.In.onStop(swivel)
+        controller:stopRotation()
     end
 
     function controls.setAngle(degrees)
-        swivel.In.onSetAngle(swivel, { degrees = degrees })
+        controller:setTargetAngle(degrees)
     end
 
     function controls.setMode(mode)
-        swivel.In.onConfigure(swivel, { mode = mode })
+        controller:setMode(mode)
     end
 
     function controls.setSpeed(speed)
-        swivel.In.onConfigure(swivel, { speed = speed })
+        controller:setSpeed(speed)
     end
 
     function controls.setLimits(min, max)
-        swivel.In.onConfigure(swivel, { minAngle = min, maxAngle = max })
+        controller:setLimits(min, max)
     end
 
     function controls.cleanup()
-        connection:Disconnect()
-        swivel.Sys.onStop(swivel)
+        swivel.Sys.onStop(swivel)  -- Cleans up HingeConstraint and attachments
         demoFolder:Destroy()
     end
 
     function controls.getSwivel()
         return swivel
+    end
+
+    function controls.getController()
+        return controller
     end
 
     ---------------------------------------------------------------------------
@@ -199,7 +306,7 @@ function Demo.run(config)
 
     if config.autoDemo then
         task.spawn(function()
-            -- Sweep back and forth
+            -- Sweep back and forth using signals
             while demoFolder.Parent do
                 controls.rotateForward()
                 task.wait(3)
@@ -209,12 +316,24 @@ function Demo.run(config)
         end)
     end
 
-    print("Swivel Demo running. Controls:")
-    print("  demo.rotateForward()  - Start rotating forward")
-    print("  demo.rotateReverse()  - Start rotating reverse")
-    print("  demo.stop()           - Stop rotation")
-    print("  demo.setAngle(45)     - Set to specific angle")
+    print("============================================")
+    print("  PHYSICS-BASED SWIVEL DEMO")
+    print("============================================")
+    print("")
+    print("Architecture:")
+    print("  base       - Anchored (fixed)")
+    print("  turretHead - HingeConstraint servo (Y axis)")
+    print("  barrel     - WeldConstraint to turretHead")
+    print("")
+    print("All motion via physics - no CFrame manipulation!")
+    print("")
+    print("Controls:")
+    print("  demo.rotateForward()  - Motor mode, continuous")
+    print("  demo.rotateReverse()  - Motor mode, continuous")
+    print("  demo.stop()           - Stop and hold position")
+    print("  demo.setAngle(45)     - Servo mode, smooth move")
     print("  demo.cleanup()        - Remove demo")
+    print("")
 
     return controls
 end

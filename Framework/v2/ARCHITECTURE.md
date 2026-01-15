@@ -87,3 +87,76 @@ node.In.onConfigure(node, { ... })  -- Initial config before wiring
 ```
 
 Once nodes are wired and running, ALL communication must be via signals.
+
+---
+
+## CRITICAL: Animation & Motion - Use Physics or Tweens, Never Frame-by-Frame CFrame
+
+**THIS IS NON-NEGOTIABLE.**
+
+### The Rule
+
+All visual motion must use **physics constraints** (HingeConstraint, etc.) or **TweenService**. Never set CFrame directly every frame.
+
+```lua
+-- WRONG: Stop-frame CFrame animation (choppy, bypasses physics)
+RunService.Heartbeat:Connect(function(dt)
+    part.CFrame = part.CFrame * CFrame.Angles(0, dt * speed, 0)
+end)
+
+-- WRONG: Direct CFrame assignment every frame
+part.CFrame = targetCFrame
+
+-- CORRECT: Physics-based servo motor (smooth, physics-driven)
+local hinge = Instance.new("HingeConstraint")
+hinge.ActuatorType = Enum.ActuatorType.Servo
+hinge.TargetAngle = targetAngle  -- Physics interpolates smoothly
+
+-- CORRECT: TweenService for non-physics animation
+local tween = TweenService:Create(part, TweenInfo.new(0.5), {
+    CFrame = targetCFrame
+})
+tween:Play()
+```
+
+### Why This Matters
+
+1. **Smoothness** - Physics/tweens interpolate between frames; CFrame assignment is choppy
+2. **Frame Rate Independence** - Physics and tweens work correctly at any frame rate
+3. **Physics Integration** - Constraint-based motion respects collisions and other physics
+4. **Performance** - Engine-level interpolation is more efficient than Lua frame loops
+5. **Network Replication** - Physics constraints replicate better than CFrame spam
+
+### Preferred Methods (in order)
+
+1. **HingeConstraint / Servo** - Best for rotating parts (turrets, doors, etc.)
+2. **AlignPosition / AlignOrientation** - Best for following targets
+3. **TweenService** - Best for UI and scripted animations
+4. **SpringConstraint / RopeConstraint** - Best for physical connections
+
+### Anti-Patterns (NEVER DO THIS)
+
+```lua
+-- WRONG: Manual CFrame rotation every frame
+connection = RunService.Heartbeat:Connect(function()
+    part.CFrame = CFrame.new(pos) * CFrame.Angles(0, angle, 0)
+    angle = angle + 0.01
+end)
+
+-- WRONG: Lerping CFrame manually each frame
+connection = RunService.Heartbeat:Connect(function()
+    part.CFrame = part.CFrame:Lerp(targetCFrame, 0.1)
+end)
+
+-- WRONG: Setting Position/Orientation properties each frame
+connection = RunService.Heartbeat:Connect(function()
+    part.Position = targetPosition
+end)
+```
+
+### Exception: Camera and Non-Physical Objects
+
+Direct CFrame manipulation is acceptable for:
+- Camera positioning (CurrentCamera.CFrame)
+- UI elements that don't exist in 3D space
+- Debug visualization that needs instant updates

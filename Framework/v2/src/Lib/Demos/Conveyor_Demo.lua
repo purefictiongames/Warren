@@ -1,9 +1,9 @@
 --[[
     LibPureFiction Framework v2
-    Conveyor System Demo - Fully Automated Showcase
+    Conveyor System Demo - Signal-Based Architecture
 
-    Demonstrates Dropper + PathFollower + NodePool integration in a tycoon-style system.
-    Items spawn, travel along a path, and get collected at the end.
+    Uses Out:Fire / In signal pattern, not direct handler calls.
+    Demonstrates multi-component orchestration through signals.
 
     ============================================================================
     USAGE
@@ -27,6 +27,7 @@ local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local Lib = require(ReplicatedStorage:WaitForChild("Lib"))
 
+local Node = require(ReplicatedStorage.Lib.Node)
 local Dropper = Lib.Components.Dropper
 local PathFollower = Lib.Components.PathFollower
 local NodePool = Lib.Components.NodePool
@@ -34,6 +35,111 @@ local NodePool = Lib.Components.NodePool
 local SpawnerCore = require(ReplicatedStorage.Lib.Internal.SpawnerCore)
 
 local Demo = {}
+
+--------------------------------------------------------------------------------
+-- CONVEYOR CONTROLLER NODE
+-- Orchestrates Dropper + NodePool through signals
+--------------------------------------------------------------------------------
+
+local ConveyorController = Node.extend({
+    name = "ConveyorController",
+    domain = "server",
+
+    Sys = {
+        onInit = function(self)
+            self._itemsSpawned = 0
+            self._itemsCollected = 0
+            self._activeEntities = {}  -- { [entityId] = { assetId, instance } }
+        end,
+    },
+
+    In = {
+        -- Receive spawned notification from Dropper
+        onDropperSpawned = function(self, data)
+            self._itemsSpawned = self._itemsSpawned + 1
+
+            -- Track this entity
+            self._activeEntities[data.entityId] = {
+                assetId = data.assetId,
+                instance = data.instance,
+            }
+
+            -- Fire checkout signal to pool
+            self.Out:Fire("poolCheckout", {
+                entityId = data.entityId,
+                instance = data.instance,
+            })
+        end,
+
+        onDropperDespawned = function(self, data)
+            self._activeEntities[data.entityId] = nil
+        end,
+
+        -- Receive release notification from NodePool (path complete)
+        onPoolReleased = function(self, data)
+            local entityData = self._activeEntities[data.entityId]
+            if entityData then
+                self._itemsCollected = self._itemsCollected + 1
+
+                -- Signal to return the item to dropper
+                -- (collection animation handled by wiring)
+                self.Out:Fire("dropperReturn", { assetId = entityData.assetId })
+                self._activeEntities[data.entityId] = nil
+            end
+        end,
+    },
+
+    Out = {
+        -- Dropper control signals
+        dropperStart = {},      -- -> Dropper.In.onStart
+        dropperStop = {},       -- -> Dropper.In.onStop
+        dropperDispense = {},   -- -> Dropper.In.onDispense
+        dropperConfigure = {},  -- -> Dropper.In.onConfigure
+        dropperReturn = {},     -- -> Dropper.In.onReturn
+        dropperDespawnAll = {}, -- -> Dropper.In.onDespawnAll
+
+        -- Pool control signals
+        poolCheckout = {},      -- -> NodePool.In.onCheckout
+        poolReleaseAll = {},    -- -> NodePool.In.onReleaseAll
+        poolConfigure = {},     -- -> NodePool.In.onConfigure
+    },
+
+    -- Controller methods that fire signals
+    startDropper = function(self)
+        self.Out:Fire("dropperStart", {})
+    end,
+
+    stopDropper = function(self)
+        self.Out:Fire("dropperStop", {})
+    end,
+
+    dispense = function(self, count)
+        self.Out:Fire("dropperDispense", { count = count or 1 })
+    end,
+
+    configureDropper = function(self, config)
+        self.Out:Fire("dropperConfigure", config)
+    end,
+
+    releaseAllFromPool = function(self)
+        self.Out:Fire("poolReleaseAll", {})
+    end,
+
+    despawnAllItems = function(self)
+        self.Out:Fire("dropperDespawnAll", {})
+    end,
+
+    getStats = function(self)
+        return {
+            itemsSpawned = self._itemsSpawned,
+            itemsCollected = self._itemsCollected,
+        }
+    end,
+})
+
+--------------------------------------------------------------------------------
+-- DEMO
+--------------------------------------------------------------------------------
 
 function Demo.run(config)
     config = config or {}
@@ -257,7 +363,7 @@ function Demo.run(config)
     statusLabel.TextColor3 = Color3.new(0, 1, 0)
     statusLabel.TextScaled = true
     statusLabel.Font = Enum.Font.Code
-    statusLabel.Text = "CONVEYOR SYSTEM\nInitializing..."
+    statusLabel.Text = "SIGNAL-BASED CONVEYOR\nInitializing..."
     statusLabel.Parent = billboard
 
     -- Phase indicator
@@ -285,22 +391,21 @@ function Demo.run(config)
     itemsFolder.Name = "Items"
     itemsFolder.Parent = demoFolder
 
-    local controller = {
+    local state = {
         running = true,
-        itemsSpawned = 0,
-        itemsCollected = 0,
-        activeEntities = {},  -- { [entityId] = { assetId, instance } }
     }
 
     ---------------------------------------------------------------------------
-    -- CREATE NODEPOOL FOR PATHFOLLOWERS
+    -- CREATE NODES
     ---------------------------------------------------------------------------
 
+    -- NodePool for PathFollowers
     local pathFollowerPool = NodePool:new({
         id = "Demo_PathFollowerPool",
     })
     pathFollowerPool.Sys.onInit(pathFollowerPool)
 
+    -- Configure pool (setup phase - direct call OK per ARCHITECTURE.md)
     pathFollowerPool.In.onConfigure(pathFollowerPool, {
         nodeClass = PathFollower,
         poolMode = "elastic",
@@ -310,29 +415,93 @@ function Demo.run(config)
         nodeConfig = {
             Speed = 12,
         },
-        -- These signals are sent to the PathFollower when checked out
         checkoutSignals = {
             { signal = "onControl", map = { entity = "instance", entityId = "entityId" } },
             { signal = "onWaypoints", map = { targets = "$waypoints" } },
         },
-        -- Auto-release when PathFollower fires "pathComplete"
         releaseOn = "pathComplete",
-        -- Shared context - waypoints are the same for all items
         context = {
             waypoints = waypoints,
         },
     })
 
-    -- Wire pool output for collection handling
+    -- Dropper
+    local dropper = Dropper:new({
+        id = "Demo_Dropper",
+        model = dropperBase,
+    })
+    dropper.Sys.onInit(dropper)
+
+    -- Configure dropper (setup phase - direct call OK per ARCHITECTURE.md)
+    dropper.In.onConfigure(dropper, {
+        pool = { "RedCrate", "BlueCrate", "GreenCrate", "YellowCrate", "PurpleCrate" },
+        poolMode = "random",
+        interval = 2,
+        maxActive = 10,
+        spawnOffset = Vector3.new(0, 4, -3),
+    })
+
+    -- Controller
+    local controller = ConveyorController:new({ id = "Demo_ConveyorController" })
+    controller.Sys.onInit(controller)
+
+    ---------------------------------------------------------------------------
+    -- WIRE SIGNALS (manual wiring for demo - in production IPC does this)
+    ---------------------------------------------------------------------------
+
+    -- Controller.Out -> Dropper.In and NodePool.In
+    controller.Out = {
+        Fire = function(self, signal, data)
+            -- Dropper signals
+            if signal == "dropperStart" then
+                dropper.In.onStart(dropper)
+            elseif signal == "dropperStop" then
+                dropper.In.onStop(dropper)
+            elseif signal == "dropperDispense" then
+                dropper.In.onDispense(dropper, data)
+            elseif signal == "dropperConfigure" then
+                dropper.In.onConfigure(dropper, data)
+            elseif signal == "dropperReturn" then
+                dropper.In.onReturn(dropper, data)
+            elseif signal == "dropperDespawnAll" then
+                dropper.In.onDespawnAll(dropper)
+            -- Pool signals
+            elseif signal == "poolCheckout" then
+                pathFollowerPool.In.onCheckout(pathFollowerPool, data)
+            elseif signal == "poolReleaseAll" then
+                pathFollowerPool.In.onReleaseAll(pathFollowerPool)
+            elseif signal == "poolConfigure" then
+                pathFollowerPool.In.onConfigure(pathFollowerPool, data)
+            end
+        end,
+    }
+
+    -- Dropper.Out -> Controller.In + move items to folder
+    dropper.Out = {
+        Fire = function(self, signal, data)
+            if signal == "spawned" then
+                -- Move spawned item to our folder
+                if data.instance then
+                    data.instance.Parent = itemsFolder
+                end
+                -- Forward to controller
+                controller.In.onDropperSpawned(controller, data)
+
+            elseif signal == "despawned" then
+                controller.In.onDropperDespawned(controller, data)
+            end
+        end,
+    }
+
+    -- NodePool.Out -> Controller.In + collection animation
     pathFollowerPool.Out = {
         Fire = function(self, signal, data)
             if signal == "released" then
-                -- PathFollower completed - collect the item
-                local entityData = controller.activeEntities[data.entityId]
-                if entityData then
-                    controller.itemsCollected = controller.itemsCollected + 1
+                -- Get entity data before controller cleans it up
+                local entityData = controller._activeEntities[data.entityId]
 
-                    -- Visual collection effect
+                -- Collection animation
+                if entityData then
                     local entity = entityData.instance
                     if entity and entity:IsA("BasePart") and entity.Parent then
                         -- Shrink and fade
@@ -343,67 +512,16 @@ function Demo.run(config)
                         })
                         tween:Play()
                         tween.Completed:Connect(function()
-                            -- Return to dropper (despawn)
-                            dropper.In.onReturn(dropper, { assetId = entityData.assetId })
+                            -- Now forward to controller to handle return
+                            controller.In.onPoolReleased(controller, data)
                         end)
                     else
-                        -- Just despawn
-                        dropper.In.onReturn(dropper, { assetId = entityData.assetId })
+                        -- Just forward to controller
+                        controller.In.onPoolReleased(controller, data)
                     end
-
-                    controller.activeEntities[data.entityId] = nil
+                else
+                    controller.In.onPoolReleased(controller, data)
                 end
-            end
-        end,
-    }
-
-    ---------------------------------------------------------------------------
-    -- CREATE DROPPER COMPONENT
-    ---------------------------------------------------------------------------
-
-    local dropper = Dropper:new({
-        id = "Demo_Dropper",
-        model = dropperBase,
-    })
-    dropper.Sys.onInit(dropper)
-    dropper.In.onConfigure(dropper, {
-        pool = { "RedCrate", "BlueCrate", "GreenCrate", "YellowCrate", "PurpleCrate" },
-        poolMode = "random",
-        interval = 2,
-        maxActive = 10,
-        spawnOffset = Vector3.new(0, 4, -3),
-    })
-
-    ---------------------------------------------------------------------------
-    -- WIRE DROPPER -> NODEPOOL
-    ---------------------------------------------------------------------------
-
-    dropper.Out = {
-        Fire = function(self, signal, data)
-            if signal == "spawned" then
-                controller.itemsSpawned = controller.itemsSpawned + 1
-
-                -- Move spawned item to our folder
-                if data.instance then
-                    data.instance.Parent = itemsFolder
-                end
-
-                -- Track this entity
-                controller.activeEntities[data.entityId] = {
-                    assetId = data.assetId,
-                    instance = data.instance,
-                }
-
-                -- Check out a PathFollower from the pool
-                -- The pool will automatically send onControl and onWaypoints signals
-                pathFollowerPool.In.onCheckout(pathFollowerPool, {
-                    entityId = data.entityId,
-                    instance = data.instance,
-                })
-
-            elseif signal == "despawned" then
-                -- Cleanup tracking
-                controller.activeEntities[data.entityId] = nil
             end
         end,
     }
@@ -413,14 +531,15 @@ function Demo.run(config)
     ---------------------------------------------------------------------------
 
     local statusConnection = RunService.Heartbeat:Connect(function()
-        if not controller.running then return end
+        if not state.running then return end
 
         local poolStats = pathFollowerPool:getStats()
+        local controllerStats = controller:getStats()
 
         statusLabel.Text = string.format(
-            "CONVEYOR SYSTEM\nSpawned: %d | Collected: %d\nPool: %d/%d in use",
-            controller.itemsSpawned,
-            controller.itemsCollected,
+            "SIGNAL-BASED CONVEYOR\nSpawned: %d | Collected: %d\nPool: %d/%d in use",
+            controllerStats.itemsSpawned,
+            controllerStats.itemsCollected,
             poolStats.inUse,
             poolStats.total
         )
@@ -447,97 +566,97 @@ function Demo.run(config)
     task.spawn(function()
         task.wait(1)
 
-        if not controller.running then return end
+        if not state.running then return end
 
         -----------------------------------------------------------------------
         -- PHASE 1: INTRODUCTION
         -----------------------------------------------------------------------
-        setPhase("PHASE 1: DROPPER + NODEPOOL")
-        setStatus("Demonstrating Dropper + NodePool\nPathFollowers are pooled!", Color3.new(0, 0.8, 1))
+        setPhase("PHASE 1: SIGNAL-BASED ARCHITECTURE")
+        setStatus("Controller fires signals\nDropper + Pool respond", Color3.new(0, 0.8, 1))
         task.wait(2)
 
-        -- Start dropper with slow interval
-        setStatus("Dropper: onStart()\nNodePool manages PathFollowers", Color3.new(0, 0.8, 1))
-        dropper.In.onConfigure(dropper, { interval = 2 })
-        dropper.In.onStart(dropper)
-        task.wait(8)  -- Let a few items spawn and traverse
+        -- Start dropper through controller
+        setStatus("Controller -> dropperStart signal", Color3.new(0, 0.8, 1))
+        controller:configureDropper({ interval = 2 })
+        controller:startDropper()
+        task.wait(8)
 
-        if not controller.running then return end
+        if not state.running then return end
 
         -----------------------------------------------------------------------
         -- PHASE 2: POOLING IN ACTION
         -----------------------------------------------------------------------
         setPhase("PHASE 2: POOL REUSE")
-        setStatus("Watch PathFollowers get reused!\nPool grows/shrinks as needed", Color3.new(0, 1, 0.5))
-        task.wait(8)  -- Watch items traverse path and pool reuse
+        setStatus("spawned -> poolCheckout -> pathComplete -> released\nFull signal flow!", Color3.new(0, 1, 0.5))
+        task.wait(8)
 
-        if not controller.running then return end
+        if not state.running then return end
 
         -----------------------------------------------------------------------
         -- PHASE 3: SPEED VARIATION
         -----------------------------------------------------------------------
         setPhase("PHASE 3: FASTER SPAWNING")
-        setStatus("Increasing spawn rate\nPool expands automatically", Color3.new(1, 0.8, 0))
+        setStatus("Controller -> dropperConfigure signal\nPool auto-expands", Color3.new(1, 0.8, 0))
 
-        dropper.In.onConfigure(dropper, { interval = 0.8 })
+        controller:configureDropper({ interval = 0.8 })
 
         task.wait(10)
 
-        if not controller.running then return end
+        if not state.running then return end
 
         -----------------------------------------------------------------------
         -- PHASE 4: POOL MODES
         -----------------------------------------------------------------------
         setPhase("PHASE 4: SEQUENTIAL COLORS")
-        setStatus("Changing to sequential pool\nCrates spawn in order", Color3.new(0.7, 0.3, 1))
+        setStatus("dropperConfigure signal\npoolMode = 'sequential'", Color3.new(0.7, 0.3, 1))
 
-        dropper.In.onConfigure(dropper, {
+        controller:configureDropper({
             poolMode = "sequential",
             interval = 1,
         })
 
         task.wait(10)
 
-        if not controller.running then return end
+        if not state.running then return end
 
         -----------------------------------------------------------------------
         -- PHASE 5: BURST DISPENSING
         -----------------------------------------------------------------------
-        setPhase("PHASE 5: ON-DEMAND SPAWNING")
-        setStatus("Dropper: onDispense()\nBurst spawning", Color3.new(1, 0.3, 0.3))
+        setPhase("PHASE 5: ON-DEMAND SIGNALS")
+        setStatus("Controller -> dropperDispense signal\nBurst spawning", Color3.new(1, 0.3, 0.3))
 
-        -- Stop loop, do manual dispenses
-        dropper.In.onStop(dropper)
+        -- Stop loop, do manual dispenses through controller
+        controller:stopDropper()
         task.wait(1)
 
         -- Burst of 5
-        setStatus("Dispensing burst: 5 items\nPool handles the load", Color3.new(1, 0.3, 0.3))
-        dropper.In.onDispense(dropper, { count = 5 })
+        setStatus("dropperDispense({ count = 5 })\nSignal-based burst!", Color3.new(1, 0.3, 0.3))
+        controller:dispense(5)
         task.wait(4)
 
         -- Another burst
-        setStatus("Dispensing burst: 5 more items", Color3.new(1, 0.3, 0.3))
-        dropper.In.onDispense(dropper, { count = 5 })
+        setStatus("dropperDispense({ count = 5 })\nAnother burst", Color3.new(1, 0.3, 0.3))
+        controller:dispense(5)
         task.wait(6)
 
-        if not controller.running then return end
+        if not state.running then return end
 
         -----------------------------------------------------------------------
         -- PHASE 6: CONTINUOUS OPERATION
         -----------------------------------------------------------------------
         setPhase("PHASE 6: CONTINUOUS OPERATION")
-        setStatus("Resuming continuous mode\nWatch the system run!", Color3.new(0, 1, 0))
+        setStatus("All signals flowing!\nController orchestrates everything", Color3.new(0, 1, 0))
 
-        dropper.In.onConfigure(dropper, {
+        controller:configureDropper({
             interval = 1.2,
             poolMode = "random",
         })
-        dropper.In.onStart(dropper)
+        controller:startDropper()
 
         -- Let it run for a while
         task.wait(15)
 
-        if not controller.running then return end
+        if not state.running then return end
 
         -----------------------------------------------------------------------
         -- PHASE 7: COMPLETE
@@ -545,41 +664,43 @@ function Demo.run(config)
         setPhase("DEMO COMPLETE")
 
         local poolStats = pathFollowerPool:getStats()
+        local controllerStats = controller:getStats()
         setStatus(string.format(
-            "All API calls demonstrated!\nSpawned: %d | Collected: %d\nPool peak: %d nodes",
-            controller.itemsSpawned,
-            controller.itemsCollected,
+            "SIGNAL-BASED ARCHITECTURE\nSpawned: %d | Collected: %d\nPool peak: %d nodes",
+            controllerStats.itemsSpawned,
+            controllerStats.itemsCollected,
             poolStats.total
         ), Color3.new(0, 1, 0))
 
-        -- Stop dropper
-        dropper.In.onStop(dropper)
+        -- Stop dropper through controller
+        controller:stopDropper()
 
         -- Wait for remaining items to finish
         task.wait(12)
 
         setStatus("SYSTEM OFFLINE\nCall demo.cleanup() to remove", Color3.new(0.5, 0.5, 0.5))
 
-        announce("Demo complete! Spawned: " .. controller.itemsSpawned .. ", Collected: " .. controller.itemsCollected)
+        local finalStats = controller:getStats()
+        announce("Demo complete! Spawned: " .. finalStats.itemsSpawned .. ", Collected: " .. finalStats.itemsCollected)
     end)
 
     ---------------------------------------------------------------------------
-    -- CONTROLS
+    -- CONTROLS (fire signals through controller)
     ---------------------------------------------------------------------------
 
     local controls = {}
 
     function controls.cleanup()
-        controller.running = false
+        state.running = false
         statusConnection:Disconnect()
 
-        -- Release all from pool
-        pathFollowerPool.In.onReleaseAll(pathFollowerPool)
+        -- Release all from pool through controller
+        controller:releaseAllFromPool()
         pathFollowerPool.Sys.onStop(pathFollowerPool)
 
-        -- Stop dropper
-        dropper.In.onStop(dropper)
-        dropper.In.onDespawnAll(dropper)
+        -- Stop dropper through controller
+        controller:stopDropper()
+        controller:despawnAllItems()
         dropper.Sys.onStop(dropper)
 
         demoFolder:Destroy()
@@ -588,42 +709,49 @@ function Demo.run(config)
 
     function controls.getStats()
         local poolStats = pathFollowerPool:getStats()
+        local controllerStats = controller:getStats()
         return {
-            itemsSpawned = controller.itemsSpawned,
-            itemsCollected = controller.itemsCollected,
+            itemsSpawned = controllerStats.itemsSpawned,
+            itemsCollected = controllerStats.itemsCollected,
             poolInUse = poolStats.inUse,
             poolTotal = poolStats.total,
         }
     end
 
-    -- Manual controls
+    -- Manual controls (through controller signals)
     function controls.dispense(count)
-        dropper.In.onDispense(dropper, { count = count or 1 })
+        controller:dispense(count)
     end
 
     function controls.setInterval(interval)
-        dropper.In.onConfigure(dropper, { interval = interval })
+        controller:configureDropper({ interval = interval })
     end
 
     function controls.start()
-        dropper.In.onStart(dropper)
+        controller:startDropper()
     end
 
     function controls.stop()
-        dropper.In.onStop(dropper)
+        controller:stopDropper()
+    end
+
+    function controls.getController()
+        return controller
     end
 
     print("============================================")
-    print("  CONVEYOR SYSTEM - AUTOMATED DEMO")
+    print("  SIGNAL-BASED CONVEYOR DEMO")
     print("============================================")
     print("")
-    print("Sit back and watch! The demo will showcase:")
-    print("  - Phase 1: Dropper + NodePool integration")
-    print("  - Phase 2: PathFollower pool reuse")
-    print("  - Phase 3: Faster spawning (pool expansion)")
-    print("  - Phase 4: Sequential color spawning")
-    print("  - Phase 5: On-demand burst dispensing")
-    print("  - Phase 6: Continuous operation")
+    print("Controller fires signals -> Components respond")
+    print("Proper Out:Fire / In pattern throughout")
+    print("")
+    print("Signal flow:")
+    print("  Controller -> dropperStart -> Dropper")
+    print("  Dropper -> spawned -> Controller")
+    print("  Controller -> poolCheckout -> NodePool")
+    print("  NodePool -> released -> Controller")
+    print("  Controller -> dropperReturn -> Dropper")
     print("")
     print("To stop early: demo.cleanup()")
     print("")

@@ -55,7 +55,51 @@
 
 --]]
 
+local RunService = game:GetService("RunService")
+
 local Demos = {}
+
+--------------------------------------------------------------------------------
+-- CLIENT AUTO-INITIALIZATION
+--------------------------------------------------------------------------------
+-- When this module is required on a client, automatically detect and initialize
+-- any active demos that need client-side setup.
+
+if RunService:IsClient() then
+    task.defer(function()
+        -- Check for ShootingGallery demo
+        local galleryFolder = workspace:FindFirstChild("ShootingGallery_Demo")
+        if galleryFolder then
+            local clientInit = galleryFolder:FindFirstChild("ClientInit")
+            if clientInit and clientInit:IsA("RemoteEvent") then
+                print("[Demos] Auto-detected ShootingGallery demo, initializing client...")
+                -- Load and run client init
+                task.defer(function()
+                    local ShootingGallery = require(script:WaitForChild("ShootingGallery_Demo"))
+                    ShootingGallery.client()
+                end)
+            end
+        end
+
+        -- Listen for future demo folders
+        workspace.ChildAdded:Connect(function(child)
+            if child.Name == "ShootingGallery_Demo" then
+                local clientInit = child:WaitForChild("ClientInit", 5)
+                if clientInit then
+                    print("[Demos] ShootingGallery demo detected, initializing client...")
+                    task.defer(function()
+                        local ShootingGallery = require(script:WaitForChild("ShootingGallery_Demo"))
+                        ShootingGallery.client()
+                    end)
+                end
+            end
+        end)
+    end)
+end
+
+--------------------------------------------------------------------------------
+-- LAZY LOADING
+--------------------------------------------------------------------------------
 
 -- Lazy-load demos to avoid circular dependency
 -- (Demo modules require Lib, which would cause recursion if loaded at init)
@@ -67,6 +111,8 @@ local demoModules = {
     Launcher = "Launcher_Demo",
     Turret = "Turret_Demo",
     Conveyor = "Conveyor_Demo",
+    Combat = "Combat_Demo",
+    ShootingGallery = "ShootingGallery_Demo",
 }
 
 setmetatable(Demos, {

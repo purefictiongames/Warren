@@ -301,28 +301,22 @@ function Demo.run(config)
         end,
     }
 
-    -- Beam visualization update
+    -- Track enabled state via signals (not direct method calls)
+    local targeterEnabled = false
+
+    -- Beam visualization update (uses tracked state, not direct method calls)
     local visualConnection = RunService.Heartbeat:Connect(function()
         if not demoFolder.Parent then return end
 
         clearBeams()
 
-        if not targeter:isEnabled() then return end
+        if not targeterEnabled then return end
 
-        -- Draw rays based on current beam mode
-        local rays = targeter:_generateRays()
-        for _, ray in ipairs(rays) do
-            -- Find if this ray hit a target
-            local hit = nil
-            for _, targetData in ipairs(currentTargets) do
-                local toTarget = targetData.position - ray.origin
-                local dot = toTarget:Dot(ray.direction.Unit)
-                if dot > 0 and dot < ray.direction.Magnitude then
-                    hit = targetData
-                    break
-                end
-            end
-            drawBeam(ray.origin, ray.direction, hit, hit ~= nil)
+        -- Draw beams to tracked targets (state from signals, not direct calls)
+        local origin = scanner.Position
+        for _, targetData in ipairs(currentTargets) do
+            local direction = targetData.position - origin
+            drawBeam(origin, direction, targetData, true)
         end
     end)
 
@@ -335,15 +329,15 @@ function Demo.run(config)
 
     function controls.enable()
         controller:enableScanning()
-        if targeter:isScanning() then
-            statusLabel.Text = "SIGNAL-BASED\nSCANNING..."
-            statusLabel.TextColor3 = Color3.new(0, 1, 0)
-            scanner.BrickColor = BrickColor.new("Bright green")
-        end
+        targeterEnabled = true
+        statusLabel.Text = "SIGNAL-BASED\nSCANNING..."
+        statusLabel.TextColor3 = Color3.new(0, 1, 0)
+        scanner.BrickColor = BrickColor.new("Bright green")
     end
 
     function controls.disable()
         controller:disableScanning()
+        targeterEnabled = false
         statusLabel.Text = "SIGNAL-BASED\nTARGETER: OFFLINE"
         statusLabel.TextColor3 = Color3.new(0.5, 0.5, 0.5)
         scanner.BrickColor = BrickColor.new("Medium stone grey")
@@ -391,7 +385,7 @@ function Demo.run(config)
     end
 
     function controls.setScanMode(mode)
-        local wasEnabled = targeter:isEnabled()
+        local wasEnabled = targeterEnabled
         if wasEnabled then controls.disable() end
         controller:setScanMode(mode)
         if wasEnabled then controls.enable() end

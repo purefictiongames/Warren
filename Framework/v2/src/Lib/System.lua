@@ -1164,6 +1164,15 @@ System.IPC = (function()
     local isInitialized = false
     local isStarted = false
 
+    -- Cross-domain routing state
+    local crossDomainRemote = nil           -- RemoteEvent for client/server signals
+    local nodeDomains = {}                  -- { className → "server"|"client"|"shared" }
+    local crossDomainClasses = {}           -- Classes that exist on the other domain
+    local CROSS_DOMAIN_REMOTE_NAME = "LibPF_IPC_CrossDomain"
+
+    -- Forward declarations (for functions used before definition)
+    local sendCrossDomain
+
     ---------------------------------------------------------------------------
     -- PRIVATE FUNCTIONS (closure-protected)
     ---------------------------------------------------------------------------
@@ -1472,7 +1481,11 @@ System.IPC = (function()
         nodeDefinitions[NodeClass.name] = NodeClass
         nodesByClass[NodeClass.name] = nodesByClass[NodeClass.name] or {}
 
-        System.Debug.trace("IPC", "Registered node:", NodeClass.name)
+        -- Track domain for cross-domain routing
+        local domain = NodeClass.domain or "shared"
+        nodeDomains[NodeClass.name] = domain
+
+        System.Debug.trace("IPC", "Registered node:", NodeClass.name, "(domain:", domain, ")")
         return true
     end
 
@@ -1518,6 +1531,16 @@ System.IPC = (function()
         -- Register in lookup tables
         instances[config.id] = instance
         table.insert(nodesByClass[className], config.id)
+
+        -- If IPC is already initialized/started, call lifecycle handlers on new instance
+        if isInitialized then
+            executeHandler(instance, "Sys", "onInit", {})
+            System.Debug.trace("IPC", "Called onInit on late-created instance:", config.id)
+        end
+        if isStarted then
+            executeHandler(instance, "Sys", "onStart", {})
+            System.Debug.trace("IPC", "Called onStart on late-created instance:", config.id)
+        end
 
         System.Debug.trace("IPC", "Created instance:", config.id, "of", className)
         return instance
@@ -1730,15 +1753,56 @@ System.IPC = (function()
         local msgId = data._msgId or IPC.getMessageId()
         data._msgId = msgId
 
-        -- Resolve targets from wiring
-        local targets = resolveTargets(sourceId, signal, data)
-
-        System.Debug.trace("IPC", "Sending", signal, "from", sourceId, "to", #targets, "targets")
-
-        -- Dispatch to each target
-        for _, targetId in ipairs(targets) do
-            dispatchToTarget(targetId, signal, data, msgId)
+        -- Get source instance and class
+        local sourceInstance = instances[sourceId]
+        if not sourceInstance then
+            System.Debug.warn("IPC", "Source instance not found:", sourceId)
+            return
         end
+
+        local sourceClass = sourceInstance.class
+        local currentDomain = System.isServer and "server" or "client"
+
+        -- Resolve targets from wiring (class-based)
+        if not currentMode then
+            return
+        end
+
+        local wiring = resolveWiring(currentMode)
+        local targetClasses = wiring[sourceClass] or {}
+
+        local localTargetCount = 0
+        local crossDomainSent = false
+
+        for _, targetClass in ipairs(targetClasses) do
+            local targetDomain = nodeDomains[targetClass] or "shared"
+
+            -- Determine if target is cross-domain
+            local isCrossDomain = false
+            if targetDomain == "server" and currentDomain == "client" then
+                isCrossDomain = true
+            elseif targetDomain == "client" and currentDomain == "server" then
+                isCrossDomain = true
+            end
+
+            if isCrossDomain then
+                -- Send via RemoteEvent (once per target domain)
+                if not crossDomainSent then
+                    sendCrossDomain(sourceClass, signal, data, targetDomain)
+                    crossDomainSent = true
+                end
+            else
+                -- Local dispatch - find all instances of this class
+                local classInstances = nodesByClass[targetClass] or {}
+                for _, instanceId in ipairs(classInstances) do
+                    dispatchToTarget(instanceId, signal, data, msgId)
+                    localTargetCount = localTargetCount + 1
+                end
+            end
+        end
+
+        System.Debug.trace("IPC", "Sent", signal, "from", sourceId,
+            "- local:", localTargetCount, "cross-domain:", crossDomainSent and "yes" or "no")
     end
 
     --[[
@@ -1819,6 +1883,137 @@ System.IPC = (function()
     end
 
     ---------------------------------------------------------------------------
+    -- CROSS-DOMAIN ROUTING
+    ---------------------------------------------------------------------------
+
+    --[[
+        Dispatch a cross-domain signal received from RemoteEvent.
+
+        @param sourceClass string - Source node class name
+        @param signal string - Signal name
+        @param data table - Signal payload
+        @param player Player? - Player who sent (server only, for validation)
+    --]]
+    local function dispatchCrossDomainSignal(sourceClass, signal, data, player)
+        if not isStarted then
+            System.Debug.warn("IPC", "Cross-domain signal received but IPC not started")
+            return
+        end
+
+        -- Resolve targets from wiring (same as normal routing)
+        if not currentMode then
+            return
+        end
+
+        local wiring = resolveWiring(currentMode)
+        local targetClasses = wiring[sourceClass] or {}
+
+        System.Debug.trace("IPC", "Cross-domain signal from", sourceClass, ":", signal, "to", #targetClasses, "target classes")
+
+        -- Dispatch to all instances of target classes in this context
+        for _, targetClass in ipairs(targetClasses) do
+            local targetDomain = nodeDomains[targetClass] or "shared"
+            local currentDomain = System.isServer and "server" or "client"
+
+            -- Only dispatch to nodes that exist in this context
+            if targetDomain == currentDomain or targetDomain == "shared" then
+                local classInstances = nodesByClass[targetClass] or {}
+                for _, instanceId in ipairs(classInstances) do
+                    dispatchToTarget(instanceId, signal, data, data._msgId)
+                end
+            end
+        end
+    end
+
+    --[[
+        Setup cross-domain RemoteEvent infrastructure.
+
+        Server creates the RemoteEvent, client waits for it.
+        Both sides set up listeners to receive cross-domain signals.
+    --]]
+    -- Track if we've connected event handlers (to avoid duplicate connections)
+    local serverEventConnected = false
+    local clientEventConnected = false
+
+    local function setupCrossDomain()
+        local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+        if System.isServer then
+            -- Server creates or reuses the RemoteEvent
+            local existing = ReplicatedStorage:FindFirstChild(CROSS_DOMAIN_REMOTE_NAME)
+            if existing then
+                -- Reuse existing (don't destroy - clients may have references)
+                crossDomainRemote = existing
+                System.Debug.trace("IPC", "Cross-domain RemoteEvent reused (server)")
+            else
+                -- Create new
+                crossDomainRemote = Instance.new("RemoteEvent")
+                crossDomainRemote.Name = CROSS_DOMAIN_REMOTE_NAME
+                crossDomainRemote.Parent = ReplicatedStorage
+                System.Debug.trace("IPC", "Cross-domain RemoteEvent created (server)")
+            end
+
+            -- Server listens for client → server signals (only connect once)
+            if not serverEventConnected then
+                crossDomainRemote.OnServerEvent:Connect(function(player, sourceClass, signal, data)
+                    System.Debug.trace("IPC", "Received cross-domain from client:", sourceClass, signal)
+                    dispatchCrossDomainSignal(sourceClass, signal, data, player)
+                end)
+                serverEventConnected = true
+                System.Debug.trace("IPC", "OnServerEvent handler connected")
+            end
+        else
+            -- Client waits for or reuses the RemoteEvent
+            if not crossDomainRemote or not crossDomainRemote.Parent then
+                crossDomainRemote = ReplicatedStorage:WaitForChild(CROSS_DOMAIN_REMOTE_NAME, 10)
+            end
+
+            if crossDomainRemote then
+                -- Client listens for server → client signals (only connect once)
+                if not clientEventConnected then
+                    crossDomainRemote.OnClientEvent:Connect(function(sourceClass, signal, data)
+                        System.Debug.trace("IPC", "Received cross-domain from server:", sourceClass, signal)
+                        dispatchCrossDomainSignal(sourceClass, signal, data, nil)
+                    end)
+                    clientEventConnected = true
+                    System.Debug.trace("IPC", "OnClientEvent handler connected")
+                end
+            else
+                System.Debug.warn("IPC", "Cross-domain RemoteEvent not found - cross-domain routing disabled")
+            end
+        end
+    end
+
+    --[[
+        Send a signal across the client/server boundary.
+
+        @param sourceClass string - Source node class name
+        @param signal string - Signal name
+        @param data table - Signal payload
+        @param targetDomain string - "server" or "client"
+    --]]
+    sendCrossDomain = function(sourceClass, signal, data, targetDomain)
+        if not crossDomainRemote then
+            System.Debug.warn("IPC", "Cross-domain remote not available")
+            return false
+        end
+
+        if targetDomain == "server" and not System.isServer then
+            -- Client sending to server
+            crossDomainRemote:FireServer(sourceClass, signal, data)
+            System.Debug.trace("IPC", "Sent cross-domain to server:", sourceClass, signal)
+            return true
+        elseif targetDomain == "client" and System.isServer then
+            -- Server sending to all clients
+            crossDomainRemote:FireAllClients(sourceClass, signal, data)
+            System.Debug.trace("IPC", "Sent cross-domain to clients:", sourceClass, signal)
+            return true
+        end
+
+        return false
+    end
+
+    ---------------------------------------------------------------------------
     -- LIFECYCLE
     ---------------------------------------------------------------------------
 
@@ -1834,6 +2029,9 @@ System.IPC = (function()
         end
 
         System.Debug.info("IPC", "Initializing...")
+
+        -- Setup cross-domain routing infrastructure
+        setupCrossDomain()
 
         -- Call onInit on all instances
         for id, instance in pairs(instances) do
@@ -1968,6 +2166,13 @@ System.IPC = (function()
         seenMessages = {}
         isInitialized = false
         isStarted = false
+
+        -- Clean up cross-domain state
+        nodeDomains = {}
+        crossDomainClasses = {}
+        -- Note: Don't destroy crossDomainRemote here as it may be needed
+        -- for other demos/systems running. It will be recreated on next init.
+
         System.Debug.info("IPC", "Reset complete")
     end
 
@@ -3201,6 +3406,172 @@ System.InputCapture = (function()
     end
 
     return InputCapture
+end)()
+
+--------------------------------------------------------------------------------
+-- SYSTEM.ATTRIBUTE - Reactive Attribute/Modifier System
+--------------------------------------------------------------------------------
+
+--[[
+    System.Attribute provides a reactive attribute system for entities.
+
+    Features:
+    - Base values with schema validation (type, min, max, default)
+    - Modifier stacking (additive, multiplicative, override)
+    - Derived/computed values with dependency tracking
+    - Subscription system for change notifications
+    - Selective client replication
+
+    Usage:
+    ```lua
+    local attrs = System.Attribute.createSet({
+        health = { type = "number", default = 100, min = 0, replicate = true },
+        defense = { type = "number", default = 10 },
+        effectiveDefense = {
+            type = "number",
+            derived = true,
+            dependencies = { "defense" },
+            compute = function(values, mods)
+                return values.defense + (mods.additive or 0)
+            end,
+        },
+    })
+
+    local modId = attrs:applyModifier("defense", {
+        operation = "additive",
+        value = 5,
+        source = "armor",
+    })
+
+    attrs:subscribe("health", function(new, old, name)
+        print("Health changed:", old, "→", new)
+    end)
+    ```
+--]]
+
+System.Attribute = (function()
+    local Attribute = {}
+
+    -- Internal: Lazy load AttributeSet to avoid circular dependencies
+    local AttributeSet = nil
+    local function getAttributeSet()
+        if not AttributeSet then
+            -- During runtime, require from Internal
+            local Internal = script.Parent.Internal
+            if Internal and Internal:FindFirstChild("AttributeSet") then
+                AttributeSet = require(Internal.AttributeSet)
+            else
+                error("[System.Attribute] AttributeSet module not found")
+            end
+        end
+        return AttributeSet
+    end
+
+    -- Track all created attribute sets (for replication, debugging)
+    local allSets = {}
+    local setIdCounter = 0
+
+    --[[
+        Create a new AttributeSet with the given schema.
+
+        @param schema table - Attribute definitions
+        @param options table? - Optional settings { id?, entityId? }
+        @return AttributeSet
+    --]]
+    function Attribute.createSet(schema, options)
+        options = options or {}
+
+        local AS = getAttributeSet()
+        local set = AS.new(schema)
+
+        -- Assign ID for tracking
+        setIdCounter = setIdCounter + 1
+        local setId = options.id or ("attrset_" .. setIdCounter)
+
+        -- Store metadata
+        set._setId = setId
+        set._entityId = options.entityId
+
+        -- Track for debugging/replication
+        allSets[setId] = set
+
+        System.Debug.trace("Attribute", "Created attribute set:", setId)
+
+        return set
+    end
+
+    --[[
+        Destroy an attribute set and remove from tracking.
+
+        @param set AttributeSet - The set to destroy
+    --]]
+    function Attribute.destroySet(set)
+        if set and set._setId then
+            allSets[set._setId] = nil
+            System.Debug.trace("Attribute", "Destroyed attribute set:", set._setId)
+        end
+    end
+
+    --[[
+        Get an attribute set by ID.
+
+        @param setId string - The set ID
+        @return AttributeSet|nil
+    --]]
+    function Attribute.getSet(setId)
+        return allSets[setId]
+    end
+
+    --[[
+        Get all tracked attribute sets.
+
+        @return table - { setId = AttributeSet, ... }
+    --]]
+    function Attribute.getAllSets()
+        return allSets
+    end
+
+    --[[
+        Get debug information about all attribute sets.
+
+        @return table
+    --]]
+    function Attribute.getDebugInfo()
+        local count = 0
+        local totalModifiers = 0
+        local totalAttributes = 0
+
+        for setId, set in pairs(allSets) do
+            count = count + 1
+            local info = set:getDebugInfo()
+            totalModifiers = totalModifiers + info.modifierCount
+            totalAttributes = totalAttributes + info.attributeCount
+        end
+
+        return {
+            setCount = count,
+            totalModifiers = totalModifiers,
+            totalAttributes = totalAttributes,
+        }
+    end
+
+    --[[
+        Reset all state (for testing).
+    --]]
+    function Attribute.reset()
+        allSets = {}
+        setIdCounter = 0
+        System.Debug.info("Attribute", "Reset complete")
+    end
+
+    -- Modifier operation types (for reference)
+    Attribute.Operations = {
+        ADDITIVE = "additive",
+        MULTIPLICATIVE = "multiplicative",
+        OVERRIDE = "override",
+    }
+
+    return Attribute
 end)()
 
 --------------------------------------------------------------------------------

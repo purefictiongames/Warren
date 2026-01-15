@@ -30,6 +30,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local Debris = game:GetService("Debris")
+local TweenService = game:GetService("TweenService")
 local Lib = require(ReplicatedStorage:WaitForChild("Lib"))
 
 -- Use framework's InputCapture system for exclusive input focus
@@ -37,6 +38,9 @@ local InputCapture = Lib.System.InputCapture
 
 local Node = require(ReplicatedStorage.Lib.Node)
 -- Note: Not using Swivel component - using HingeConstraint servos for smooth physics-based motion
+
+-- Attribute system for destructible targets
+local AttributeSet = require(ReplicatedStorage.Lib.Internal.AttributeSet)
 
 local Demo = {}
 
@@ -248,7 +252,7 @@ local function createTracerTemplate()
     return tracer
 end
 
-local function fireTracer(muzzle, projectilesFolder, speed)
+local function fireTracer(muzzle, projectilesFolder, speed, onHit)
     speed = speed or 200
 
     -- Clone template
@@ -283,6 +287,26 @@ local function fireTracer(muzzle, projectilesFolder, speed)
     -- Force = mass * gravity (workspace.Gravity default is 196.2)
     antiGravity.Force = Vector3.new(0, projectile:GetMass() * workspace.Gravity, 0)
     antiGravity.Parent = projectile
+
+    -- Hit detection
+    if onHit then
+        local hitConnection
+        hitConnection = projectile.Touched:Connect(function(hitPart)
+            -- Ignore projectiles folder and turret parts
+            if hitPart:IsDescendantOf(projectilesFolder) then return end
+            if hitPart.Name == "YawBase" or hitPart.Name == "PitchArm" or hitPart.Name == "Muzzle" then return end
+            if hitPart.Name == "BasePlatform" then return end
+
+            -- Call hit callback
+            local shouldDestroy = onHit(hitPart, projectile)
+
+            -- Destroy projectile on hit (unless callback returns false)
+            if shouldDestroy ~= false then
+                hitConnection:Disconnect()
+                projectile:Destroy()
+            end
+        end)
+    end
 
     -- Auto-cleanup after 3 seconds
     Debris:AddItem(projectile, 3)
@@ -597,15 +621,158 @@ function Demo.run(config)
     statusLabel.Text = "TURRET DEMO"
     statusLabel.Parent = statusFrame
 
-    -- Target
-    local target = Instance.new("Part")
-    target.Name = "Target"
-    target.Size = Vector3.new(4, 4, 4)
-    target.Position = position + Vector3.new(0, 5, -30)
-    target.Anchored = true
-    target.BrickColor = BrickColor.new("Bright red")
-    target.Material = Enum.Material.Neon
-    target.Parent = demoFolder
+    ---------------------------------------------------------------------------
+    -- DESTRUCTIBLE TARGET SYSTEM
+    ---------------------------------------------------------------------------
+
+    local targetsFolder = Instance.new("Folder")
+    targetsFolder.Name = "Targets"
+    targetsFolder.Parent = demoFolder
+
+    -- Target state tracking
+    local activeTargets = {}  -- part -> { stats, healthBar, baseColor }
+    local DAMAGE_PER_HIT = 10
+    local TARGET_MAX_HEALTH = 50
+    local RESPAWN_DELAY = 3
+
+    -- Create a destructible target with health
+    local function createDestructibleTarget(targetPosition, targetName)
+        -- Create target part
+        local target = Instance.new("Part")
+        target.Name = targetName or "Target"
+        target.Size = Vector3.new(4, 4, 4)
+        target.Position = targetPosition
+        target.Anchored = true
+        target.BrickColor = BrickColor.new("Bright red")
+        target.Material = Enum.Material.Neon
+        target.Parent = targetsFolder
+
+        -- Create AttributeSet for this target
+        local stats = AttributeSet.new({
+            health = {
+                type = "number",
+                default = TARGET_MAX_HEALTH,
+                min = 0,
+                max = TARGET_MAX_HEALTH,
+            },
+            maxHealth = {
+                type = "number",
+                default = TARGET_MAX_HEALTH,
+            },
+        })
+
+        -- Create health bar billboard
+        local billboard = Instance.new("BillboardGui")
+        billboard.Name = "HealthBar"
+        billboard.Size = UDim2.new(0, 60, 0, 10)
+        billboard.StudsOffset = Vector3.new(0, 3.5, 0)
+        billboard.AlwaysOnTop = true
+        billboard.Parent = target
+
+        local bgFrame = Instance.new("Frame")
+        bgFrame.Name = "Background"
+        bgFrame.Size = UDim2.new(1, 0, 1, 0)
+        bgFrame.BackgroundColor3 = Color3.new(0.2, 0.2, 0.2)
+        bgFrame.BorderSizePixel = 0
+        bgFrame.Parent = billboard
+
+        local healthFill = Instance.new("Frame")
+        healthFill.Name = "Fill"
+        healthFill.Size = UDim2.new(1, 0, 1, 0)
+        healthFill.BackgroundColor3 = Color3.new(0, 1, 0)
+        healthFill.BorderSizePixel = 0
+        healthFill.Parent = bgFrame
+
+        local corner1 = Instance.new("UICorner")
+        corner1.CornerRadius = UDim.new(0, 3)
+        corner1.Parent = bgFrame
+
+        local corner2 = Instance.new("UICorner")
+        corner2.CornerRadius = UDim.new(0, 3)
+        corner2.Parent = healthFill
+
+        -- Track target
+        local targetData = {
+            stats = stats,
+            healthFill = healthFill,
+            baseColor = target.BrickColor,
+            part = target,
+            spawnPosition = targetPosition,
+        }
+        activeTargets[target] = targetData
+
+        -- Subscribe to health changes
+        stats:subscribe("health", function(newHealth, oldHealth)
+            local maxHealth = stats:get("maxHealth")
+            local healthPct = math.clamp(newHealth / maxHealth, 0, 1)
+
+            -- Update health bar
+            healthFill.Size = UDim2.new(healthPct, 0, 1, 0)
+
+            -- Color transitions: green -> yellow -> red
+            if healthPct > 0.5 then
+                healthFill.BackgroundColor3 = Color3.new(0, 1, 0)
+            elseif healthPct > 0.25 then
+                healthFill.BackgroundColor3 = Color3.new(1, 1, 0)
+            else
+                healthFill.BackgroundColor3 = Color3.new(1, 0, 0)
+            end
+
+            -- Death check
+            if newHealth <= 0 then
+                -- Explosion effect
+                local explosion = Instance.new("Explosion")
+                explosion.Position = target.Position
+                explosion.BlastRadius = 0
+                explosion.BlastPressure = 0
+                explosion.Parent = workspace
+
+                -- Remove from tracking
+                activeTargets[target] = nil
+
+                -- Destroy target
+                target:Destroy()
+
+                print(string.format("[Target] %s destroyed!", targetName or "Target"))
+
+                -- Respawn after delay
+                task.delay(RESPAWN_DELAY, function()
+                    if targetsFolder.Parent then  -- Check demo still running
+                        createDestructibleTarget(targetPosition, targetName)
+                        print(string.format("[Target] %s respawned!", targetName or "Target"))
+                    end
+                end)
+            end
+        end)
+
+        return target, targetData
+    end
+
+    -- Deal damage to a target
+    local function damageTarget(targetPart, damage)
+        local targetData = activeTargets[targetPart]
+        if not targetData then return false end
+
+        local stats = targetData.stats
+        local currentHealth = stats:get("health")
+        stats:setBase("health", currentHealth - damage)
+
+        -- Flash effect
+        targetPart.BrickColor = BrickColor.new("White")
+        task.delay(0.05, function()
+            if targetPart.Parent and activeTargets[targetPart] then
+                targetPart.BrickColor = targetData.baseColor
+            end
+        end)
+
+        return true
+    end
+
+    -- Create initial target
+    local target = createDestructibleTarget(
+        position + Vector3.new(0, 5, -30),
+        "Target"
+    )
 
     ---------------------------------------------------------------------------
     -- PROJECTILES FOLDER
@@ -680,10 +847,31 @@ function Demo.run(config)
     -- Forward declaration for stopManualControl
     local stopManualControl
 
+    -- Projectile hit callback - damages targets
+    local function onProjectileHit(hitPart, projectile)
+        -- Check if we hit a target
+        if activeTargets[hitPart] then
+            damageTarget(hitPart, DAMAGE_PER_HIT)
+            return true  -- Destroy projectile
+        end
+
+        -- Hit ground or other obstacle - destroy projectile
+        if hitPart.Name == "Ground" then
+            return true
+        end
+
+        -- Ignore non-collidable parts
+        if not hitPart.CanCollide then
+            return false  -- Don't destroy, keep going
+        end
+
+        return true  -- Destroy on any solid hit
+    end
+
     -- Set up controller callbacks
     manualController:setCallbacks(
         function()  -- onFire
-            fireTracer(muzzle, projectilesFolder, 200)
+            fireTracer(muzzle, projectilesFolder, 200, onProjectileHit)
         end,
         function()  -- onExit (called when hold duration reached)
             stopManualControl()
@@ -779,32 +967,49 @@ function Demo.run(config)
                 5 + math.sin(targetTime * 1.3) * 8,
                 -30 + math.cos(targetTime * 0.7) * 15
             )
-            target.Position = targetPos
-            target.Transparency = 0
 
-            -- Auto aim
+            -- Find current target (may have respawned)
+            local currentTarget = targetsFolder:FindFirstChild("Target")
+            if currentTarget then
+                currentTarget.Position = targetPos
+                currentTarget.Transparency = 0
+            end
+
+            -- Auto aim at position regardless of target existence
             controller:updateAim(targetPos)
 
             -- Auto fire
             local currentTime = tick()
             if currentTime - lastFireTime >= fireInterval then
                 lastFireTime = currentTime
-                fireTracer(muzzle, projectilesFolder, projectileSpeed)
+                fireTracer(muzzle, projectilesFolder, projectileSpeed, onProjectileHit)
             end
 
-            -- Update status
+            -- Update status with target health
             local yaw, pitch = controller:calculateAimAngles(targetPos)
-            local projectileCount = #projectilesFolder:GetChildren()
+            local healthText = "No target"
+            if currentTarget and activeTargets[currentTarget] then
+                local stats = activeTargets[currentTarget].stats
+                local health = stats:get("health")
+                local maxHealth = stats:get("maxHealth")
+                healthText = string.format("Target: %d/%d HP", health, maxHealth)
+            elseif not currentTarget then
+                healthText = "Respawning..."
+            end
             statusLabel.Text = string.format(
                 "TURRET DEMO - AUTO\n" ..
                 "Yaw: %6.1f°  Pitch: %5.1f°\n" ..
-                "Hold E/Y to take control",
-                yaw, pitch
+                "%s",
+                yaw, pitch, healthText
             )
             statusLabel.TextColor3 = Color3.new(0, 1, 0)
         else
             -- MANUAL MODE: Using declarative control mapping via TurretManualController
-            target.Transparency = 1  -- Hide target
+            -- Hide auto target in manual mode
+            local currentTarget = targetsFolder:FindFirstChild("Target")
+            if currentTarget then
+                currentTarget.Transparency = 1
+            end
 
             -- Get keys held from controller
             local keysHeld = manualController:getKeysHeld()

@@ -377,6 +377,11 @@ local function makeExtendFunction(parent)
             end
         end
 
+        -- Copy Controls table (for InputCapture integration)
+        if definition.Controls then
+            NewClass.Controls = definition.Controls
+        end
+
         -- Create a fresh extend function for this new class
         -- This ensures grandchildren correctly reference NewClass as parent
         NewClass.extend = makeExtendFunction(NewClass)
@@ -466,7 +471,7 @@ function Node:new(config)
     for key, value in pairs(self) do
         if type(value) == "table" and key ~= "Sys" and key ~= "In" and key ~= "Out" and key ~= "Err"
             and key ~= "required" and key ~= "defaults" and key ~= "__index" and key ~= "_parent"
-            and key ~= "_definition" and key ~= "name" and key ~= "domain" then
+            and key ~= "_definition" and key ~= "name" and key ~= "domain" and key ~= "Controls" then
             -- Deep copy mode-specific handlers
             instance[key] = {}
             for subKey, subValue in pairs(value) do

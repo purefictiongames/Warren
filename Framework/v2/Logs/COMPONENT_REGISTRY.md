@@ -93,6 +93,115 @@ Adventure: Elevators, moving bridges
 
 ### Combat & Damage
 
+#### EntityStats ✅ IMPLEMENTED (v2)
+**Purpose:** Reactive attribute storage for entities.
+**Status:** Implemented in `Lib/Components/EntityStats.lua`
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| (configured via schema) | - | Attributes defined per-instance |
+
+| Signal (In) | Payload | Description |
+|-------------|---------|-------------|
+| onConfigure | { schema, entityId, initialValues? } | Configure attribute schema |
+| onApplyModifier | { attribute, operation, value, source } | Apply a modifier |
+| onRemoveModifier | { modifierId?, source? } | Remove modifier(s) |
+| onSetAttribute | { attribute, value } | Set base value directly |
+| onQueryAttribute | { attribute, queryId } | Query value (sync response) |
+
+| Signal (Out) | Payload | Description |
+|--------------|---------|-------------|
+| attributeChanged | { entityId, attribute, value, oldValue } | Fired on any change |
+| attributeQueried | { entityId, attribute, value, queryId } | Response to query |
+| died | { entityId } | Fired when health <= 0 |
+| modifierApplied | { entityId, attribute, modifierId, source } | Fired on modifier add |
+| modifierRemoved | { entityId, source, count? } | Fired on modifier remove |
+
+Key features:
+- **Schema-based**: Define attributes with type, default, min/max, derived, replicate
+- **Modifier stacking**: Additive, multiplicative, override operations
+- **Derived values**: Computed attributes with dependency tracking
+- **Subscription system**: React to attribute changes
+
+**Example Usage:**
+```lua
+entityStats.In.onConfigure(entityStats, {
+    schema = {
+        health = { type = "number", default = 100, min = 0 },
+        defense = { type = "number", default = 10 },
+    },
+    entityId = "enemy_1",
+})
+```
+
+---
+
+#### DamageCalculator ✅ IMPLEMENTED (v2)
+**Purpose:** Combat formula node - computes damage with defense mitigation.
+**Status:** Implemented in `Lib/Components/DamageCalculator.lua`
+
+| Signal (In) | Payload | Description |
+|-------------|---------|-------------|
+| onCalculateDamage | { targetId, rawDamage, damageType?, sourceId? } | Calculate and apply damage |
+| onAttributeQueried | { entityId, attribute, value, queryId } | Response from EntityStats |
+
+| Signal (Out) | Payload | Description |
+|--------------|---------|-------------|
+| queryAttribute | { targetId, attribute, queryId } | Query defense from EntityStats |
+| applyDamage | { targetId, attribute, value, sourceId } | Apply final damage |
+| damageCalculated | { targetId, rawDamage, defense, finalDamage } | Informational |
+
+Damage types:
+- **physical**: Standard damage, reduced by defense (damage - defense, min 1)
+- **magic**: Custom formula via extension
+- **true**: Ignores defense entirely
+
+Extend for custom formulas:
+```lua
+local MyCalculator = DamageCalculator.extend({
+    name = "MyCalculator",
+    computeDamage = function(self, raw, defense, type)
+        if type == "magic" then
+            return math.max(1, raw - defense * 0.5)
+        end
+        return math.max(1, raw - defense)
+    end,
+})
+```
+
+---
+
+#### StatusEffect ✅ IMPLEMENTED (v2)
+**Purpose:** Timed buff/debuff management.
+**Status:** Implemented in `Lib/Components/StatusEffect.lua`
+
+| Signal (In) | Payload | Description |
+|-------------|---------|-------------|
+| onApplyEffect | { targetId, effectType, duration, modifiers } | Apply timed effect |
+| onRemoveEffect | { effectId } | Remove effect early |
+| onRemoveAllEffects | { targetId } | Clear all effects from target |
+
+| Signal (Out) | Payload | Description |
+|--------------|---------|-------------|
+| applyModifier | { targetId, attribute, operation, value, source } | Apply to EntityStats |
+| removeModifier | { targetId, source } | Remove from EntityStats |
+| effectApplied | { effectId, targetId, effectType, duration } | Fired on effect start |
+| effectExpired | { effectId, targetId, effectType } | Fired on effect end |
+
+**Example Usage:**
+```lua
+statusEffect.In.onApplyEffect(statusEffect, {
+    targetId = "enemy_1",
+    effectType = "speed_boost",
+    duration = 10,
+    modifiers = {
+        { attribute = "speed", operation = "multiplicative", value = 1.5 },
+    },
+})
+```
+
+---
+
 #### HealthSystem
 **Purpose:** Track health, handle damage/healing, trigger death.
 

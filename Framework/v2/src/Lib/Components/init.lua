@@ -56,4 +56,9 @@ Components.Swivel = require(script.Swivel)
 Components.Targeter = require(script.Targeter)
 Components.Launcher = require(script.Launcher)
 
+-- Attribute System
+Components.EntityStats = require(script.EntityStats)
+Components.DamageCalculator = require(script.DamageCalculator)
+Components.StatusEffect = require(script.StatusEffect)
+
 return Components

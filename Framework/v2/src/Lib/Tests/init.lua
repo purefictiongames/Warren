@@ -55,4 +55,7 @@ Tests.Swivel = safeRequire("Swivel_Tests", script:WaitForChild("Swivel_Tests"))
 Tests.Targeter = safeRequire("Targeter_Tests", script:WaitForChild("Targeter_Tests"))
 Tests.Launcher = safeRequire("Launcher_Tests", script:WaitForChild("Launcher_Tests"))
 
+-- Attribute System
+Tests.AttributeSet = safeRequire("AttributeSet_Tests", script:WaitForChild("AttributeSet_Tests"))
+
 return Tests

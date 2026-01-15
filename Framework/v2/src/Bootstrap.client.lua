@@ -87,3 +87,12 @@ IPC.start()
 -- Lib.System.View.init()
 
 Debug.info("Bootstrap", "Client ready")
+
+--------------------------------------------------------------------------------
+-- DEMOS AUTO-INITIALIZATION
+--------------------------------------------------------------------------------
+-- Load Demos module which auto-detects and initializes any active demos
+-- This enables demos to work in Team Test mode without manual client setup
+
+local Demos = require(ReplicatedStorage:WaitForChild("Lib"):WaitForChild("Demos"))
+Debug.info("Bootstrap", "Demos module loaded (auto-init enabled)")

@@ -12,5 +12,6 @@ Internal.SpawnerCore = require(script.SpawnerCore)
 Internal.PathFollowerCore = require(script.PathFollowerCore)
 Internal.EntityUtils = require(script.EntityUtils)
 Internal.SchemaValidator = require(script.SchemaValidator)
+Internal.AttributeSet = require(script.AttributeSet)
 
 return Internal

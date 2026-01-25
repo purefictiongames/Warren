@@ -122,528 +122,479 @@ local TweenService = game:GetService("TweenService")
 local Node = require(script.Parent.Parent.Node)
 local PathFollowerCore = require(script.Parent.Parent.Internal.PathFollowerCore)
 
-local PathFollower = Node.extend({
-    name = "PathFollower",
-    domain = "shared",  -- "shared" allows testing from Command Bar; use "server" in production
+--------------------------------------------------------------------------------
+-- PATHFOLLOWER NODE (Closure-Based Privacy Pattern)
+--------------------------------------------------------------------------------
 
+local PathFollower = Node.extend(function(parent)
     ----------------------------------------------------------------------------
-    -- LIFECYCLE
-    ----------------------------------------------------------------------------
-
-    Sys = {
-        onInit = function(self)
-            -- Path infrastructure (shared with PathedConveyor)
-            local defaultSpeed = self:getAttribute("Speed") or 16
-            self._path = PathFollowerCore.new({ defaultSpeed = defaultSpeed })
-
-            -- Entity state
-            self._entity = nil
-            self._entityId = nil
-
-            -- Navigation state
-            self._paused = false
-            self._stopped = false
-            self._navigating = false
-            self._interrupted = false
-            self._collisionConnection = nil
-
-            -- Pause/resume event
-            self._resumeEvent = Instance.new("BindableEvent")
-
-            -- Default attributes
-            if not self:getAttribute("Speed") then
-                self:setAttribute("Speed", 16)
-            end
-            if self:getAttribute("WaitForAck") == nil then
-                self:setAttribute("WaitForAck", false)
-            end
-            if not self:getAttribute("AckTimeout") then
-                self:setAttribute("AckTimeout", 5)
-            end
-            -- Collision handling defaults
-            if not self:getAttribute("CollisionMode") then
-                self:setAttribute("CollisionMode", "ignore")  -- "ignore", "physics"
-            end
-            if not self:getAttribute("OnInterrupt") then
-                self:setAttribute("OnInterrupt", "stop")  -- "stop", "pause_and_resume", "restart"
-            end
-            if not self:getAttribute("ResumeDelay") then
-                self:setAttribute("ResumeDelay", 1)
-            end
-        end,
-
-        onStart = function(self)
-            -- Nothing to do on start - we wait for signals
-        end,
-
-        onStop = function(self)
-            self._stopped = true
-            self._paused = false
-
-            -- Clean up collision connection
-            if self._collisionConnection then
-                self._collisionConnection:Disconnect()
-                self._collisionConnection = nil
-            end
-
-            -- Clean up resume event
-            if self._resumeEvent then
-                self._resumeEvent:Fire()  -- Unblock any waiting
-                self._resumeEvent:Destroy()
-                self._resumeEvent = nil
-            end
-        end,
-    },
-
-    ----------------------------------------------------------------------------
-    -- INPUT HANDLERS
+    -- PRIVATE SCOPE
+    -- Nothing here exists on the node instance.
     ----------------------------------------------------------------------------
 
-    In = {
-        --[[
-            Receive entity to control.
-        --]]
-        onControl = function(self, data)
-            if not data or not data.entity then
-                self.Err:Fire({ reason = "invalid_control", message = "Missing entity in onControl" })
-                return
-            end
+    -- Per-instance state registry (keyed by instance.id)
+    local instanceStates = {}
 
-            self._entity = data.entity
-            self._entityId = data.entityId or data.entity.Name
+    local function getState(self)
+        if not instanceStates[self.id] then
+            instanceStates[self.id] = {
+                path = nil,
+                entity = nil,
+                entityId = nil,
+                paused = false,
+                stopped = false,
+                navigating = false,
+                interrupted = false,
+                collisionConnection = nil,
+                resumeEvent = nil,
+                originalAnchored = nil,
+            }
+        end
+        return instanceStates[self.id]
+    end
 
-            -- Setup collision detection if not in "ignore" mode
-            self:_setupCollisionDetection()
-
-            self:_tryStart()
-        end,
-
-        --[[
-            Receive waypoint targets.
-        --]]
-        onWaypoints = function(self, data)
-            if not data or not data.targets or #data.targets == 0 then
-                self.Err:Fire({ reason = "invalid_waypoints", message = "Missing or empty targets in onWaypoints" })
-                return
-            end
-
-            -- Store in PathFollowerCore
-            local success, err = self._path:setWaypoints(data.targets)
-            if not success then
-                self.Err:Fire({ reason = "invalid_waypoints", message = err })
-                return
-            end
-
-            self:_tryStart()
-        end,
-
-        --[[
-            Pause navigation.
-        --]]
-        onPause = function(self)
-            if self._navigating and not self._paused then
-                self._paused = true
-            end
-        end,
-
-        --[[
-            Resume navigation.
-        --]]
-        onResume = function(self)
-            if self._navigating and self._paused then
-                self._paused = false
-                if self._resumeEvent then
-                    self._resumeEvent:Fire()
-                end
-            end
-        end,
-
-        --[[
-            Change movement speed.
-            - speed alone: sets default speed for all segments
-            - segment + speed: sets speed for specific segment
-            - segments: array of { segment, speed } for multiple
-        --]]
-        onSetSpeed = function(self, data)
-            if not data then return end
-
-            if data.segments and type(data.segments) == "table" then
-                -- Set multiple segment speeds
-                self._path:setSegmentSpeeds(data.segments)
-            elseif data.segment and data.speed then
-                -- Set single segment speed
-                self._path:setSegmentSpeed(data.segment, data.speed)
-            elseif data.speed and type(data.speed) == "number" then
-                -- Set default speed for all
-                self:setAttribute("Speed", data.speed)
-                self._path:setDefaultSpeed(data.speed)
-            end
-        end,
-
-        --[[
-            Acknowledgment for sync mode.
-            This is handled by waitForSignal() when WaitForAck is true.
-        --]]
-        onAck = function(self, data)
-            -- This handler exists for documentation.
-            -- When WaitForAck is true, waitForSignal("onAck") installs
-            -- a temporary handler that captures this signal.
-        end,
-    },
-
-    ----------------------------------------------------------------------------
-    -- OUTPUT SCHEMA (documentation)
-    ----------------------------------------------------------------------------
-
-    Out = {
-        waypointReached = {},  -- { waypoint: Part, index: number, entityId: string }
-        pathComplete = {},     -- { entityId: string }
-    },
-
-    -- Err (detour) signals:
-    -- { reason = "collision", entityId, collidedWith, collidedWithName, waypointIndex, collisionMode, onInterrupt }
-    -- { reason = "collision_resumed", entityId, waypointIndex }
-    -- { reason = "collision_restart", entityId }
-    -- { reason = "ack_timeout", waypoint, entityId }
-    -- { reason = "invalid_control", message }
-    -- { reason = "invalid_waypoints", message }
-    -- { reason = "no_primary_part", message }
-
-    ----------------------------------------------------------------------------
-    -- PRIVATE METHODS
-    ----------------------------------------------------------------------------
+    local function cleanupState(self)
+        instanceStates[self.id] = nil
+    end
 
     --[[
-        Get the primary part of the entity (handles both Parts and Models).
+        Private: Get the primary part of the entity (handles both Parts and Models).
     --]]
-    _getPrimaryPart = function(self)
-        if not self._entity then
+    local function getPrimaryPart(self)
+        local state = getState(self)
+        if not state.entity then
             return nil
         end
 
-        if self._entity:IsA("BasePart") then
-            return self._entity
-        elseif self._entity:IsA("Model") then
-            return self._entity.PrimaryPart or self._entity:FindFirstChildWhichIsA("BasePart")
+        if state.entity:IsA("BasePart") then
+            return state.entity
+        elseif state.entity:IsA("Model") then
+            return state.entity.PrimaryPart or state.entity:FindFirstChildWhichIsA("BasePart")
         end
 
         return nil
-    end,
+    end
 
     --[[
-        Try to start navigation if both entity and waypoints are ready.
+        Private: Detect whether entity uses Humanoid or needs Tween-based movement.
     --]]
-    _tryStart = function(self)
-        if self._entity and self._path:getWaypointCount() > 0 and not self._navigating then
-            self:_startNavigation()
-        end
-    end,
-
-    --[[
-        Setup collision detection on the entity's primary part.
-        Only active when CollisionMode ~= "ignore".
-    --]]
-    _setupCollisionDetection = function(self)
-        local collisionMode = self:getAttribute("CollisionMode")
-        if collisionMode == "ignore" then
-            return  -- No collision handling needed
-        end
-
-        local primaryPart = self:_getPrimaryPart()
-        if not primaryPart then
-            return
-        end
-
-        -- Disconnect existing connection if any
-        if self._collisionConnection then
-            self._collisionConnection:Disconnect()
-        end
-
-        -- Listen for collisions
-        self._collisionConnection = primaryPart.Touched:Connect(function(otherPart)
-            self:_handleCollision(otherPart)
-        end)
-    end,
-
-    --[[
-        Handle a collision event based on configured behavior.
-
-        @param otherPart BasePart - The part we collided with
-    --]]
-    _handleCollision = function(self, otherPart)
-        -- Ignore if not navigating or already interrupted
-        if not self._navigating or self._interrupted then
-            return
-        end
-
-        -- Ignore collisions with waypoints themselves
-        for i = 1, self._path:getWaypointCount() do
-            local wp = self._path:getWaypoint(i)
-            if otherPart == wp then
-                return
-            end
-        end
-
-        -- Ignore collisions with self (other parts of the entity)
-        if otherPart:IsDescendantOf(self._entity) then
-            return
-        end
-
-        local collisionMode = self:getAttribute("CollisionMode")
-        local onInterrupt = self:getAttribute("OnInterrupt")
-
-        -- Fire detour signal with collision info
-        self.Err:Fire({
-            reason = "collision",
-            entityId = self._entityId,
-            collidedWith = otherPart,
-            collidedWithName = otherPart.Name,
-            waypointIndex = self._path:getCurrentIndex(),
-            collisionMode = collisionMode,
-            onInterrupt = onInterrupt,
-        })
-
-        -- Handle based on CollisionMode
-        if collisionMode == "physics" then
-            -- Unanchor to let physics take over
-            local primaryPart = self:_getPrimaryPart()
-            if primaryPart then
-                primaryPart.Anchored = false
-            end
-        end
-
-        -- Handle based on OnInterrupt
-        if onInterrupt == "stop" then
-            self._stopped = true
-            self._interrupted = true
-
-        elseif onInterrupt == "pause_and_resume" then
-            self._interrupted = true
-            self._paused = true
-
-            -- Schedule resume after delay
-            local resumeDelay = self:getAttribute("ResumeDelay") or 1
-            task.spawn(function()
-                task.wait(resumeDelay)
-
-                -- Only resume if still in interrupted state
-                if self._interrupted and not self._stopped then
-                    self._interrupted = false
-                    self._paused = false
-
-                    -- Re-anchor if we unanchored
-                    if collisionMode == "physics" then
-                        local primaryPart = self:_getPrimaryPart()
-                        if primaryPart then
-                            primaryPart.Anchored = true
-                        end
-                    end
-
-                    -- Fire resume event
-                    if self._resumeEvent then
-                        self._resumeEvent:Fire()
-                    end
-
-                    -- Fire detour signal indicating resume
-                    self.Err:Fire({
-                        reason = "collision_resumed",
-                        entityId = self._entityId,
-                        waypointIndex = self._path:getCurrentIndex(),
-                    })
-                end
-            end)
-
-        elseif onInterrupt == "restart" then
-            self._interrupted = true
-
-            -- Re-anchor if we unanchored
-            if collisionMode == "physics" then
-                local primaryPart = self:_getPrimaryPart()
-                if primaryPart then
-                    primaryPart.Anchored = true
-                end
-            end
-
-            -- Restart navigation from beginning
-            task.spawn(function()
-                local resumeDelay = self:getAttribute("ResumeDelay") or 1
-                task.wait(resumeDelay)
-
-                if not self._stopped then
-                    self._interrupted = false
-                    self._navigating = false
-                    self._path:reset()
-
-                    -- Fire detour signal indicating restart
-                    self.Err:Fire({
-                        reason = "collision_restart",
-                        entityId = self._entityId,
-                    })
-
-                    -- Restart
-                    self:_startNavigation()
-                end
-            end)
-        end
-    end,
-
-    --[[
-        Detect whether entity uses Humanoid or needs Tween-based movement.
-
-        @return string, Humanoid|nil - Movement type and humanoid if found
-    --]]
-    _detectMovementType = function(self)
-        if not self._entity then
+    local function detectMovementType(self)
+        local state = getState(self)
+        if not state.entity then
             return "tween", nil
         end
 
-        local humanoid = self._entity:FindFirstChildOfClass("Humanoid")
+        local humanoid = state.entity:FindFirstChildOfClass("Humanoid")
         if humanoid then
             return "humanoid", humanoid
         else
             return "tween", nil
         end
-    end,
+    end
 
     --[[
-        Move entity to a waypoint target.
-
-        @param target Part - The waypoint to move to
-        @param segmentIndex number - The segment being traversed (for speed lookup)
+        Private: Move entity to a waypoint target.
     --]]
-    _moveToWaypoint = function(self, target, segmentIndex)
-        local movementType, humanoid = self:_detectMovementType()
-        -- Get segment-specific speed, or fall back to default
-        local speed = self._path:getSegmentSpeed(segmentIndex or 1)
+    local function moveToWaypoint(self, target, segmentIndex)
+        local state = getState(self)
+        local movementType, humanoid = detectMovementType(self)
+        local speed = state.path:getSegmentSpeed(segmentIndex or 1)
 
         if movementType == "humanoid" then
-            -- Use Humanoid:MoveTo()
             humanoid:MoveTo(target.Position)
             humanoid.MoveToFinished:Wait()
         else
-            -- Use TweenService for non-Humanoid entities
-            local primaryPart = self:_getPrimaryPart()
+            local primaryPart = getPrimaryPart(self)
             if not primaryPart then
                 self.Err:Fire({ reason = "no_primary_part", message = "Entity has no PrimaryPart for tween movement" })
                 return
             end
 
-            -- Anchor during tween to prevent gravity interference
-            -- Store original state on first move (restored at path end)
-            if self._originalAnchored == nil then
-                self._originalAnchored = primaryPart.Anchored
+            if state.originalAnchored == nil then
+                state.originalAnchored = primaryPart.Anchored
             end
             primaryPart.Anchored = true
 
-            -- Calculate duration based on distance and speed
             local distance = (target.Position - primaryPart.Position).Magnitude
             local duration = distance / speed
-
-            -- Ensure minimum duration to avoid instant jumps
             duration = math.max(duration, 0.1)
 
-            -- Create and play tween
             local tweenInfo = TweenInfo.new(duration, Enum.EasingStyle.Linear)
             local goal = { CFrame = CFrame.new(target.Position) }
             local tween = TweenService:Create(primaryPart, tweenInfo, goal)
 
             tween:Play()
             tween.Completed:Wait()
-
-            -- Restore original anchored state (keep anchored for non-physics entities)
-            -- For tween-based movement, we keep it anchored to prevent falling
-            -- primaryPart.Anchored = wasAnchored
         end
-    end,
+    end
+
+    -- Forward declarations for mutual recursion
+    local startNavigation
 
     --[[
-        Main navigation loop. Runs in a separate thread.
+        Private: Handle a collision event based on configured behavior.
     --]]
-    _startNavigation = function(self)
-        self._navigating = true
-        self._path:reset()
+    local function handleCollision(self, otherPart)
+        local state = getState(self)
+
+        if not state.navigating or state.interrupted then
+            return
+        end
+
+        for i = 1, state.path:getWaypointCount() do
+            local wp = state.path:getWaypoint(i)
+            if otherPart == wp then
+                return
+            end
+        end
+
+        if otherPart:IsDescendantOf(state.entity) then
+            return
+        end
+
+        local collisionMode = self:getAttribute("CollisionMode")
+        local onInterrupt = self:getAttribute("OnInterrupt")
+
+        self.Err:Fire({
+            reason = "collision",
+            entityId = state.entityId,
+            collidedWith = otherPart,
+            collidedWithName = otherPart.Name,
+            waypointIndex = state.path:getCurrentIndex(),
+            collisionMode = collisionMode,
+            onInterrupt = onInterrupt,
+        })
+
+        if collisionMode == "physics" then
+            local primaryPart = getPrimaryPart(self)
+            if primaryPart then
+                primaryPart.Anchored = false
+            end
+        end
+
+        if onInterrupt == "stop" then
+            state.stopped = true
+            state.interrupted = true
+
+        elseif onInterrupt == "pause_and_resume" then
+            state.interrupted = true
+            state.paused = true
+
+            local resumeDelay = self:getAttribute("ResumeDelay") or 1
+            task.spawn(function()
+                task.wait(resumeDelay)
+
+                if state.interrupted and not state.stopped then
+                    state.interrupted = false
+                    state.paused = false
+
+                    if collisionMode == "physics" then
+                        local primaryPart = getPrimaryPart(self)
+                        if primaryPart then
+                            primaryPart.Anchored = true
+                        end
+                    end
+
+                    if state.resumeEvent then
+                        state.resumeEvent:Fire()
+                    end
+
+                    self.Err:Fire({
+                        reason = "collision_resumed",
+                        entityId = state.entityId,
+                        waypointIndex = state.path:getCurrentIndex(),
+                    })
+                end
+            end)
+
+        elseif onInterrupt == "restart" then
+            state.interrupted = true
+
+            if collisionMode == "physics" then
+                local primaryPart = getPrimaryPart(self)
+                if primaryPart then
+                    primaryPart.Anchored = true
+                end
+            end
+
+            task.spawn(function()
+                local resumeDelay = self:getAttribute("ResumeDelay") or 1
+                task.wait(resumeDelay)
+
+                if not state.stopped then
+                    state.interrupted = false
+                    state.navigating = false
+                    state.path:reset()
+
+                    self.Err:Fire({
+                        reason = "collision_restart",
+                        entityId = state.entityId,
+                    })
+
+                    startNavigation(self)
+                end
+            end)
+        end
+    end
+
+    --[[
+        Private: Setup collision detection on the entity's primary part.
+    --]]
+    local function setupCollisionDetection(self)
+        local state = getState(self)
+        local collisionMode = self:getAttribute("CollisionMode")
+        if collisionMode == "ignore" then
+            return
+        end
+
+        local primaryPart = getPrimaryPart(self)
+        if not primaryPart then
+            return
+        end
+
+        if state.collisionConnection then
+            state.collisionConnection:Disconnect()
+        end
+
+        state.collisionConnection = primaryPart.Touched:Connect(function(otherPart)
+            handleCollision(self, otherPart)
+        end)
+    end
+
+    --[[
+        Private: Main navigation loop. Runs in a separate thread.
+    --]]
+    startNavigation = function(self)
+        local state = getState(self)
+        state.navigating = true
+        state.path:reset()
 
         task.spawn(function()
-            local waypointCount = self._path:getWaypointCount()
+            local waypointCount = state.path:getWaypointCount()
 
             for index = 1, waypointCount do
-                -- Check if stopped
-                if self._stopped then
+                if state.stopped then
                     break
                 end
 
-                -- Handle pause
-                while self._paused and not self._stopped do
-                    if self._resumeEvent then
-                        self._resumeEvent.Event:Wait()
+                while state.paused and not state.stopped do
+                    if state.resumeEvent then
+                        state.resumeEvent.Event:Wait()
                     else
                         task.wait(0.1)
                     end
                 end
 
-                if self._stopped then
+                if state.stopped then
                     break
                 end
 
-                -- Update current index in Core
-                self._path:setCurrentIndex(index)
-
-                -- Get target waypoint
-                local target = self._path:getWaypoint(index)
-
-                -- Move to waypoint (segment index is index-1 for segment before this waypoint,
-                -- but for speed we want the segment we're traversing TO this waypoint)
+                state.path:setCurrentIndex(index)
+                local target = state.path:getWaypoint(index)
                 local segmentIndex = math.max(1, index - 1)
-                self:_moveToWaypoint(target, segmentIndex)
+                moveToWaypoint(self, target, segmentIndex)
 
-                -- Check if stopped during movement
-                if self._stopped then
+                if state.stopped then
                     break
                 end
 
-                -- Fire waypoint reached
                 self.Out:Fire("waypointReached", {
                     waypoint = target,
                     index = index,
-                    entityId = self._entityId,
+                    entityId = state.entityId,
                 })
 
-                -- Optional: wait for acknowledgment
                 if self:getAttribute("WaitForAck") then
                     local ack = self:waitForSignal("onAck", self:getAttribute("AckTimeout") or 5)
                     if not ack then
                         self.Err:Fire({
                             reason = "ack_timeout",
                             waypoint = index,
-                            entityId = self._entityId,
+                            entityId = state.entityId,
                         })
-                        self._navigating = false
+                        state.navigating = false
                         return
                     end
                 end
             end
 
-            -- Restore original anchor state for tween-based entities
-            -- (Do this BEFORE firing pathComplete, as listeners may reset our state)
-            if self._originalAnchored ~= nil and self._entity then
-                local primaryPart = self:_getPrimaryPart()
+            if state.originalAnchored ~= nil and state.entity then
+                local primaryPart = getPrimaryPart(self)
                 if primaryPart then
-                    primaryPart.Anchored = self._originalAnchored
+                    primaryPart.Anchored = state.originalAnchored
                 end
-                self._originalAnchored = nil
+                state.originalAnchored = nil
             end
 
-            self._navigating = false
+            state.navigating = false
 
-            -- Path complete (only if not stopped early)
-            -- Fire this LAST as listeners (like NodePool) may reset our state
-            if not self._stopped then
+            if not state.stopped then
                 self.Out:Fire("pathComplete", {
-                    entityId = self._entityId,
+                    entityId = state.entityId,
                 })
             end
         end)
-    end,
-})
+    end
+
+    --[[
+        Private: Try to start navigation if both entity and waypoints are ready.
+    --]]
+    local function tryStart(self)
+        local state = getState(self)
+        if state.entity and state.path:getWaypointCount() > 0 and not state.navigating then
+            startNavigation(self)
+        end
+    end
+
+    ----------------------------------------------------------------------------
+    -- PUBLIC INTERFACE
+    -- Only this table exists on the node.
+    ----------------------------------------------------------------------------
+
+    return {
+        name = "PathFollower",
+        domain = "shared",
+
+        ------------------------------------------------------------------------
+        -- SYSTEM HANDLERS
+        ------------------------------------------------------------------------
+
+        Sys = {
+            onInit = function(self)
+                local state = getState(self)
+
+                local defaultSpeed = self:getAttribute("Speed") or 16
+                state.path = PathFollowerCore.new({ defaultSpeed = defaultSpeed })
+                state.resumeEvent = Instance.new("BindableEvent")
+
+                if not self:getAttribute("Speed") then
+                    self:setAttribute("Speed", 16)
+                end
+                if self:getAttribute("WaitForAck") == nil then
+                    self:setAttribute("WaitForAck", false)
+                end
+                if not self:getAttribute("AckTimeout") then
+                    self:setAttribute("AckTimeout", 5)
+                end
+                if not self:getAttribute("CollisionMode") then
+                    self:setAttribute("CollisionMode", "ignore")
+                end
+                if not self:getAttribute("OnInterrupt") then
+                    self:setAttribute("OnInterrupt", "stop")
+                end
+                if not self:getAttribute("ResumeDelay") then
+                    self:setAttribute("ResumeDelay", 1)
+                end
+            end,
+
+            onStart = function(self)
+                -- Nothing to do on start - we wait for signals
+            end,
+
+            onStop = function(self)
+                local state = getState(self)
+                state.stopped = true
+                state.paused = false
+
+                if state.collisionConnection then
+                    state.collisionConnection:Disconnect()
+                    state.collisionConnection = nil
+                end
+
+                if state.resumeEvent then
+                    state.resumeEvent:Fire()
+                    state.resumeEvent:Destroy()
+                    state.resumeEvent = nil
+                end
+
+                cleanupState(self)  -- CRITICAL: prevents memory leak
+            end,
+        },
+
+        ------------------------------------------------------------------------
+        -- INPUT HANDLERS
+        ------------------------------------------------------------------------
+
+        In = {
+            onControl = function(self, data)
+                if not data or not data.entity then
+                    self.Err:Fire({ reason = "invalid_control", message = "Missing entity in onControl" })
+                    return
+                end
+
+                local state = getState(self)
+                state.entity = data.entity
+                state.entityId = data.entityId or data.entity.Name
+
+                setupCollisionDetection(self)
+                tryStart(self)
+            end,
+
+            onWaypoints = function(self, data)
+                if not data or not data.targets or #data.targets == 0 then
+                    self.Err:Fire({ reason = "invalid_waypoints", message = "Missing or empty targets in onWaypoints" })
+                    return
+                end
+
+                local state = getState(self)
+                local success, err = state.path:setWaypoints(data.targets)
+                if not success then
+                    self.Err:Fire({ reason = "invalid_waypoints", message = err })
+                    return
+                end
+
+                tryStart(self)
+            end,
+
+            onPause = function(self)
+                local state = getState(self)
+                if state.navigating and not state.paused then
+                    state.paused = true
+                end
+            end,
+
+            onResume = function(self)
+                local state = getState(self)
+                if state.navigating and state.paused then
+                    state.paused = false
+                    if state.resumeEvent then
+                        state.resumeEvent:Fire()
+                    end
+                end
+            end,
+
+            onSetSpeed = function(self, data)
+                if not data then return end
+
+                local state = getState(self)
+
+                if data.segments and type(data.segments) == "table" then
+                    state.path:setSegmentSpeeds(data.segments)
+                elseif data.segment and data.speed then
+                    state.path:setSegmentSpeed(data.segment, data.speed)
+                elseif data.speed and type(data.speed) == "number" then
+                    self:setAttribute("Speed", data.speed)
+                    state.path:setDefaultSpeed(data.speed)
+                end
+            end,
+
+            onAck = function(self, data)
+                -- Handler exists for documentation.
+                -- When WaitForAck is true, waitForSignal("onAck") captures this.
+            end,
+        },
+
+        ------------------------------------------------------------------------
+        -- OUTPUT SIGNALS
+        ------------------------------------------------------------------------
+
+        Out = {
+            waypointReached = {},  -- { waypoint: Part, index: number, entityId: string }
+            pathComplete = {},     -- { entityId: string }
+        },
+
+        -- Err (detour) signals documented in header
+    }
+end)
 
 return PathFollower

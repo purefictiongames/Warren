@@ -157,207 +157,71 @@ local RunService = game:GetService("RunService")
 local Node = require(script.Parent.Parent.Node)
 local EntityUtils = require(script.Parent.Parent.Internal.EntityUtils)
 
-local Targeter = Node.extend({
-    name = "Targeter",
-    domain = "server",
+--------------------------------------------------------------------------------
+-- TARGETER NODE (Closure-Based Privacy Pattern)
+--------------------------------------------------------------------------------
 
+local Targeter = Node.extend(function(parent)
     ----------------------------------------------------------------------------
-    -- LIFECYCLE
-    ----------------------------------------------------------------------------
-
-    Sys = {
-        onInit = function(self)
-            -- Internal state
-            self._enabled = false
-            self._scanning = false
-            self._scanConnection = nil
-            self._intervalTimer = 0
-            self._hasTargets = false  -- For tracking mode state
-
-            -- Filter configuration
-            self._filter = {}
-
-            -- RaycastParams setup
-            self._raycastParams = RaycastParams.new()
-            self._raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-            self._raycastParams.FilterDescendantsInstances = {}
-
-            -- Get origin from model
-            self._origin = nil
-            if self.model then
-                if self.model:IsA("BasePart") then
-                    self._origin = self.model
-                elseif self.model:IsA("Model") and self.model.PrimaryPart then
-                    self._origin = self.model.PrimaryPart
-                end
-            end
-
-            -- Default attributes
-            if not self:getAttribute("BeamMode") then
-                self:setAttribute("BeamMode", "pinpoint")
-            end
-            if not self:getAttribute("BeamRadius") then
-                self:setAttribute("BeamRadius", 1)
-            end
-            if not self:getAttribute("RayCount") then
-                self:setAttribute("RayCount", 8)
-            end
-            if not self:getAttribute("Range") then
-                self:setAttribute("Range", 100)
-            end
-            if not self:getAttribute("ScanMode") then
-                self:setAttribute("ScanMode", "continuous")
-            end
-            if not self:getAttribute("Interval") then
-                self:setAttribute("Interval", 0.5)
-            end
-            if not self:getAttribute("TrackingMode") then
-                self:setAttribute("TrackingMode", "once")
-            end
-        end,
-
-        onStart = function(self)
-            -- Nothing additional on start
-        end,
-
-        onStop = function(self)
-            self:_stopScanning()
-        end,
-    },
-
-    ----------------------------------------------------------------------------
-    -- INPUT HANDLERS
+    -- PRIVATE SCOPE
+    -- Nothing here exists on the node instance.
     ----------------------------------------------------------------------------
 
-    In = {
-        --[[
-            Configure targeter settings.
-        --]]
-        onConfigure = function(self, data)
-            if not data then return end
+    -- Per-instance state registry (keyed by instance.id)
+    local instanceStates = {}
 
-            if data.beamMode then
-                local mode = string.lower(data.beamMode)
-                if mode == "pinpoint" or mode == "cylinder" or mode == "cone" then
-                    self:setAttribute("BeamMode", mode)
-                end
-            end
+    local function getState(self)
+        if not instanceStates[self.id] then
+            instanceStates[self.id] = {
+                enabled = false,
+                scanning = false,
+                scanConnection = nil,
+                intervalTimer = 0,
+                hasTargets = false,
+                filter = {},
+                raycastParams = nil,
+                origin = nil,
+            }
+        end
+        return instanceStates[self.id]
+    end
 
-            if data.beamRadius then
-                self:setAttribute("BeamRadius", math.abs(data.beamRadius))
-            end
-
-            if data.rayCount then
-                self:setAttribute("RayCount", math.max(1, math.floor(data.rayCount)))
-            end
-
-            if data.range then
-                self:setAttribute("Range", math.abs(data.range))
-            end
-
-            if data.scanMode then
-                local mode = string.lower(data.scanMode)
-                if mode == "continuous" or mode == "interval" or mode == "pulse" then
-                    self:setAttribute("ScanMode", mode)
-                end
-            end
-
-            if data.interval then
-                self:setAttribute("Interval", math.max(0.01, data.interval))
-            end
-
-            if data.trackingMode then
-                local mode = string.lower(data.trackingMode)
-                if mode == "once" or mode == "lock" then
-                    self:setAttribute("TrackingMode", mode)
-                end
-            end
-
-            if data.filter ~= nil then
-                self._filter = data.filter or {}
-            end
-
-            -- Update raycast exclusion list
-            if data.exclude then
-                self._raycastParams.FilterDescendantsInstances = data.exclude
-            end
-        end,
-
-        --[[
-            Enable scanning.
-        --]]
-        onEnable = function(self)
-            if self._enabled then return end
-            self._enabled = true
-            self:_startScanning()
-        end,
-
-        --[[
-            Disable scanning.
-        --]]
-        onDisable = function(self)
-            if not self._enabled then return end
-            self._enabled = false
-            self:_stopScanning()
-
-            -- Fire lost if we had targets (lock mode)
-            if self._hasTargets and self:getAttribute("TrackingMode") == "lock" then
-                self._hasTargets = false
-                self.Out:Fire("lost", {})
-            end
-        end,
-
-        --[[
-            Manual scan trigger (pulse mode).
-        --]]
-        onScan = function(self)
-            self:_performScan()
-        end,
-    },
-
-    ----------------------------------------------------------------------------
-    -- OUTPUT SCHEMA
-    ----------------------------------------------------------------------------
-
-    Out = {
-        acquired = {},  -- { targets: Array<{ target, position, normal, distance }> }
-        tracking = {},  -- { targets: Array<...> }
-        lost = {},      -- {}
-    },
-
-    ----------------------------------------------------------------------------
-    -- PRIVATE METHODS
-    ----------------------------------------------------------------------------
+    local function cleanupState(self)
+        instanceStates[self.id] = nil
+    end
 
     --[[
-        Get the origin position for raycasting.
+        Private: Get the origin position for raycasting.
     --]]
-    _getOrigin = function(self)
-        if self._origin then
-            return self._origin.Position
+    local function getOrigin(self)
+        local state = getState(self)
+        if state.origin then
+            return state.origin.Position
         end
         return Vector3.new(0, 0, 0)
-    end,
+    end
 
     --[[
-        Get the direction for raycasting (model's LookVector).
+        Private: Get the direction for raycasting (model's LookVector).
     --]]
-    _getDirection = function(self)
-        if self._origin then
-            return self._origin.CFrame.LookVector
+    local function getDirection(self)
+        local state = getState(self)
+        if state.origin then
+            return state.origin.CFrame.LookVector
         end
         return Vector3.new(0, 0, -1)
-    end,
+    end
 
     --[[
-        Generate ray origins and directions based on beam mode.
+        Private: Generate ray origins and directions based on beam mode.
         Returns array of { origin: Vector3, direction: Vector3 }
     --]]
-    _generateRays = function(self)
+    local function generateRays(self)
+        local state = getState(self)
         local rays = {}
         local beamMode = self:getAttribute("BeamMode") or "pinpoint"
-        local origin = self:_getOrigin()
-        local direction = self:_getDirection()
+        local origin = getOrigin(self)
+        local direction = getDirection(self)
         local range = self:getAttribute("Range") or 100
         local radius = self:getAttribute("BeamRadius") or 1
         local rayCount = self:getAttribute("RayCount") or 8
@@ -376,9 +240,9 @@ local Targeter = Node.extend({
             })
 
             -- Ring of parallel rays
-            if self._origin then
-                local rightVector = self._origin.CFrame.RightVector
-                local upVector = self._origin.CFrame.UpVector
+            if state.origin then
+                local rightVector = state.origin.CFrame.RightVector
+                local upVector = state.origin.CFrame.UpVector
 
                 for i = 1, rayCount do
                     local angle = (i - 1) * (2 * math.pi / rayCount)
@@ -397,9 +261,9 @@ local Targeter = Node.extend({
             })
 
             -- Spreading rays
-            if self._origin then
-                local rightVector = self._origin.CFrame.RightVector
-                local upVector = self._origin.CFrame.UpVector
+            if state.origin then
+                local rightVector = state.origin.CFrame.RightVector
+                local upVector = state.origin.CFrame.UpVector
 
                 -- Calculate spread angle based on radius and range
                 local spreadAngle = math.atan(radius / range)
@@ -418,29 +282,67 @@ local Targeter = Node.extend({
         end
 
         return rays
-    end,
+    end
 
     --[[
-        Perform a single scan and process results.
+        Private: Process scan results and emit appropriate signals.
     --]]
-    _performScan = function(self)
-        local rays = self:_generateRays()
+    local function processResults(self, targets)
+        local state = getState(self)
+        local trackingMode = self:getAttribute("TrackingMode") or "once"
+        local hadTargets = state.hasTargets
+        local hasTargetsNow = #targets > 0
+
+        if trackingMode == "once" then
+            -- Fire acquired only on first detection
+            if hasTargetsNow and not hadTargets then
+                state.hasTargets = true
+                self.Out:Fire("acquired", { targets = targets })
+            elseif not hasTargetsNow then
+                state.hasTargets = false
+            end
+        else -- lock mode
+            if hasTargetsNow then
+                if not hadTargets then
+                    -- First detection
+                    state.hasTargets = true
+                    self.Out:Fire("acquired", { targets = targets })
+                else
+                    -- Continuous tracking
+                    self.Out:Fire("tracking", { targets = targets })
+                end
+            else
+                if hadTargets then
+                    -- Lost targets
+                    state.hasTargets = false
+                    self.Out:Fire("lost", {})
+                end
+            end
+        end
+    end
+
+    --[[
+        Private: Perform a single scan and process results.
+    --]]
+    local function performScan(self)
+        local state = getState(self)
+        local rays = generateRays(self)
         local hitTargets = {}  -- { [instance] = { target, position, normal, distance } }
 
         -- Exclude own model from raycast
         if self.model then
-            self._raycastParams.FilterDescendantsInstances = { self.model }
+            state.raycastParams.FilterDescendantsInstances = { self.model }
         end
 
         -- Cast all rays
         for _, ray in ipairs(rays) do
-            local result = workspace:Raycast(ray.origin, ray.direction, self._raycastParams)
+            local result = workspace:Raycast(ray.origin, ray.direction, state.raycastParams)
             if result then
                 local hitPart = result.Instance
                 local entity = EntityUtils.getEntityFromPart(hitPart)
 
                 -- Check if entity passes filter
-                if entity and EntityUtils.passesFilter(entity, self._filter) then
+                if entity and EntityUtils.passesFilter(entity, state.filter) then
                     -- Calculate distance from origin
                     local distance = (result.Position - ray.origin).Magnitude
 
@@ -470,50 +372,30 @@ local Targeter = Node.extend({
         end)
 
         -- Process results based on tracking mode
-        self:_processResults(targets)
-    end,
+        processResults(self, targets)
+    end
 
     --[[
-        Process scan results and emit appropriate signals.
+        Private: Stop the scanning loop.
     --]]
-    _processResults = function(self, targets)
-        local trackingMode = self:getAttribute("TrackingMode") or "once"
-        local hadTargets = self._hasTargets
-        local hasTargets = #targets > 0
+    local function stopScanning(self)
+        local state = getState(self)
+        if not state.scanning then return end
 
-        if trackingMode == "once" then
-            -- Fire acquired only on first detection
-            if hasTargets and not hadTargets then
-                self._hasTargets = true
-                self.Out:Fire("acquired", { targets = targets })
-            elseif not hasTargets then
-                self._hasTargets = false
-            end
-        else -- lock mode
-            if hasTargets then
-                if not hadTargets then
-                    -- First detection
-                    self._hasTargets = true
-                    self.Out:Fire("acquired", { targets = targets })
-                else
-                    -- Continuous tracking
-                    self.Out:Fire("tracking", { targets = targets })
-                end
-            else
-                if hadTargets then
-                    -- Lost targets
-                    self._hasTargets = false
-                    self.Out:Fire("lost", {})
-                end
-            end
+        state.scanning = false
+
+        if state.scanConnection then
+            state.scanConnection:Disconnect()
+            state.scanConnection = nil
         end
-    end,
+    end
 
     --[[
-        Start the scanning loop based on scan mode.
+        Private: Start the scanning loop based on scan mode.
     --]]
-    _startScanning = function(self)
-        if self._scanning then return end
+    local function startScanning(self)
+        local state = getState(self)
+        if state.scanning then return end
 
         local scanMode = self:getAttribute("ScanMode") or "continuous"
 
@@ -522,59 +404,222 @@ local Targeter = Node.extend({
             return
         end
 
-        self._scanning = true
-        self._intervalTimer = 0
+        state.scanning = true
+        state.intervalTimer = 0
 
-        self._scanConnection = RunService.Heartbeat:Connect(function(deltaTime)
-            if not self._scanning or not self._enabled then return end
+        state.scanConnection = RunService.Heartbeat:Connect(function(deltaTime)
+            if not state.scanning or not state.enabled then return end
 
             if scanMode == "continuous" then
-                self:_performScan()
+                performScan(self)
             else -- interval
-                self._intervalTimer = self._intervalTimer + deltaTime
+                state.intervalTimer = state.intervalTimer + deltaTime
                 local interval = self:getAttribute("Interval") or 0.5
-                if self._intervalTimer >= interval then
-                    self._intervalTimer = 0
-                    self:_performScan()
+                if state.intervalTimer >= interval then
+                    state.intervalTimer = 0
+                    performScan(self)
                 end
             end
         end)
-    end,
+    end
 
-    --[[
-        Stop the scanning loop.
-    --]]
-    _stopScanning = function(self)
-        if not self._scanning then return end
+    ----------------------------------------------------------------------------
+    -- PUBLIC INTERFACE
+    -- Only this table exists on the node.
+    ----------------------------------------------------------------------------
 
-        self._scanning = false
+    return {
+        name = "Targeter",
+        domain = "server",
 
-        if self._scanConnection then
-            self._scanConnection:Disconnect()
-            self._scanConnection = nil
-        end
-    end,
+        ------------------------------------------------------------------------
+        -- SYSTEM HANDLERS
+        ------------------------------------------------------------------------
 
-    --[[
-        Check if currently scanning.
-    --]]
-    isScanning = function(self)
-        return self._scanning
-    end,
+        Sys = {
+            onInit = function(self)
+                local state = getState(self)
 
-    --[[
-        Check if currently has targets.
-    --]]
-    hasTargets = function(self)
-        return self._hasTargets
-    end,
+                -- RaycastParams setup
+                state.raycastParams = RaycastParams.new()
+                state.raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+                state.raycastParams.FilterDescendantsInstances = {}
 
-    --[[
-        Check if enabled.
-    --]]
-    isEnabled = function(self)
-        return self._enabled
-    end,
-})
+                -- Get origin from model
+                if self.model then
+                    if self.model:IsA("BasePart") then
+                        state.origin = self.model
+                    elseif self.model:IsA("Model") and self.model.PrimaryPart then
+                        state.origin = self.model.PrimaryPart
+                    end
+                end
+
+                -- Default attributes
+                if not self:getAttribute("BeamMode") then
+                    self:setAttribute("BeamMode", "pinpoint")
+                end
+                if not self:getAttribute("BeamRadius") then
+                    self:setAttribute("BeamRadius", 1)
+                end
+                if not self:getAttribute("RayCount") then
+                    self:setAttribute("RayCount", 8)
+                end
+                if not self:getAttribute("Range") then
+                    self:setAttribute("Range", 100)
+                end
+                if not self:getAttribute("ScanMode") then
+                    self:setAttribute("ScanMode", "continuous")
+                end
+                if not self:getAttribute("Interval") then
+                    self:setAttribute("Interval", 0.5)
+                end
+                if not self:getAttribute("TrackingMode") then
+                    self:setAttribute("TrackingMode", "once")
+                end
+            end,
+
+            onStart = function(self)
+                -- Nothing additional on start
+            end,
+
+            onStop = function(self)
+                stopScanning(self)
+                cleanupState(self)  -- CRITICAL: prevents memory leak
+            end,
+        },
+
+        ------------------------------------------------------------------------
+        -- INPUT HANDLERS
+        ------------------------------------------------------------------------
+
+        In = {
+            --[[
+                Configure targeter settings.
+            --]]
+            onConfigure = function(self, data)
+                if not data then return end
+
+                local state = getState(self)
+
+                if data.beamMode then
+                    local mode = string.lower(data.beamMode)
+                    if mode == "pinpoint" or mode == "cylinder" or mode == "cone" then
+                        self:setAttribute("BeamMode", mode)
+                    end
+                end
+
+                if data.beamRadius then
+                    self:setAttribute("BeamRadius", math.abs(data.beamRadius))
+                end
+
+                if data.rayCount then
+                    self:setAttribute("RayCount", math.max(1, math.floor(data.rayCount)))
+                end
+
+                if data.range then
+                    self:setAttribute("Range", math.abs(data.range))
+                end
+
+                if data.scanMode then
+                    local mode = string.lower(data.scanMode)
+                    if mode == "continuous" or mode == "interval" or mode == "pulse" then
+                        self:setAttribute("ScanMode", mode)
+                    end
+                end
+
+                if data.interval then
+                    self:setAttribute("Interval", math.max(0.01, data.interval))
+                end
+
+                if data.trackingMode then
+                    local mode = string.lower(data.trackingMode)
+                    if mode == "once" or mode == "lock" then
+                        self:setAttribute("TrackingMode", mode)
+                    end
+                end
+
+                if data.filter ~= nil then
+                    state.filter = data.filter or {}
+                end
+
+                -- Update raycast exclusion list
+                if data.exclude then
+                    state.raycastParams.FilterDescendantsInstances = data.exclude
+                end
+            end,
+
+            --[[
+                Enable scanning.
+            --]]
+            onEnable = function(self)
+                local state = getState(self)
+                if state.enabled then return end
+                state.enabled = true
+                startScanning(self)
+            end,
+
+            --[[
+                Disable scanning.
+            --]]
+            onDisable = function(self)
+                local state = getState(self)
+                if not state.enabled then return end
+                state.enabled = false
+                stopScanning(self)
+
+                -- Fire lost if we had targets (lock mode)
+                if state.hasTargets and self:getAttribute("TrackingMode") == "lock" then
+                    state.hasTargets = false
+                    self.Out:Fire("lost", {})
+                end
+            end,
+
+            --[[
+                Manual scan trigger (pulse mode).
+            --]]
+            onScan = function(self)
+                performScan(self)
+            end,
+        },
+
+        ------------------------------------------------------------------------
+        -- OUTPUT SIGNALS
+        ------------------------------------------------------------------------
+
+        Out = {
+            acquired = {},  -- { targets: Array<{ target, position, normal, distance }> }
+            tracking = {},  -- { targets: Array<...> }
+            lost = {},      -- {}
+        },
+
+        ------------------------------------------------------------------------
+        -- PUBLIC QUERY METHODS (intentionally exposed)
+        ------------------------------------------------------------------------
+
+        --[[
+            Check if currently scanning.
+        --]]
+        isScanning = function(self)
+            local state = getState(self)
+            return state.scanning
+        end,
+
+        --[[
+            Check if currently has targets.
+        --]]
+        hasTargets = function(self)
+            local state = getState(self)
+            return state.hasTargets
+        end,
+
+        --[[
+            Check if enabled.
+        --]]
+        isEnabled = function(self)
+            local state = getState(self)
+            return state.enabled
+        end,
+    }
+end)
 
 return Targeter

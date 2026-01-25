@@ -81,140 +81,36 @@ local Node = require(script.Parent.Parent.Node)
 local System = require(script.Parent.Parent.System)
 
 --------------------------------------------------------------------------------
--- DAMAGECALCULATOR NODE
+-- DAMAGECALCULATOR NODE (Closure-Based Privacy Pattern)
 --------------------------------------------------------------------------------
 
-local DamageCalculator = Node.extend({
-    name = "DamageCalculator",
-    domain = "server",
+local DamageCalculator = Node.extend(function(parent)
+    ----------------------------------------------------------------------------
+    -- PRIVATE SCOPE
+    -- Nothing here exists on the node instance.
+    ----------------------------------------------------------------------------
 
-    --------------------------------------------------------------------------------
-    -- SYSTEM HANDLERS
-    --------------------------------------------------------------------------------
+    -- Per-instance state registry (keyed by instance.id)
+    local instanceStates = {}
 
-    Sys = {
-        onInit = function(self)
-            self._pendingQueries = {}  -- queryId -> { targetId, rawDamage, damageType, sourceId }
-            System.Debug.trace("DamageCalculator", "Initialized:", self.id)
-        end,
-
-        onStart = function(self)
-            System.Debug.trace("DamageCalculator", "Started:", self.id)
-        end,
-
-        onStop = function(self)
-            self._pendingQueries = {}
-            System.Debug.trace("DamageCalculator", "Stopped:", self.id)
-        end,
-    },
-
-    --------------------------------------------------------------------------------
-    -- INPUT HANDLERS
-    --------------------------------------------------------------------------------
-
-    In = {
-        --[[
-            Calculate and apply damage to a target.
-
-            @param data.targetId string - EntityStats instance ID
-            @param data.rawDamage number - Damage before mitigation
-            @param data.damageType string? - "physical", "magic", "true"
-            @param data.sourceId string? - Who dealt the damage
-        --]]
-        onCalculateDamage = function(self, data)
-            if not data.targetId or not data.rawDamage then
-                System.Debug.warn("DamageCalculator", "Missing targetId or rawDamage")
-                return
-            end
-
-            local damageType = data.damageType or "physical"
-
-            -- True damage bypasses defense query
-            if damageType == "true" then
-                local finalDamage = data.rawDamage
-
-                -- Apply directly
-                self:_applyDamage(data.targetId, finalDamage, data.sourceId, damageType, 0)
-                return
-            end
-
-            -- Generate query ID for correlation
-            local queryId = tostring(tick()) .. "_" .. tostring(math.random(10000, 99999))
-
-            -- Store pending query
-            self._pendingQueries[queryId] = {
-                targetId = data.targetId,
-                rawDamage = data.rawDamage,
-                damageType = damageType,
-                sourceId = data.sourceId,
+    local function getState(self)
+        if not instanceStates[self.id] then
+            instanceStates[self.id] = {
+                pendingQueries = {},  -- queryId -> { targetId, rawDamage, damageType, sourceId }
             }
+        end
+        return instanceStates[self.id]
+    end
 
-            -- Query target's defense
-            self.Out:Fire("queryAttribute", {
-                targetId = data.targetId,
-                attribute = "effectiveDefense",
-                queryId = queryId,
-            })
-
-            System.Debug.trace("DamageCalculator", "Querying defense for", data.targetId, "queryId:", queryId)
-        end,
-
-        --[[
-            Receive defense value from EntityStats.
-
-            @param data.entityId string - Entity ID
-            @param data.attribute string - Attribute name
-            @param data.value any - Attribute value
-            @param data.queryId string - Correlation ID
-        --]]
-        onAttributeQueried = function(self, data)
-            local pending = self._pendingQueries[data.queryId]
-            if not pending then
-                -- Not our query or already processed
-                return
-            end
-
-            -- Clear pending
-            self._pendingQueries[data.queryId] = nil
-
-            -- Compute final damage
-            local defense = data.value or 0
-            local finalDamage = self:computeDamage(
-                pending.rawDamage,
-                defense,
-                pending.damageType
-            )
-
-            -- Apply damage
-            self:_applyDamage(
-                pending.targetId,
-                finalDamage,
-                pending.sourceId,
-                pending.damageType,
-                defense
-            )
-        end,
-    },
-
-    --------------------------------------------------------------------------------
-    -- OUTPUT SIGNALS
-    --------------------------------------------------------------------------------
-
-    Out = {
-        queryAttribute = {},     -- { targetId, attribute, queryId }
-        applyDamage = {},        -- { targetId, attribute, value, sourceId, damageType }
-        damageCalculated = {},   -- { targetId, rawDamage, defense, finalDamage, damageType }
-    },
-
-    --------------------------------------------------------------------------------
-    -- PRIVATE METHODS
-    --------------------------------------------------------------------------------
+    local function cleanupState(self)
+        instanceStates[self.id] = nil
+    end
 
     --[[
-        Apply calculated damage to target.
+        Private: Apply calculated damage to target.
     --]]
-    _applyDamage = function(self, targetId, finalDamage, sourceId, damageType, defense)
-        -- Get current health to calculate new value
+    local function applyDamage(self, targetId, finalDamage, sourceId, damageType, defense, rawDamage)
+        -- Apply damage to health
         self.Out:Fire("applyDamage", {
             targetId = targetId,
             attribute = "health",
@@ -226,7 +122,7 @@ local DamageCalculator = Node.extend({
         -- Emit informational signal
         self.Out:Fire("damageCalculated", {
             targetId = targetId,
-            rawDamage = self._pendingQueries and self._pendingQueries[targetId] and self._pendingQueries[targetId].rawDamage or finalDamage,
+            rawDamage = rawDamage or finalDamage,
             defense = defense,
             finalDamage = finalDamage,
             damageType = damageType,
@@ -234,31 +130,161 @@ local DamageCalculator = Node.extend({
 
         System.Debug.trace("DamageCalculator", "Applied", finalDamage, "damage to", targetId,
             "(defense:", defense, "type:", damageType, ")")
-    end,
+    end
 
-    --------------------------------------------------------------------------------
-    -- OVERRIDABLE FORMULA
-    --------------------------------------------------------------------------------
+    ----------------------------------------------------------------------------
+    -- PUBLIC INTERFACE
+    -- Only this table exists on the node.
+    ----------------------------------------------------------------------------
 
-    --[[
-        Compute final damage from raw damage and defense.
+    return {
+        name = "DamageCalculator",
+        domain = "server",
 
-        Override this method in extended classes for custom formulas.
+        ------------------------------------------------------------------------
+        -- SYSTEM HANDLERS
+        ------------------------------------------------------------------------
 
-        @param rawDamage number - Damage before mitigation
-        @param defense number - Target's defense value
-        @param damageType string - "physical", "magic", "true"
-        @return number - Final damage to apply
-    --]]
-    computeDamage = function(self, rawDamage, defense, damageType)
-        if damageType == "true" then
-            -- True damage ignores defense
-            return rawDamage
-        end
+        Sys = {
+            onInit = function(self)
+                getState(self)  -- Initialize this instance's state
+                System.Debug.trace("DamageCalculator", "Initialized:", self.id)
+            end,
 
-        -- Standard formula: raw damage minus defense, minimum 1
-        return math.max(1, rawDamage - defense)
-    end,
-})
+            onStart = function(self)
+                System.Debug.trace("DamageCalculator", "Started:", self.id)
+            end,
+
+            onStop = function(self)
+                cleanupState(self)  -- CRITICAL: prevents memory leak
+                System.Debug.trace("DamageCalculator", "Stopped:", self.id)
+            end,
+        },
+
+        ------------------------------------------------------------------------
+        -- INPUT HANDLERS
+        ------------------------------------------------------------------------
+
+        In = {
+            --[[
+                Calculate and apply damage to a target.
+
+                @param data.targetId string - EntityStats instance ID
+                @param data.rawDamage number - Damage before mitigation
+                @param data.damageType string? - "physical", "magic", "true"
+                @param data.sourceId string? - Who dealt the damage
+            --]]
+            onCalculateDamage = function(self, data)
+                if not data.targetId or not data.rawDamage then
+                    System.Debug.warn("DamageCalculator", "Missing targetId or rawDamage")
+                    return
+                end
+
+                local damageType = data.damageType or "physical"
+
+                -- True damage bypasses defense query
+                if damageType == "true" then
+                    local finalDamage = data.rawDamage
+                    applyDamage(self, data.targetId, finalDamage, data.sourceId, damageType, 0, data.rawDamage)
+                    return
+                end
+
+                -- Generate query ID for correlation
+                local queryId = tostring(tick()) .. "_" .. tostring(math.random(10000, 99999))
+
+                -- Store pending query
+                local state = getState(self)
+                state.pendingQueries[queryId] = {
+                    targetId = data.targetId,
+                    rawDamage = data.rawDamage,
+                    damageType = damageType,
+                    sourceId = data.sourceId,
+                }
+
+                -- Query target's defense
+                self.Out:Fire("queryAttribute", {
+                    targetId = data.targetId,
+                    attribute = "effectiveDefense",
+                    queryId = queryId,
+                })
+
+                System.Debug.trace("DamageCalculator", "Querying defense for", data.targetId, "queryId:", queryId)
+            end,
+
+            --[[
+                Receive defense value from EntityStats.
+
+                @param data.entityId string - Entity ID
+                @param data.attribute string - Attribute name
+                @param data.value any - Attribute value
+                @param data.queryId string - Correlation ID
+            --]]
+            onAttributeQueried = function(self, data)
+                local state = getState(self)
+                local pending = state.pendingQueries[data.queryId]
+                if not pending then
+                    -- Not our query or already processed
+                    return
+                end
+
+                -- Clear pending
+                state.pendingQueries[data.queryId] = nil
+
+                -- Compute final damage
+                local defense = data.value or 0
+                local finalDamage = self:computeDamage(
+                    pending.rawDamage,
+                    defense,
+                    pending.damageType
+                )
+
+                -- Apply damage
+                applyDamage(
+                    self,
+                    pending.targetId,
+                    finalDamage,
+                    pending.sourceId,
+                    pending.damageType,
+                    defense,
+                    pending.rawDamage
+                )
+            end,
+        },
+
+        ------------------------------------------------------------------------
+        -- OUTPUT SIGNALS
+        ------------------------------------------------------------------------
+
+        Out = {
+            queryAttribute = {},     -- { targetId, attribute, queryId }
+            applyDamage = {},        -- { targetId, attribute, value, sourceId, damageType }
+            damageCalculated = {},   -- { targetId, rawDamage, defense, finalDamage, damageType }
+        },
+
+        ------------------------------------------------------------------------
+        -- OVERRIDABLE FORMULA (intentionally public for extension)
+        ------------------------------------------------------------------------
+
+        --[[
+            Compute final damage from raw damage and defense.
+
+            Override this method in extended classes for custom formulas.
+
+            @param rawDamage number - Damage before mitigation
+            @param defense number - Target's defense value
+            @param damageType string - "physical", "magic", "true"
+            @return number - Final damage to apply
+        --]]
+        computeDamage = function(self, rawDamage, defense, damageType)
+            if damageType == "true" then
+                -- True damage ignores defense
+                return rawDamage
+            end
+
+            -- Standard formula: raw damage minus defense, minimum 1
+            return math.max(1, rawDamage - defense)
+        end,
+    }
+end)
 
 return DamageCalculator

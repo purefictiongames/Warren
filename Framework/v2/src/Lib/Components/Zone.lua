@@ -97,176 +97,90 @@ local CollectionService = game:GetService("CollectionService")
 local Node = require(script.Parent.Parent.Node)
 local Registry = Node.Registry
 
-local Zone = Node.extend({
-    name = "Zone",
-    domain = "server",
+--------------------------------------------------------------------------------
+-- ZONE NODE (Closure-Based Privacy Pattern)
+--------------------------------------------------------------------------------
 
+local Zone = Node.extend(function(parent)
     ----------------------------------------------------------------------------
-    -- LIFECYCLE
-    ----------------------------------------------------------------------------
-
-    Sys = {
-        onInit = function(self)
-            -- Internal state
-            self._enabled = false
-            self._entitiesInZone = {}  -- { [entity] = true }
-            self._touchedConnection = nil
-            self._touchEndedConnection = nil
-            self._proximityConnection = nil
-
-            -- Standard filter (uses Registry.matches)
-            self._filter = nil
-
-            -- Legacy filter settings (for backward compatibility)
-            self._filterClass = nil
-            self._filterTag = nil
-            self._filterAttribute = nil
-            self._filterAttributeValue = nil
-
-            -- Default attributes
-            if not self:getAttribute("DetectionMode") then
-                self:setAttribute("DetectionMode", "collision")
-            end
-            if not self:getAttribute("Radius") then
-                self:setAttribute("Radius", 10)
-            end
-            if not self:getAttribute("PollInterval") then
-                self:setAttribute("PollInterval", 0.1)
-            end
-            if not self:getAttribute("FilterClass") then
-                self:setAttribute("FilterClass", "")
-            end
-            if not self:getAttribute("FilterTag") then
-                self:setAttribute("FilterTag", "")
-            end
-            if self:getAttribute("Enabled") == nil then
-                self:setAttribute("Enabled", true)
-            end
-
-            -- Auto-enable if Enabled attribute is true
-            if self:getAttribute("Enabled") then
-                self:_enable()
-            end
-        end,
-
-        onStart = function(self)
-            -- Nothing additional on start
-        end,
-
-        onStop = function(self)
-            self:_disable()
-        end,
-    },
-
-    ----------------------------------------------------------------------------
-    -- INPUT HANDLERS
+    -- PRIVATE SCOPE
+    -- Nothing here exists on the node instance.
     ----------------------------------------------------------------------------
 
-    In = {
-        --[[
-            Configure zone settings.
+    -- Per-instance state registry (keyed by instance.id)
+    local instanceStates = {}
 
-            data.filter uses the Standard Filter Schema (see Node.Registry.matches):
-                class: string | string[]  - Match NodeClass
-                spawnSource: string       - Match NodeSpawnSource
-                status: string            - Match NodeStatus
-                tag: string               - Match CollectionService tag
-                assetId: string           - Match specific AssetId
-                nodeId: string            - Match specific NodeId
-                attribute: { name, value, operator? }
-                custom: function(entity, meta?) -> boolean
-        --]]
-        onConfigure = function(self, data)
-            if not data then return end
+    local function getState(self)
+        if not instanceStates[self.id] then
+            instanceStates[self.id] = {
+                enabled = false,
+                entitiesInZone = {},           -- { [entity] = true }
+                touchedConnection = nil,
+                touchEndedConnection = nil,
+                proximityConnection = nil,
+                filter = nil,
+                filterClass = nil,
+                filterTag = nil,
+                filterAttribute = nil,
+                filterAttributeValue = nil,
+            }
+        end
+        return instanceStates[self.id]
+    end
 
-            if data.radius then
-                self:setAttribute("Radius", data.radius)
-            end
-
-            if data.pollInterval then
-                self:setAttribute("PollInterval", data.pollInterval)
-            end
-
-            if data.detectionMode then
-                local wasEnabled = self._enabled
-                if wasEnabled then
-                    self:_disable()
-                end
-                self:setAttribute("DetectionMode", data.detectionMode)
-                if wasEnabled then
-                    self:_enable()
-                end
-            end
-
-            if data.filter then
-                -- Store the full filter for Registry.matches()
-                self._filter = data.filter
-
-                -- Also store individual fields for backward compatibility
-                self._filterClass = data.filter.class
-                self._filterTag = data.filter.tag
-                if data.filter.attribute then
-                    self._filterAttribute = data.filter.attribute.name
-                    self._filterAttributeValue = data.filter.attribute.value
-                end
-
-                -- Store in attributes for inspection
-                if type(data.filter.class) == "string" then
-                    self:setAttribute("FilterClass", data.filter.class)
-                end
-                if data.filter.tag then
-                    self:setAttribute("FilterTag", data.filter.tag)
-                end
-            end
-        end,
-
-        --[[
-            Enable detection.
-        --]]
-        onEnable = function(self)
-            self:setAttribute("Enabled", true)
-            self:_enable()
-        end,
-
-        --[[
-            Disable detection.
-        --]]
-        onDisable = function(self)
-            self:setAttribute("Enabled", false)
-            self:_disable()
-        end,
-    },
-
-    ----------------------------------------------------------------------------
-    -- OUTPUT SCHEMA (documentation)
-    ----------------------------------------------------------------------------
-
-    Out = {
-        entityEntered = {},  -- { entity, entityId, nodeClass, assetId, position }
-        entityExited = {},   -- { entity, entityId }
-    },
-
-    ----------------------------------------------------------------------------
-    -- PRIVATE METHODS
-    ----------------------------------------------------------------------------
+    local function cleanupState(self)
+        instanceStates[self.id] = nil
+    end
 
     --[[
-        Check if an entity passes the configured filters.
-
-        Uses Registry.matches() for standardized filter checking.
-        Falls back to legacy filter fields for backward compatibility.
+        Private: Get the zone's detection part.
     --]]
-    _passesFilter = function(self, entity)
+    local function getZonePart(self)
+        if not self.model then
+            return nil
+        end
+
+        if self.model:IsA("BasePart") then
+            return self.model
+        end
+
+        -- Look for a part named "Zone" or "Trigger" or use PrimaryPart
+        local zonePart = self.model:FindFirstChild("Zone")
+            or self.model:FindFirstChild("Trigger")
+            or self.model:FindFirstChild("Detection")
+            or self.model.PrimaryPart
+            or self.model:FindFirstChildWhichIsA("BasePart")
+
+        return zonePart
+    end
+
+    --[[
+        Private: Get the zone's center position.
+    --]]
+    local function getZoneCenter(self)
+        local zonePart = getZonePart(self)
+        if zonePart then
+            return zonePart.Position
+        end
+        return Vector3.new(0, 0, 0)
+    end
+
+    --[[
+        Private: Check if an entity passes the configured filters.
+    --]]
+    local function passesFilter(self, entity)
         if not entity then return false end
 
+        local state = getState(self)
+
         -- Use Registry.matches() if a standard filter is configured
-        if self._filter then
-            return Registry.matches(entity, self._filter)
+        if state.filter then
+            return Registry.matches(entity, state.filter)
         end
 
         -- Legacy filter support (backward compatibility)
         -- Filter by NodeClass attribute
-        local filterClass = self._filterClass or self:getAttribute("FilterClass")
+        local filterClass = state.filterClass or self:getAttribute("FilterClass")
         if filterClass and filterClass ~= "" then
             local entityClass = entity:GetAttribute("NodeClass")
             if entityClass ~= filterClass then
@@ -275,7 +189,7 @@ local Zone = Node.extend({
         end
 
         -- Filter by CollectionService tag
-        local filterTag = self._filterTag or self:getAttribute("FilterTag")
+        local filterTag = state.filterTag or self:getAttribute("FilterTag")
         if filterTag and filterTag ~= "" then
             if not CollectionService:HasTag(entity, filterTag) then
                 return false
@@ -283,20 +197,20 @@ local Zone = Node.extend({
         end
 
         -- Filter by custom attribute
-        if self._filterAttribute then
-            local attrValue = entity:GetAttribute(self._filterAttribute)
-            if attrValue ~= self._filterAttributeValue then
+        if state.filterAttribute then
+            local attrValue = entity:GetAttribute(state.filterAttribute)
+            if attrValue ~= state.filterAttributeValue then
                 return false
             end
         end
 
         return true
-    end,
+    end
 
     --[[
-        Build entity data payload for signals.
+        Private: Build entity data payload for signals.
     --]]
-    _buildEntityData = function(self, entity)
+    local function buildEntityData(self, entity)
         local position
         if entity:IsA("Model") then
             if entity.PrimaryPart then
@@ -319,41 +233,45 @@ local Zone = Node.extend({
             position = position,
             zoneId = self.id,
         }
-    end,
+    end
 
     --[[
-        Handle an entity entering the zone.
+        Private: Handle an entity entering the zone.
     --]]
-    _handleEnter = function(self, entity)
+    local function handleEnter(self, entity)
+        local state = getState(self)
+
         -- Skip if already in zone
-        if self._entitiesInZone[entity] then
+        if state.entitiesInZone[entity] then
             return
         end
 
         -- Apply filters
-        if not self:_passesFilter(entity) then
+        if not passesFilter(self, entity) then
             return
         end
 
         -- Track entity
-        self._entitiesInZone[entity] = true
+        state.entitiesInZone[entity] = true
 
         -- Fire signal
-        local data = self:_buildEntityData(entity)
+        local data = buildEntityData(self, entity)
         self.Out:Fire("entityEntered", data)
-    end,
+    end
 
     --[[
-        Handle an entity exiting the zone.
+        Private: Handle an entity exiting the zone.
     --]]
-    _handleExit = function(self, entity)
+    local function handleExit(self, entity)
+        local state = getState(self)
+
         -- Skip if not in zone
-        if not self._entitiesInZone[entity] then
+        if not state.entitiesInZone[entity] then
             return
         end
 
         -- Untrack entity
-        self._entitiesInZone[entity] = nil
+        state.entitiesInZone[entity] = nil
 
         -- Fire signal
         self.Out:Fire("entityExited", {
@@ -361,94 +279,15 @@ local Zone = Node.extend({
             entityId = entity:GetAttribute("NodeId") or entity.Name,
             zoneId = self.id,
         })
-    end,
+    end
 
     --[[
-        Get the zone's detection part.
+        Private: Enable collision-based detection.
     --]]
-    _getZonePart = function(self)
-        if not self.model then
-            return nil
-        end
+    local function enableCollisionMode(self)
+        local state = getState(self)
+        local zonePart = getZonePart(self)
 
-        if self.model:IsA("BasePart") then
-            return self.model
-        end
-
-        -- Look for a part named "Zone" or "Trigger" or use PrimaryPart
-        local zonePart = self.model:FindFirstChild("Zone")
-            or self.model:FindFirstChild("Trigger")
-            or self.model:FindFirstChild("Detection")
-            or self.model.PrimaryPart
-            or self.model:FindFirstChildWhichIsA("BasePart")
-
-        return zonePart
-    end,
-
-    --[[
-        Get the zone's center position.
-    --]]
-    _getZoneCenter = function(self)
-        local zonePart = self:_getZonePart()
-        if zonePart then
-            return zonePart.Position
-        end
-        return Vector3.new(0, 0, 0)
-    end,
-
-    --[[
-        Enable detection based on mode.
-    --]]
-    _enable = function(self)
-        if self._enabled then
-            return
-        end
-
-        self._enabled = true
-        local mode = self:getAttribute("DetectionMode")
-
-        if mode == "collision" then
-            self:_enableCollisionMode()
-        elseif mode == "proximity" then
-            self:_enableProximityMode()
-        end
-    end,
-
-    --[[
-        Disable detection.
-    --]]
-    _disable = function(self)
-        if not self._enabled then
-            return
-        end
-
-        self._enabled = false
-
-        -- Disconnect collision events
-        if self._touchedConnection then
-            self._touchedConnection:Disconnect()
-            self._touchedConnection = nil
-        end
-        if self._touchEndedConnection then
-            self._touchEndedConnection:Disconnect()
-            self._touchEndedConnection = nil
-        end
-
-        -- Disconnect proximity polling
-        if self._proximityConnection then
-            self._proximityConnection:Disconnect()
-            self._proximityConnection = nil
-        end
-
-        -- Clear tracked entities
-        self._entitiesInZone = {}
-    end,
-
-    --[[
-        Enable collision-based detection.
-    --]]
-    _enableCollisionMode = function(self)
-        local zonePart = self:_getZonePart()
         if not zonePart then
             self.Err:Fire({
                 reason = "no_zone_part",
@@ -459,33 +298,34 @@ local Zone = Node.extend({
         end
 
         -- Connect Touched event
-        self._touchedConnection = zonePart.Touched:Connect(function(otherPart)
-            if not self._enabled then return end
+        state.touchedConnection = zonePart.Touched:Connect(function(otherPart)
+            if not state.enabled then return end
 
             -- Find the root model/entity
             local entity = otherPart:FindFirstAncestorOfClass("Model") or otherPart
-            self:_handleEnter(entity)
+            handleEnter(self, entity)
         end)
 
         -- Connect TouchEnded event
-        self._touchEndedConnection = zonePart.TouchEnded:Connect(function(otherPart)
-            if not self._enabled then return end
+        state.touchEndedConnection = zonePart.TouchEnded:Connect(function(otherPart)
+            if not state.enabled then return end
 
             local entity = otherPart:FindFirstAncestorOfClass("Model") or otherPart
-            self:_handleExit(entity)
+            handleExit(self, entity)
         end)
-    end,
+    end
 
     --[[
-        Enable proximity-based detection.
+        Private: Enable proximity-based detection.
     --]]
-    _enableProximityMode = function(self)
+    local function enableProximityMode(self)
+        local state = getState(self)
         local radius = self:getAttribute("Radius") or 10
         local pollInterval = self:getAttribute("PollInterval") or 0.1
         local lastPoll = 0
 
-        self._proximityConnection = RunService.Heartbeat:Connect(function()
-            if not self._enabled then return end
+        state.proximityConnection = RunService.Heartbeat:Connect(function()
+            if not state.enabled then return end
 
             -- Throttle polling
             local now = os.clock()
@@ -494,7 +334,7 @@ local Zone = Node.extend({
             end
             lastPoll = now
 
-            local center = self:_getZoneCenter()
+            local center = getZoneCenter(self)
             local radiusSq = radius * radius
 
             -- Check all potentially relevant entities
@@ -519,8 +359,8 @@ local Zone = Node.extend({
                             currentInZone[descendant] = true
 
                             -- Handle enter if new
-                            if not self._entitiesInZone[descendant] then
-                                self:_handleEnter(descendant)
+                            if not state.entitiesInZone[descendant] then
+                                handleEnter(self, descendant)
                             end
                         end
                     end
@@ -528,13 +368,209 @@ local Zone = Node.extend({
             end
 
             -- Handle exits for entities no longer in zone
-            for entity in pairs(self._entitiesInZone) do
+            for entity in pairs(state.entitiesInZone) do
                 if not currentInZone[entity] then
-                    self:_handleExit(entity)
+                    handleExit(self, entity)
                 end
             end
         end)
-    end,
-})
+    end
+
+    --[[
+        Private: Enable detection based on mode.
+    --]]
+    local function enable(self)
+        local state = getState(self)
+
+        if state.enabled then
+            return
+        end
+
+        state.enabled = true
+        local mode = self:getAttribute("DetectionMode")
+
+        if mode == "collision" then
+            enableCollisionMode(self)
+        elseif mode == "proximity" then
+            enableProximityMode(self)
+        end
+    end
+
+    --[[
+        Private: Disable detection.
+    --]]
+    local function disable(self)
+        local state = getState(self)
+
+        if not state.enabled then
+            return
+        end
+
+        state.enabled = false
+
+        -- Disconnect collision events
+        if state.touchedConnection then
+            state.touchedConnection:Disconnect()
+            state.touchedConnection = nil
+        end
+        if state.touchEndedConnection then
+            state.touchEndedConnection:Disconnect()
+            state.touchEndedConnection = nil
+        end
+
+        -- Disconnect proximity polling
+        if state.proximityConnection then
+            state.proximityConnection:Disconnect()
+            state.proximityConnection = nil
+        end
+
+        -- Clear tracked entities
+        state.entitiesInZone = {}
+    end
+
+    ----------------------------------------------------------------------------
+    -- PUBLIC INTERFACE
+    -- Only this table exists on the node.
+    ----------------------------------------------------------------------------
+
+    return {
+        name = "Zone",
+        domain = "server",
+
+        ------------------------------------------------------------------------
+        -- SYSTEM HANDLERS
+        ------------------------------------------------------------------------
+
+        Sys = {
+            onInit = function(self)
+                local state = getState(self)
+
+                -- Default attributes
+                if not self:getAttribute("DetectionMode") then
+                    self:setAttribute("DetectionMode", "collision")
+                end
+                if not self:getAttribute("Radius") then
+                    self:setAttribute("Radius", 10)
+                end
+                if not self:getAttribute("PollInterval") then
+                    self:setAttribute("PollInterval", 0.1)
+                end
+                if not self:getAttribute("FilterClass") then
+                    self:setAttribute("FilterClass", "")
+                end
+                if not self:getAttribute("FilterTag") then
+                    self:setAttribute("FilterTag", "")
+                end
+                if self:getAttribute("Enabled") == nil then
+                    self:setAttribute("Enabled", true)
+                end
+
+                -- Auto-enable if Enabled attribute is true
+                if self:getAttribute("Enabled") then
+                    enable(self)
+                end
+            end,
+
+            onStart = function(self)
+                -- Nothing additional on start
+            end,
+
+            onStop = function(self)
+                disable(self)
+                cleanupState(self)  -- CRITICAL: prevents memory leak
+            end,
+        },
+
+        ------------------------------------------------------------------------
+        -- INPUT HANDLERS
+        ------------------------------------------------------------------------
+
+        In = {
+            --[[
+                Configure zone settings.
+
+                data.filter uses the Standard Filter Schema (see Node.Registry.matches):
+                    class: string | string[]  - Match NodeClass
+                    spawnSource: string       - Match NodeSpawnSource
+                    status: string            - Match NodeStatus
+                    tag: string               - Match CollectionService tag
+                    assetId: string           - Match specific AssetId
+                    nodeId: string            - Match specific NodeId
+                    attribute: { name, value, operator? }
+                    custom: function(entity, meta?) -> boolean
+            --]]
+            onConfigure = function(self, data)
+                if not data then return end
+
+                local state = getState(self)
+
+                if data.radius then
+                    self:setAttribute("Radius", data.radius)
+                end
+
+                if data.pollInterval then
+                    self:setAttribute("PollInterval", data.pollInterval)
+                end
+
+                if data.detectionMode then
+                    local wasEnabled = state.enabled
+                    if wasEnabled then
+                        disable(self)
+                    end
+                    self:setAttribute("DetectionMode", data.detectionMode)
+                    if wasEnabled then
+                        enable(self)
+                    end
+                end
+
+                if data.filter then
+                    -- Store the full filter for Registry.matches()
+                    state.filter = data.filter
+
+                    -- Also store individual fields for backward compatibility
+                    state.filterClass = data.filter.class
+                    state.filterTag = data.filter.tag
+                    if data.filter.attribute then
+                        state.filterAttribute = data.filter.attribute.name
+                        state.filterAttributeValue = data.filter.attribute.value
+                    end
+
+                    -- Store in attributes for inspection
+                    if type(data.filter.class) == "string" then
+                        self:setAttribute("FilterClass", data.filter.class)
+                    end
+                    if data.filter.tag then
+                        self:setAttribute("FilterTag", data.filter.tag)
+                    end
+                end
+            end,
+
+            --[[
+                Enable detection.
+            --]]
+            onEnable = function(self)
+                self:setAttribute("Enabled", true)
+                enable(self)
+            end,
+
+            --[[
+                Disable detection.
+            --]]
+            onDisable = function(self)
+                self:setAttribute("Enabled", false)
+                disable(self)
+            end,
+        },
+
+        ------------------------------------------------------------------------
+        -- OUTPUT SIGNALS
+        ------------------------------------------------------------------------
+
+        Out = {
+            entityEntered = {},  -- { entity, entityId, nodeClass, assetId, position }
+            entityExited = {},   -- { entity, entityId }
+        },
+    }
+end)
 
 return Zone

@@ -152,6 +152,7 @@ local Swivel = Node.extend(function(parent)
                 modelAttachment = nil,
                 monitorConnection = nil,
                 createdAnchor = nil,
+                createdModel = nil,
             }
         end
         return instanceStates[self.id]
@@ -290,6 +291,10 @@ local Swivel = Node.extend(function(parent)
             state.createdAnchor:Destroy()
             state.createdAnchor = nil
         end
+        if state.createdModel then
+            state.createdModel:Destroy()
+            state.createdModel = nil
+        end
     end
 
     --[[
@@ -340,18 +345,25 @@ local Swivel = Node.extend(function(parent)
     local function setupHinge(self)
         local state = getState(self)
 
-        if not self.model then
-            warn("[Swivel] No model provided")
-            return
+        local modelPart = self.model
+        if modelPart and modelPart:IsA("Model") then
+            modelPart = modelPart.PrimaryPart
+            if not modelPart then
+                warn("[Swivel] Model has no PrimaryPart, creating default")
+            end
         end
 
-        local modelPart = self.model
-        if self.model:IsA("Model") then
-            modelPart = self.model.PrimaryPart
-            if not modelPart then
-                warn("[Swivel] Model has no PrimaryPart")
-                return
-            end
+        -- Create default model part if none provided
+        if not modelPart then
+            modelPart = Instance.new("Part")
+            modelPart.Name = self.id .. "_SwivelModel"
+            modelPart.Size = Vector3.new(1, 1, 1)
+            modelPart.CFrame = CFrame.new(0, 10, 0)  -- Above ground
+            modelPart.Anchored = false
+            modelPart.CanCollide = false
+            modelPart.Transparency = 1
+            modelPart.Parent = workspace
+            state.createdModel = modelPart
         end
 
         -- Get or create anchor

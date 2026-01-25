@@ -124,380 +124,175 @@ local Node = require(script.Parent.Parent.Node)
 local PathFollowerCore = require(script.Parent.Parent.Internal.PathFollowerCore)
 local EntityUtils = require(script.Parent.Parent.Internal.EntityUtils)
 
-local PathedConveyor = Node.extend({
-    name = "PathedConveyor",
-    domain = "server",
+--------------------------------------------------------------------------------
+-- PATHEDCONVEYOR NODE (Closure-Based Privacy Pattern)
+--------------------------------------------------------------------------------
 
+local PathedConveyor = Node.extend(function(parent)
     ----------------------------------------------------------------------------
-    -- LIFECYCLE
-    ----------------------------------------------------------------------------
-
-    Sys = {
-        onInit = function(self)
-            -- Path infrastructure (shared with PathFollower)
-            local defaultSpeed = self:getAttribute("Speed") or 16
-            self._path = PathFollowerCore.new({ defaultSpeed = defaultSpeed })
-
-            -- Conveyor state
-            self._enabled = false
-            self._updateConnection = nil
-
-            -- Tracked entities currently on conveyor
-            -- { [entity] = { segment, enterTime, lastUpdate } }
-            self._trackedEntities = {}
-
-            -- Filter configuration
-            self._filter = nil
-
-            -- Default attributes
-            if not self:getAttribute("Speed") then
-                self:setAttribute("Speed", 16)
-            end
-            if not self:getAttribute("ForceMode") then
-                self:setAttribute("ForceMode", "velocity")
-            end
-            if self:getAttribute("AffectsPlayers") == nil then
-                self:setAttribute("AffectsPlayers", true)
-            end
-            if not self:getAttribute("DetectionRadius") then
-                self:setAttribute("DetectionRadius", 2)
-            end
-            if not self:getAttribute("UpdateRate") then
-                self:setAttribute("UpdateRate", 0.1)
-            end
-        end,
-
-        onStart = function(self)
-            -- Nothing to do on start - we wait for enable signal
-        end,
-
-        onStop = function(self)
-            self:_disable()
-        end,
-    },
-
-    ----------------------------------------------------------------------------
-    -- INPUT HANDLERS
+    -- PRIVATE SCOPE
+    -- Nothing here exists on the node instance.
     ----------------------------------------------------------------------------
 
-    In = {
-        --[[
-            Configure the conveyor path and settings.
-        --]]
-        onConfigure = function(self, data)
-            if not data then return end
+    -- Per-instance state registry (keyed by instance.id)
+    local instanceStates = {}
 
-            -- Set waypoints
-            if data.waypoints then
-                local success, err = self._path:setWaypoints(data.waypoints)
-                if not success then
-                    self.Err:Fire({ reason = "invalid_waypoints", message = err })
-                    return
-                end
-            end
+    local function getState(self)
+        if not instanceStates[self.id] then
+            instanceStates[self.id] = {
+                path = nil,             -- PathFollowerCore instance
+                enabled = false,
+                updateConnection = nil,
+                trackedEntities = {},   -- { [entity] = { segment, enterTime } }
+                filter = nil,
+            }
+        end
+        return instanceStates[self.id]
+    end
 
-            -- Set default speed
-            if data.speed then
-                self:setAttribute("Speed", data.speed)
-                self._path:setDefaultSpeed(data.speed)
-            end
+    local function cleanupState(self)
+        instanceStates[self.id] = nil
+    end
 
-            -- Set filter
-            if data.filter then
-                self._filter = data.filter
-            end
-
-            -- Set other attributes
-            if data.affectsPlayers ~= nil then
-                self:setAttribute("AffectsPlayers", data.affectsPlayers)
-            end
-
-            if data.forceMode then
-                self:setAttribute("ForceMode", data.forceMode)
-            end
-
-            if data.detectionRadius then
-                self:setAttribute("DetectionRadius", data.detectionRadius)
-            end
-
-            if data.updateRate then
-                self:setAttribute("UpdateRate", data.updateRate)
-            end
-        end,
-
-        --[[
-            Change conveyor speed.
-            - speed alone: sets default speed for all segments
-            - segment + speed: sets speed for specific segment
-            - segments: array of { segment, speed } for multiple
-        --]]
-        onSetSpeed = function(self, data)
-            if not data then return end
-
-            if data.segments and type(data.segments) == "table" then
-                -- Set multiple segment speeds
-                self._path:setSegmentSpeeds(data.segments)
-            elseif data.segment and data.speed then
-                -- Set single segment speed
-                self._path:setSegmentSpeed(data.segment, data.speed)
-            elseif data.speed and type(data.speed) == "number" then
-                -- Set default speed for all
-                self:setAttribute("Speed", data.speed)
-                self._path:setDefaultSpeed(data.speed)
-            end
-        end,
-
-        --[[
-            Toggle conveyor direction.
-        --]]
-        onReverse = function(self)
-            self._path:reverse()
-            self.Out:Fire("directionChanged", {
-                forward = self._path:isForward(),
-            })
-        end,
-
-        --[[
-            Explicitly set conveyor direction.
-        --]]
-        onSetDirection = function(self, data)
-            if data and data.forward ~= nil then
-                self._path:setDirection(data.forward)
-                self.Out:Fire("directionChanged", {
-                    forward = self._path:isForward(),
-                })
-            end
-        end,
-
-        --[[
-            Enable the conveyor.
-        --]]
-        onEnable = function(self)
-            self:_enable()
-        end,
-
-        --[[
-            Disable the conveyor.
-        --]]
-        onDisable = function(self)
-            self:_disable()
-        end,
-    },
-
-    ----------------------------------------------------------------------------
-    -- OUTPUT SCHEMA (documentation)
-    ----------------------------------------------------------------------------
-
-    Out = {
-        entityEntered = {},    -- { entity, entityId, segment }
-        entityExited = {},     -- { entity, entityId }
-        segmentChanged = {},   -- { entity, entityId, fromSegment, toSegment, waypoint, waypointIndex }
-        directionChanged = {}, -- { forward }
-    },
-
-    ----------------------------------------------------------------------------
-    -- PRIVATE METHODS
-    ----------------------------------------------------------------------------
+    -- Forward declarations for mutual recursion
+    local disable
+    local onEntityExit
 
     --[[
-        Enable the conveyor and start the update loop.
+        Private: Check if a part is one of our waypoints.
     --]]
-    _enable = function(self)
-        if self._enabled then return end
-        if self._path:getWaypointCount() < 2 then
-            self.Err:Fire({ reason = "no_path", message = "Conveyor requires at least 2 waypoints" })
-            return
+    local function isWaypoint(self, part)
+        local state = getState(self)
+        for i = 1, state.path:getWaypointCount() do
+            if state.path:getWaypoint(i) == part then
+                return true
+            end
         end
-
-        self._enabled = true
-        self:_startUpdateLoop()
-    end,
+        return false
+    end
 
     --[[
-        Disable the conveyor and stop the update loop.
+        Private: Handle entity entering conveyor.
     --]]
-    _disable = function(self)
-        if not self._enabled then return end
+    local function onEntityEnter(self, entity, segment)
+        local entityId = EntityUtils.getId(entity)
 
-        self._enabled = false
-
-        -- Stop update loop
-        if self._updateConnection then
-            self._updateConnection:Disconnect()
-            self._updateConnection = nil
-        end
-
-        -- Clear tracked entities
-        for entity, _ in pairs(self._trackedEntities) do
-            self:_onEntityExit(entity)
-        end
-        self._trackedEntities = {}
-    end,
+        self.Out:Fire("entityEntered", {
+            entity = entity,
+            entityId = entityId,
+            segment = segment,
+        })
+    end
 
     --[[
-        Start the physics update loop.
+        Private: Handle entity exiting conveyor.
     --]]
-    _startUpdateLoop = function(self)
-        local lastUpdate = 0
-        local updateRate = self:getAttribute("UpdateRate") or 0.1
+    onEntityExit = function(self, entity)
+        local entityId = EntityUtils.getId(entity)
 
-        self._updateConnection = RunService.Heartbeat:Connect(function(dt)
-            lastUpdate = lastUpdate + dt
-            if lastUpdate >= updateRate then
-                lastUpdate = 0
-                self:_updateConveyor()
+        -- Clean up any physics constraints we created
+        local primaryPart = EntityUtils.getPrimaryPart(entity)
+        if primaryPart then
+            -- Clean up VectorForce (used for "force" mode)
+            local bodyForce = primaryPart:FindFirstChild("ConveyorForce")
+            if bodyForce then
+                bodyForce:Destroy()
             end
-        end)
-    end,
+
+            -- Clean up VectorForce (used for players)
+            local vectorForce = primaryPart:FindFirstChild("ConveyorVectorForce")
+            if vectorForce then
+                vectorForce:Destroy()
+            end
+
+            -- Clean up attachments
+            local attachment = primaryPart:FindFirstChild("ConveyorAttachment")
+            if attachment then
+                attachment:Destroy()
+            end
+
+            -- Clean up BodyVelocity (for non-player entities in velocity mode)
+            local bodyVel = primaryPart:FindFirstChild("ConveyorBodyVelocity")
+            if bodyVel then
+                bodyVel:Destroy()
+            end
+        end
+
+        self.Out:Fire("entityExited", {
+            entity = entity,
+            entityId = entityId,
+        })
+    end
 
     --[[
-        Main conveyor update - find entities and apply forces.
+        Private: Handle entity transitioning from one segment to another.
+        This fires when an entity passes a waypoint.
     --]]
-    _updateConveyor = function(self)
-        if not self._enabled then return end
+    local function onSegmentChanged(self, entity, fromSegment, toSegment)
+        local state = getState(self)
+        local entityId = EntityUtils.getId(entity)
 
-        local detectionRadius = self:getAttribute("DetectionRadius") or 2
-        local affectsPlayers = self:getAttribute("AffectsPlayers")
+        -- The waypoint at the transition is the start of the new segment
+        -- (or end of the old segment, depending on direction)
+        local waypointIndex = toSegment
+        local waypoint = state.path:getWaypoint(waypointIndex)
 
-        -- Find all entities near the path
-        local nearbyEntities = self:_findNearbyEntities(detectionRadius)
-
-        -- Debug: show what we found (uncomment for debugging)
-        -- if #nearbyEntities > 0 then
-        --     print(string.format("[Conveyor] Found %d nearby entities", #nearbyEntities))
-        --     for _, ed in ipairs(nearbyEntities) do
-        --         local pos = EntityUtils.getPosition(ed.entity)
-        --         print(string.format("  - %s: segment=%d, dist=%.2f, pos=%s",
-        --             self:_getEntityId(ed.entity), ed.segment, ed.distance, tostring(pos)))
-        --     end
-        -- end
-
-        -- Track new entities, update existing, remove gone
-        local currentEntities = {}
-
-        for _, entityData in ipairs(nearbyEntities) do
-            local entity = entityData.entity
-            currentEntities[entity] = true
-
-            -- Check filter
-            if not EntityUtils.passesFilter(entity, self._filter) then
-                continue
-            end
-
-            -- Check if player and whether to affect
-            if EntityUtils.isPlayer(entity) and not affectsPlayers then
-                continue
-            end
-
-            -- Track or update
-            if not self._trackedEntities[entity] then
-                -- New entity
-                self._trackedEntities[entity] = {
-                    segment = entityData.segment,
-                    enterTime = os.clock(),
-                }
-                self:_onEntityEnter(entity, entityData.segment)
-            else
-                -- Check for segment change (waypoint transition)
-                local prevSegment = self._trackedEntities[entity].segment
-                local newSegment = entityData.segment
-
-                if prevSegment ~= newSegment then
-                    -- Entity has transitioned to a new segment
-                    self:_onSegmentChanged(entity, prevSegment, newSegment)
-                    self._trackedEntities[entity].segment = newSegment
-                end
-            end
-
-            -- Apply conveyor force
-            self:_applyConveyorForce(entity, entityData.segment)
-        end
-
-        -- Remove entities that left
-        for entity, _ in pairs(self._trackedEntities) do
-            if not currentEntities[entity] then
-                self:_onEntityExit(entity)
-                self._trackedEntities[entity] = nil
-            end
-        end
-    end,
+        self.Out:Fire("segmentChanged", {
+            entity = entity,
+            entityId = entityId,
+            fromSegment = fromSegment,
+            toSegment = toSegment,
+            waypoint = waypoint,
+            waypointIndex = waypointIndex,
+        })
+    end
 
     --[[
-        Find all entities near the conveyor path.
-
-        @return table - Array of { entity, segment, distance }
+        Private: Apply conveyor movement to a player character.
+        Players need special handling because Humanoid movement overrides velocity.
     --]]
-    _findNearbyEntities = function(self, radius)
-        local results = {}
-        local seenEntities = {}
-
-        -- Calculate bounding box for entire conveyor path
-        local minPos = Vector3.new(math.huge, math.huge, math.huge)
-        local maxPos = Vector3.new(-math.huge, -math.huge, -math.huge)
-
-        for i = 1, self._path:getWaypointCount() do
-            local pos = self._path:getWaypointPosition(i)
-            if pos then
-                minPos = Vector3.new(
-                    math.min(minPos.X, pos.X),
-                    math.min(minPos.Y, pos.Y),
-                    math.min(minPos.Z, pos.Z)
-                )
-                maxPos = Vector3.new(
-                    math.max(maxPos.X, pos.X),
-                    math.max(maxPos.Y, pos.Y),
-                    math.max(maxPos.Z, pos.Z)
-                )
-            end
+    local function applyPlayerForce(self, entity, rootPart, targetVelocity)
+        -- Use VectorForce for player movement - this ADDS to player movement rather than
+        -- overriding it. This allows players to walk against the conveyor (slower) or
+        -- with it (faster).
+        local attachment = rootPart:FindFirstChild("ConveyorAttachment")
+        if not attachment then
+            attachment = Instance.new("Attachment")
+            attachment.Name = "ConveyorAttachment"
+            attachment.Parent = rootPart
         end
 
-        -- Expand bounds by detection radius
-        minPos = minPos - Vector3.new(radius, radius, radius)
-        maxPos = maxPos + Vector3.new(radius, radius, radius)
-
-        -- Query all parts in the bounding region
-        local center = (minPos + maxPos) / 2
-        local size = maxPos - minPos
-
-        local overlapParams = OverlapParams.new()
-        overlapParams.FilterType = Enum.RaycastFilterType.Exclude
-        overlapParams.FilterDescendantsInstances = {}
-
-        local parts = workspace:GetPartBoundsInBox(CFrame.new(center), size, overlapParams)
-
-        -- Process each part
-        for _, part in ipairs(parts) do
-            local entity = EntityUtils.getEntityFromPart(part)
-
-            if entity and not seenEntities[entity] and not self:_isWaypoint(part) then
-                seenEntities[entity] = true
-
-                -- Find which segment this entity is closest to
-                local entityPos = EntityUtils.getPosition(entity)
-                local closestSegment, closestPoint, distance = self._path:findClosestSegment(entityPos)
-
-                if distance <= radius then
-                    table.insert(results, {
-                        entity = entity,
-                        segment = closestSegment,
-                        distance = distance,
-                    })
-                end
-            end
+        local vectorForce = rootPart:FindFirstChild("ConveyorVectorForce")
+        if not vectorForce then
+            vectorForce = Instance.new("VectorForce")
+            vectorForce.Name = "ConveyorVectorForce"
+            vectorForce.ApplyAtCenterOfMass = true
+            vectorForce.RelativeTo = Enum.ActuatorRelativeTo.World
+            vectorForce.Attachment0 = attachment
+            vectorForce.Parent = rootPart
         end
 
-        return results
-    end,
+        -- Calculate force to achieve desired conveyor effect
+        -- Force = mass * acceleration, but we want to push at a steady rate
+        -- Use mass * targetSpeed * multiplier to get a force that feels like a conveyor
+        local mass = rootPart.AssemblyMass
+        local forceMultiplier = 8  -- Tuned for responsive feel without being too strong
+        local force = Vector3.new(
+            targetVelocity.X * mass * forceMultiplier,
+            0,  -- No vertical force
+            targetVelocity.Z * mass * forceMultiplier
+        )
+
+        vectorForce.Force = force
+    end
 
     --[[
-        Apply conveyor force to an entity.
-
-        @param entity Model|BasePart - The entity to move
-        @param segment number - The segment the entity is on
+        Private: Apply conveyor force to an entity.
     --]]
-    _applyConveyorForce = function(self, entity, segment)
-        local speed = self._path:getSegmentSpeed(segment)
-        local direction = self._path:getTraversalDirection(segment)
+    local function applyConveyorForce(self, entity, segment)
+        local state = getState(self)
+        local speed = state.path:getSegmentSpeed(segment)
+        local direction = state.path:getTraversalDirection(segment)
 
         if not direction then
             warn("[PathedConveyor] No direction for segment", segment)
@@ -524,7 +319,7 @@ local PathedConveyor = Node.extend({
 
         if isPlayerCharacter then
             -- For players, use BodyVelocity for reliable movement
-            self:_applyPlayerForce(entity, primaryPart, targetVelocity)
+            applyPlayerForce(self, entity, primaryPart, targetVelocity)
             return
         end
 
@@ -573,154 +368,364 @@ local PathedConveyor = Node.extend({
             local nudge = targetVelocity * 0.1
             primaryPart.AssemblyLinearVelocity = primaryPart.AssemblyLinearVelocity + nudge
         end
-    end,
+    end
 
     --[[
-        Handle entity entering conveyor.
+        Private: Find all entities near the conveyor path.
     --]]
-    _onEntityEnter = function(self, entity, segment)
-        local entityId = EntityUtils.getId(entity)
+    local function findNearbyEntities(self, radius)
+        local state = getState(self)
+        local results = {}
+        local seenEntities = {}
 
-        self.Out:Fire("entityEntered", {
-            entity = entity,
-            entityId = entityId,
-            segment = segment,
-        })
-    end,
+        -- Calculate bounding box for entire conveyor path
+        local minPos = Vector3.new(math.huge, math.huge, math.huge)
+        local maxPos = Vector3.new(-math.huge, -math.huge, -math.huge)
 
-    --[[
-        Handle entity exiting conveyor.
-    --]]
-    _onEntityExit = function(self, entity)
-        local entityId = EntityUtils.getId(entity)
-
-        -- Clean up any physics constraints we created
-        local primaryPart = EntityUtils.getPrimaryPart(entity)
-        if primaryPart then
-            -- Clean up VectorForce (used for "force" mode)
-            local bodyForce = primaryPart:FindFirstChild("ConveyorForce")
-            if bodyForce then
-                bodyForce:Destroy()
-            end
-
-            -- Clean up VectorForce (used for players)
-            local vectorForce = primaryPart:FindFirstChild("ConveyorVectorForce")
-            if vectorForce then
-                vectorForce:Destroy()
-            end
-
-            -- Clean up attachments
-            local attachment = primaryPart:FindFirstChild("ConveyorAttachment")
-            if attachment then
-                attachment:Destroy()
-            end
-
-            -- Clean up BodyVelocity (for non-player entities in velocity mode)
-            local bodyVel = primaryPart:FindFirstChild("ConveyorBodyVelocity")
-            if bodyVel then
-                bodyVel:Destroy()
+        for i = 1, state.path:getWaypointCount() do
+            local pos = state.path:getWaypointPosition(i)
+            if pos then
+                minPos = Vector3.new(
+                    math.min(minPos.X, pos.X),
+                    math.min(minPos.Y, pos.Y),
+                    math.min(minPos.Z, pos.Z)
+                )
+                maxPos = Vector3.new(
+                    math.max(maxPos.X, pos.X),
+                    math.max(maxPos.Y, pos.Y),
+                    math.max(maxPos.Z, pos.Z)
+                )
             end
         end
 
-        self.Out:Fire("entityExited", {
-            entity = entity,
-            entityId = entityId,
-        })
-    end,
+        -- Expand bounds by detection radius
+        minPos = minPos - Vector3.new(radius, radius, radius)
+        maxPos = maxPos + Vector3.new(radius, radius, radius)
 
-    --[[
-        Handle entity transitioning from one segment to another.
-        This fires when an entity passes a waypoint.
-    --]]
-    _onSegmentChanged = function(self, entity, fromSegment, toSegment)
-        local entityId = EntityUtils.getId(entity)
+        -- Query all parts in the bounding region
+        local center = (minPos + maxPos) / 2
+        local size = maxPos - minPos
 
-        -- The waypoint at the transition is the start of the new segment
-        -- (or end of the old segment, depending on direction)
-        local waypointIndex = toSegment
-        local waypoint = self._path:getWaypoint(waypointIndex)
+        local overlapParams = OverlapParams.new()
+        overlapParams.FilterType = Enum.RaycastFilterType.Exclude
+        overlapParams.FilterDescendantsInstances = {}
 
-        self.Out:Fire("segmentChanged", {
-            entity = entity,
-            entityId = entityId,
-            fromSegment = fromSegment,
-            toSegment = toSegment,
-            waypoint = waypoint,
-            waypointIndex = waypointIndex,
-        })
-    end,
+        local parts = workspace:GetPartBoundsInBox(CFrame.new(center), size, overlapParams)
 
-    --[[
-        Check if a part is one of our waypoints.
-    --]]
-    _isWaypoint = function(self, part)
-        for i = 1, self._path:getWaypointCount() do
-            if self._path:getWaypoint(i) == part then
-                return true
+        -- Process each part
+        for _, part in ipairs(parts) do
+            local entity = EntityUtils.getEntityFromPart(part)
+
+            if entity and not seenEntities[entity] and not isWaypoint(self, part) then
+                seenEntities[entity] = true
+
+                -- Find which segment this entity is closest to
+                local entityPos = EntityUtils.getPosition(entity)
+                local closestSegment, closestPoint, distance = state.path:findClosestSegment(entityPos)
+
+                if distance <= radius then
+                    table.insert(results, {
+                        entity = entity,
+                        segment = closestSegment,
+                        distance = distance,
+                    })
+                end
             end
         end
-        return false
-    end,
+
+        return results
+    end
 
     --[[
-        Apply conveyor movement to a player character.
-        Players need special handling because Humanoid movement overrides velocity.
-
-        @param entity Model - The player character
-        @param rootPart BasePart - The HumanoidRootPart
-        @param targetVelocity Vector3 - The desired velocity
+        Private: Main conveyor update - find entities and apply forces.
     --]]
-    _applyPlayerForce = function(self, entity, rootPart, targetVelocity)
-        -- Use VectorForce for player movement - this ADDS to player movement rather than
-        -- overriding it. This allows players to walk against the conveyor (slower) or
-        -- with it (faster).
-        local attachment = rootPart:FindFirstChild("ConveyorAttachment")
-        if not attachment then
-            attachment = Instance.new("Attachment")
-            attachment.Name = "ConveyorAttachment"
-            attachment.Parent = rootPart
+    local function updateConveyor(self)
+        local state = getState(self)
+        if not state.enabled then return end
+
+        local detectionRadius = self:getAttribute("DetectionRadius") or 2
+        local affectsPlayers = self:getAttribute("AffectsPlayers")
+
+        -- Find all entities near the path
+        local nearbyEntities = findNearbyEntities(self, detectionRadius)
+
+        -- Track new entities, update existing, remove gone
+        local currentEntities = {}
+
+        for _, entityData in ipairs(nearbyEntities) do
+            local entity = entityData.entity
+            currentEntities[entity] = true
+
+            -- Check filter
+            if not EntityUtils.passesFilter(entity, state.filter) then
+                continue
+            end
+
+            -- Check if player and whether to affect
+            if EntityUtils.isPlayer(entity) and not affectsPlayers then
+                continue
+            end
+
+            -- Track or update
+            if not state.trackedEntities[entity] then
+                -- New entity
+                state.trackedEntities[entity] = {
+                    segment = entityData.segment,
+                    enterTime = os.clock(),
+                }
+                onEntityEnter(self, entity, entityData.segment)
+            else
+                -- Check for segment change (waypoint transition)
+                local prevSegment = state.trackedEntities[entity].segment
+                local newSegment = entityData.segment
+
+                if prevSegment ~= newSegment then
+                    -- Entity has transitioned to a new segment
+                    onSegmentChanged(self, entity, prevSegment, newSegment)
+                    state.trackedEntities[entity].segment = newSegment
+                end
+            end
+
+            -- Apply conveyor force
+            applyConveyorForce(self, entity, entityData.segment)
         end
 
-        local vectorForce = rootPart:FindFirstChild("ConveyorVectorForce")
-        if not vectorForce then
-            vectorForce = Instance.new("VectorForce")
-            vectorForce.Name = "ConveyorVectorForce"
-            vectorForce.ApplyAtCenterOfMass = true
-            vectorForce.RelativeTo = Enum.ActuatorRelativeTo.World
-            vectorForce.Attachment0 = attachment
-            vectorForce.Parent = rootPart
+        -- Remove entities that left
+        for entity, _ in pairs(state.trackedEntities) do
+            if not currentEntities[entity] then
+                onEntityExit(self, entity)
+                state.trackedEntities[entity] = nil
+            end
         end
-
-        -- Calculate force to achieve desired conveyor effect
-        -- Force = mass * acceleration, but we want to push at a steady rate
-        -- Use mass * targetSpeed * multiplier to get a force that feels like a conveyor
-        local mass = rootPart.AssemblyMass
-        local forceMultiplier = 8  -- Tuned for responsive feel without being too strong
-        local force = Vector3.new(
-            targetVelocity.X * mass * forceMultiplier,
-            0,  -- No vertical force
-            targetVelocity.Z * mass * forceMultiplier
-        )
-
-        vectorForce.Force = force
-    end,
+    end
 
     --[[
-        Clean up player conveyor constraints when they exit.
+        Private: Start the physics update loop.
     --]]
-    _cleanupPlayerForce = function(self, entity)
-        local primaryPart = EntityUtils.getPrimaryPart(entity)
-        if primaryPart then
-            local vectorForce = primaryPart:FindFirstChild("ConveyorVectorForce")
-            if vectorForce then
-                vectorForce:Destroy()
+    local function startUpdateLoop(self)
+        local state = getState(self)
+        local lastUpdate = 0
+        local updateRate = self:getAttribute("UpdateRate") or 0.1
+
+        state.updateConnection = RunService.Heartbeat:Connect(function(dt)
+            lastUpdate = lastUpdate + dt
+            if lastUpdate >= updateRate then
+                lastUpdate = 0
+                updateConveyor(self)
             end
-            local attachment = primaryPart:FindFirstChild("ConveyorAttachment")
-            if attachment then
-                attachment:Destroy()
-            end
+        end)
+    end
+
+    --[[
+        Private: Disable the conveyor and stop the update loop.
+    --]]
+    disable = function(self)
+        local state = getState(self)
+        if not state.enabled then return end
+
+        state.enabled = false
+
+        -- Stop update loop
+        if state.updateConnection then
+            state.updateConnection:Disconnect()
+            state.updateConnection = nil
         end
-    end,
-})
+
+        -- Clear tracked entities
+        for entity, _ in pairs(state.trackedEntities) do
+            onEntityExit(self, entity)
+        end
+        state.trackedEntities = {}
+    end
+
+    --[[
+        Private: Enable the conveyor and start the update loop.
+    --]]
+    local function enable(self)
+        local state = getState(self)
+        if state.enabled then return end
+        if state.path:getWaypointCount() < 2 then
+            self.Err:Fire({ reason = "no_path", message = "Conveyor requires at least 2 waypoints" })
+            return
+        end
+
+        state.enabled = true
+        startUpdateLoop(self)
+    end
+
+    ----------------------------------------------------------------------------
+    -- PUBLIC INTERFACE
+    -- Only this table exists on the node.
+    ----------------------------------------------------------------------------
+
+    return {
+        name = "PathedConveyor",
+        domain = "server",
+
+        ------------------------------------------------------------------------
+        -- SYSTEM HANDLERS
+        ------------------------------------------------------------------------
+
+        Sys = {
+            onInit = function(self)
+                local state = getState(self)
+
+                -- Path infrastructure (shared with PathFollower)
+                local defaultSpeed = self:getAttribute("Speed") or 16
+                state.path = PathFollowerCore.new({ defaultSpeed = defaultSpeed })
+
+                -- Default attributes
+                if not self:getAttribute("Speed") then
+                    self:setAttribute("Speed", 16)
+                end
+                if not self:getAttribute("ForceMode") then
+                    self:setAttribute("ForceMode", "velocity")
+                end
+                if self:getAttribute("AffectsPlayers") == nil then
+                    self:setAttribute("AffectsPlayers", true)
+                end
+                if not self:getAttribute("DetectionRadius") then
+                    self:setAttribute("DetectionRadius", 2)
+                end
+                if not self:getAttribute("UpdateRate") then
+                    self:setAttribute("UpdateRate", 0.1)
+                end
+            end,
+
+            onStart = function(self)
+                -- Nothing to do on start - we wait for enable signal
+            end,
+
+            onStop = function(self)
+                disable(self)
+                cleanupState(self)  -- CRITICAL: prevents memory leak
+            end,
+        },
+
+        ------------------------------------------------------------------------
+        -- INPUT HANDLERS
+        ------------------------------------------------------------------------
+
+        In = {
+            --[[
+                Configure the conveyor path and settings.
+            --]]
+            onConfigure = function(self, data)
+                if not data then return end
+
+                local state = getState(self)
+
+                -- Set waypoints
+                if data.waypoints then
+                    local success, err = state.path:setWaypoints(data.waypoints)
+                    if not success then
+                        self.Err:Fire({ reason = "invalid_waypoints", message = err })
+                        return
+                    end
+                end
+
+                -- Set default speed
+                if data.speed then
+                    self:setAttribute("Speed", data.speed)
+                    state.path:setDefaultSpeed(data.speed)
+                end
+
+                -- Set filter
+                if data.filter then
+                    state.filter = data.filter
+                end
+
+                -- Set other attributes
+                if data.affectsPlayers ~= nil then
+                    self:setAttribute("AffectsPlayers", data.affectsPlayers)
+                end
+
+                if data.forceMode then
+                    self:setAttribute("ForceMode", data.forceMode)
+                end
+
+                if data.detectionRadius then
+                    self:setAttribute("DetectionRadius", data.detectionRadius)
+                end
+
+                if data.updateRate then
+                    self:setAttribute("UpdateRate", data.updateRate)
+                end
+            end,
+
+            --[[
+                Change conveyor speed.
+            --]]
+            onSetSpeed = function(self, data)
+                if not data then return end
+
+                local state = getState(self)
+
+                if data.segments and type(data.segments) == "table" then
+                    -- Set multiple segment speeds
+                    state.path:setSegmentSpeeds(data.segments)
+                elseif data.segment and data.speed then
+                    -- Set single segment speed
+                    state.path:setSegmentSpeed(data.segment, data.speed)
+                elseif data.speed and type(data.speed) == "number" then
+                    -- Set default speed for all
+                    self:setAttribute("Speed", data.speed)
+                    state.path:setDefaultSpeed(data.speed)
+                end
+            end,
+
+            --[[
+                Toggle conveyor direction.
+            --]]
+            onReverse = function(self)
+                local state = getState(self)
+                state.path:reverse()
+                self.Out:Fire("directionChanged", {
+                    forward = state.path:isForward(),
+                })
+            end,
+
+            --[[
+                Explicitly set conveyor direction.
+            --]]
+            onSetDirection = function(self, data)
+                local state = getState(self)
+                if data and data.forward ~= nil then
+                    state.path:setDirection(data.forward)
+                    self.Out:Fire("directionChanged", {
+                        forward = state.path:isForward(),
+                    })
+                end
+            end,
+
+            --[[
+                Enable the conveyor.
+            --]]
+            onEnable = function(self)
+                enable(self)
+            end,
+
+            --[[
+                Disable the conveyor.
+            --]]
+            onDisable = function(self)
+                disable(self)
+            end,
+        },
+
+        ------------------------------------------------------------------------
+        -- OUTPUT SIGNALS
+        ------------------------------------------------------------------------
+
+        Out = {
+            entityEntered = {},    -- { entity, entityId, segment }
+            entityExited = {},     -- { entity, entityId }
+            segmentChanged = {},   -- { entity, entityId, fromSegment, toSegment, waypoint, waypointIndex }
+            directionChanged = {}, -- { forward }
+        },
+
+        -- Err (detour) signals documented in header
+    }
+end)
 
 return PathedConveyor

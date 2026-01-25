@@ -351,6 +351,123 @@ test("Child can override parent handlers", "Node", function()
 end)
 
 --------------------------------------------------------------------------------
+-- TEST CASES: FACTORY PATTERN (Closure-Based Privacy)
+--------------------------------------------------------------------------------
+
+test("Node.extend accepts factory function", "Node Factory", function()
+    local FactoryNode = Node.extend(function(parent)
+        return {
+            name = "FactoryNode",
+            domain = "server",
+        }
+    end)
+    assert_eq(FactoryNode.name, "FactoryNode", "Factory should produce named class")
+    assert_eq(FactoryNode.domain, "server", "Factory should set domain")
+end)
+
+test("Factory pattern receives parent class", "Node Factory", function()
+    local receivedParent = nil
+    local FactoryNode = Node.extend(function(parent)
+        receivedParent = parent
+        return { name = "FactoryNode" }
+    end)
+    assert_eq(receivedParent, Node, "Factory should receive Node as parent")
+end)
+
+test("Factory pattern works with inheritance", "Node Factory", function()
+    local BaseNode = Node.extend({ name = "BaseNode" })
+    local receivedParent = nil
+    local ChildNode = BaseNode.extend(function(parent)
+        receivedParent = parent
+        return { name = "ChildNode" }
+    end)
+    assert_eq(receivedParent, BaseNode, "Factory should receive BaseNode as parent")
+    assert_eq(ChildNode._parent, BaseNode, "Child should reference BaseNode as parent")
+end)
+
+test("Factory pattern private methods not on instance", "Node Factory", function()
+    local FactoryNode = Node.extend(function(parent)
+        -- Private method in closure scope
+        local function privateHelper(self)
+            return "private"
+        end
+
+        return {
+            name = "FactoryNode",
+            In = {
+                onTest = function(self, data)
+                    return privateHelper(self)
+                end,
+            },
+        }
+    end)
+
+    local inst = FactoryNode:new({ id = "test_private" })
+    -- Private method should not exist on instance
+    assert_nil(inst.privateHelper, "Private method should not be on instance")
+    assert_nil(inst._privateHelper, "Private method should not be on instance with underscore")
+    -- But In handler should work
+    assert_not_nil(inst.In.onTest, "In handler should exist")
+end)
+
+test("Factory pattern supports instanceStates pattern", "Node Factory", function()
+    local FactoryNode = Node.extend(function(parent)
+        local instanceStates = {}
+
+        local function getState(self)
+            if not instanceStates[self.id] then
+                instanceStates[self.id] = { counter = 0 }
+            end
+            return instanceStates[self.id]
+        end
+
+        local function cleanupState(self)
+            instanceStates[self.id] = nil
+        end
+
+        return {
+            name = "FactoryNode",
+            Sys = {
+                onInit = function(self)
+                    getState(self)  -- Initialize state
+                end,
+                onStop = function(self)
+                    cleanupState(self)
+                end,
+            },
+            In = {
+                onIncrement = function(self)
+                    local state = getState(self)
+                    state.counter = state.counter + 1
+                end,
+            },
+            -- Public query method (allowed)
+            getCounter = function(self)
+                local state = getState(self)
+                return state.counter
+            end,
+        }
+    end)
+
+    local inst1 = FactoryNode:new({ id = "counter1" })
+    local inst2 = FactoryNode:new({ id = "counter2" })
+    inst1.Sys.onInit(inst1)
+    inst2.Sys.onInit(inst2)
+
+    -- Each instance has isolated state
+    inst1.In.onIncrement(inst1)
+    inst1.In.onIncrement(inst1)
+    inst2.In.onIncrement(inst2)
+
+    assert_eq(inst1:getCounter(), 2, "Instance 1 should have counter 2")
+    assert_eq(inst2:getCounter(), 1, "Instance 2 should have counter 1")
+
+    -- State should be private
+    assert_nil(inst1.instanceStates, "instanceStates should not be on instance")
+    assert_nil(inst1._instanceStates, "instanceStates should not be on instance")
+end)
+
+--------------------------------------------------------------------------------
 -- TEST CASES: NODE INSTANCES
 --------------------------------------------------------------------------------
 

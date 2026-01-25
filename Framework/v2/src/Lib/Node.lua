@@ -261,7 +261,18 @@ end
     @return function - extend function for the parent class
 --]]
 local function makeExtendFunction(parent)
-    return function(definition)
+    return function(definitionOrFactory)
+        local definition
+
+        -- Support both table and factory function patterns
+        -- Factory pattern: Node.extend(function(parent) return { name = "...", ... } end)
+        -- Table pattern:   Node.extend({ name = "...", ... })
+        if type(definitionOrFactory) == "function" then
+            definition = definitionOrFactory(parent)
+        else
+            definition = definitionOrFactory
+        end
+
         -- Validate definition
         if not definition then
             error("[Node.extend] Definition required")

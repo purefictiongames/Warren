@@ -133,397 +133,77 @@
 
 local Node = require(script.Parent.Parent.Node)
 
-local NodePool = Node.extend({
-    name = "NodePool",
-    domain = "server",
+--------------------------------------------------------------------------------
+-- NODEPOOL NODE (Closure-Based Privacy Pattern)
+--------------------------------------------------------------------------------
 
+local NodePool = Node.extend(function(parent)
     ----------------------------------------------------------------------------
-    -- LIFECYCLE
-    ----------------------------------------------------------------------------
-
-    Sys = {
-        onInit = function(self)
-            -- Pool state
-            self._available = {}        -- Array of available nodes (stack)
-            self._inUse = {}            -- { [entityId] = { node, nodeId, checkoutTime } }
-            self._allNodes = {}         -- { [nodeId] = node } all nodes in pool
-            self._lastActivity = {}     -- { [nodeId] = timestamp } for shrink
-            self._nodeCounter = 0       -- For generating unique IDs
-            self._configured = false
-            self._shrinkTask = nil
-
-            -- Configuration (set via onConfigure)
-            self._nodeClass = nil       -- The class to instantiate
-            self._nodeClassName = nil   -- String name for IDs
-            self._poolMode = "elastic"
-            self._poolSize = 5
-            self._minSize = 0
-            self._maxSize = 50
-            self._shrinkDelay = 10
-            self._nodeConfig = {}
-            self._checkoutSignals = {}
-            self._releaseOn = nil
-            self._context = {}
-
-            -- Default attributes
-            if not self:getAttribute("PoolMode") then
-                self:setAttribute("PoolMode", "elastic")
-            end
-        end,
-
-        onStart = function(self)
-            -- Start shrink monitor for elastic mode
-            if self._poolMode == "elastic" and self._shrinkDelay > 0 then
-                self:_startShrinkMonitor()
-            end
-        end,
-
-        onStop = function(self)
-            -- Stop shrink monitor
-            if self._shrinkTask then
-                task.cancel(self._shrinkTask)
-                self._shrinkTask = nil
-            end
-
-            -- Stop all nodes
-            for nodeId, node in pairs(self._allNodes) do
-                if node.Sys and node.Sys.onStop then
-                    node.Sys.onStop(node)
-                end
-            end
-        end,
-    },
-
-    ----------------------------------------------------------------------------
-    -- INPUT HANDLERS
+    -- PRIVATE SCOPE
+    -- Nothing here exists on the node instance.
     ----------------------------------------------------------------------------
 
-    In = {
-        --[[
-            Configure the pool.
-        --]]
-        onConfigure = function(self, data)
-            if not data then return end
+    -- Per-instance state registry (keyed by instance.id)
+    local instanceStates = {}
 
-            -- Resolve node class
-            if data.nodeClass then
-                if type(data.nodeClass) == "string" then
-                    -- Look up in Components
-                    local Components = require(script.Parent)
-                    self._nodeClass = Components[data.nodeClass]
-                    self._nodeClassName = data.nodeClass
-                    if not self._nodeClass then
-                        self.Err:Fire({
-                            reason = "invalid_class",
-                            message = "Unknown node class: " .. data.nodeClass,
-                            poolId = self.id,
-                        })
-                        return
-                    end
-                else
-                    -- Direct class reference
-                    self._nodeClass = data.nodeClass
-                    self._nodeClassName = data.nodeClass.name or "PooledNode"
-                end
-            end
+    local function getState(self)
+        if not instanceStates[self.id] then
+            instanceStates[self.id] = {
+                -- Pool state
+                available = {},        -- Array of available nodes (stack)
+                inUse = {},            -- { [entityId] = { node, nodeId, checkoutTime } }
+                allNodes = {},         -- { [nodeId] = node } all nodes in pool
+                lastActivity = {},     -- { [nodeId] = timestamp } for shrink
+                nodeCounter = 0,       -- For generating unique IDs
+                configured = false,
+                shrinkTask = nil,
 
-            -- Pool mode
-            if data.poolMode then
-                self._poolMode = data.poolMode
-                self:setAttribute("PoolMode", data.poolMode)
-            end
-
-            -- Fixed mode settings
-            if data.poolSize then
-                self._poolSize = data.poolSize
-            end
-
-            -- Elastic mode settings
-            if data.minSize then
-                self._minSize = data.minSize
-            end
-            if data.maxSize then
-                self._maxSize = data.maxSize
-            end
-            if data.shrinkDelay then
-                self._shrinkDelay = data.shrinkDelay
-            end
-
-            -- Node configuration
-            if data.nodeConfig then
-                self._nodeConfig = data.nodeConfig
-            end
-
-            -- Checkout signals
-            if data.checkoutSignals then
-                self._checkoutSignals = data.checkoutSignals
-            end
-
-            -- Auto-release signal
-            if data.releaseOn then
-                self._releaseOn = data.releaseOn
-            end
-
-            -- Shared context
-            if data.context then
-                self._context = data.context
-            end
-
-            self._configured = true
-
-            -- Pre-allocate for fixed mode
-            if self._poolMode == "fixed" then
-                self:_preallocate(self._poolSize)
-            elseif self._poolMode == "elastic" and self._minSize > 0 then
-                -- Pre-allocate minimum for elastic
-                self:_preallocate(self._minSize)
-            end
-        end,
-
-        --[[
-            Check out a node from the pool.
-        --]]
-        onCheckout = function(self, data)
-            if not self._configured or not self._nodeClass then
-                self.Err:Fire({
-                    reason = "not_configured",
-                    message = "Pool not configured. Call onConfigure first.",
-                    poolId = self.id,
-                })
-                return
-            end
-
-            data = data or {}
-            local entityId = data.entityId or ("entity_" .. os.clock())
-
-            -- Check if already checked out
-            if self._inUse[entityId] then
-                self.Err:Fire({
-                    reason = "already_checked_out",
-                    message = "Entity already has a checked out node: " .. entityId,
-                    poolId = self.id,
-                    entityId = entityId,
-                })
-                return
-            end
-
-            -- Try to get an available node
-            local node = self:_getAvailableNode()
-
-            if not node then
-                -- No available nodes
-                local totalNodes = self:_getTotalNodeCount()
-
-                if self._poolMode == "elastic" and totalNodes < self._maxSize then
-                    -- Create a new node
-                    node = self:_createNode()
-                else
-                    -- At capacity, fire exhausted
-                    self.Out:Fire("exhausted", {
-                        entityId = entityId,
-                        poolId = self.id,
-                        currentSize = totalNodes,
-                        maxSize = self._maxSize,
-                    })
-                    return
-                end
-            end
-
-            -- Mark as in use
-            self._inUse[entityId] = {
-                node = node,
-                nodeId = node.id,
-                checkoutTime = os.clock(),
+                -- Configuration (set via onConfigure)
+                nodeClass = nil,       -- The class to instantiate
+                nodeClassName = nil,   -- String name for IDs
+                poolMode = "elastic",
+                poolSize = 5,
+                minSize = 0,
+                maxSize = 50,
+                shrinkDelay = 10,
+                nodeConfig = {},
+                checkoutSignals = {},
+                releaseOn = nil,
+                context = {},
             }
+        end
+        return instanceStates[self.id]
+    end
 
-            -- Send checkout signals to the node
-            self:_sendCheckoutSignals(node, data)
-
-            -- Setup auto-release listener
-            if self._releaseOn then
-                self:_setupAutoRelease(node, entityId)
-            end
-
-            -- Fire checkedOut
-            self.Out:Fire("checkedOut", {
-                nodeId = node.id,
-                entityId = entityId,
-                node = node,
-                poolId = self.id,
-            })
-        end,
-
-        --[[
-            Release a node back to the pool.
-        --]]
-        onRelease = function(self, data)
-            if not data or not data.entityId then
-                return
-            end
-
-            self:_releaseNode(data.entityId)
-        end,
-
-        --[[
-            Release all checked-out nodes.
-        --]]
-        onReleaseAll = function(self)
-            local toRelease = {}
-            for entityId in pairs(self._inUse) do
-                table.insert(toRelease, entityId)
-            end
-
-            for _, entityId in ipairs(toRelease) do
-                self:_releaseNode(entityId)
-            end
-        end,
-
-        --[[
-            Destroy all nodes and reset pool.
-        --]]
-        onDestroy = function(self)
-            -- Stop all nodes
-            for nodeId, node in pairs(self._allNodes) do
-                if node.Sys and node.Sys.onStop then
-                    node.Sys.onStop(node)
-                end
-            end
-
-            -- Clear state
-            self._available = {}
-            self._inUse = {}
-            self._allNodes = {}
-            self._lastActivity = {}
-            self._nodeCounter = 0
-        end,
-    },
-
-    ----------------------------------------------------------------------------
-    -- OUTPUT SCHEMA
-    ----------------------------------------------------------------------------
-
-    Out = {
-        checkedOut = {},    -- { nodeId, entityId, node, poolId }
-        released = {},      -- { nodeId, entityId, poolId }
-        exhausted = {},     -- { entityId, poolId, currentSize, maxSize }
-        nodeCreated = {},   -- { nodeId, poolId }
-        nodeDestroyed = {}, -- { nodeId, poolId }
-    },
-
-    ----------------------------------------------------------------------------
-    -- PRIVATE METHODS
-    ----------------------------------------------------------------------------
+    local function cleanupState(self)
+        instanceStates[self.id] = nil
+    end
 
     --[[
-        Get total node count (available + in use).
+        Private: Get total node count (available + in use).
     --]]
-    _getTotalNodeCount = function(self)
+    local function getTotalNodeCount(self)
+        local state = getState(self)
         local count = 0
-        for _ in pairs(self._allNodes) do
+        for _ in pairs(state.allNodes) do
             count = count + 1
         end
         return count
-    end,
+    end
+
+    -- Forward declarations for mutual recursion
+    local createNode
+    local releaseNode
+    local checkForShrink
 
     --[[
-        Pre-allocate nodes.
+        Private: Reset a node for reuse.
     --]]
-    _preallocate = function(self, count)
-        for i = 1, count do
-            local node = self:_createNode()
-            if node then
-                table.insert(self._available, node)
-            end
-        end
-    end,
-
-    --[[
-        Create a new pooled node.
-    --]]
-    _createNode = function(self)
-        if not self._nodeClass then
-            return nil
-        end
-
-        self._nodeCounter = self._nodeCounter + 1
-        local nodeId = self.id .. "_" .. self._nodeClassName .. "_" .. self._nodeCounter
-
-        local node = self._nodeClass:new({
-            id = nodeId,
-        })
-
-        -- Initialize
-        if node.Sys and node.Sys.onInit then
-            node.Sys.onInit(node)
-        end
-
-        -- Configure
-        if node.In and node.In.onConfigure and self._nodeConfig then
-            node.In.onConfigure(node, self._nodeConfig)
-        end
-
-        -- Track
-        self._allNodes[nodeId] = node
-        self._lastActivity[nodeId] = os.clock()
-
-        -- Fire nodeCreated
-        self.Out:Fire("nodeCreated", {
-            nodeId = nodeId,
-            poolId = self.id,
-        })
-
-        return node
-    end,
-
-    --[[
-        Get an available node from the pool.
-    --]]
-    _getAvailableNode = function(self)
-        if #self._available > 0 then
-            return table.remove(self._available)
-        end
-        return nil
-    end,
-
-    --[[
-        Release a node back to the pool.
-    --]]
-    _releaseNode = function(self, entityId)
-        local record = self._inUse[entityId]
-        if not record then
-            return false
-        end
-
-        local node = record.node
-        local nodeId = record.nodeId
-
-        -- Clear from in-use
-        self._inUse[entityId] = nil
-
-        -- Reset node state
-        self:_resetNode(node)
-
-        -- Update activity timestamp
-        self._lastActivity[nodeId] = os.clock()
-
-        -- Return to available pool
-        table.insert(self._available, node)
-
-        -- Fire released
-        self.Out:Fire("released", {
-            nodeId = nodeId,
-            entityId = entityId,
-            poolId = self.id,
-        })
-
-        return true
-    end,
-
-    --[[
-        Reset a node for reuse.
-    --]]
-    _resetNode = function(self, node)
+    local function resetNode(self, node)
         -- Clear internal state that PathFollower or other nodes might have
+        -- Note: These are properties that may have been set on nodes before
+        -- the closure migration. After full migration, nodes won't have
+        -- these properties directly accessible anyway.
         node._entity = nil
         node._entityId = nil
         node._waypoints = nil
@@ -558,13 +238,114 @@ local NodePool = Node.extend({
         end
 
         node.Out = OutChannel.new(node)
-    end,
+    end
 
     --[[
-        Send checkout signals to a node.
+        Private: Pre-allocate nodes.
     --]]
-    _sendCheckoutSignals = function(self, node, checkoutData)
-        for _, signalDef in ipairs(self._checkoutSignals) do
+    local function preallocate(self, count)
+        local state = getState(self)
+        for i = 1, count do
+            local node = createNode(self)
+            if node then
+                table.insert(state.available, node)
+            end
+        end
+    end
+
+    --[[
+        Private: Create a new pooled node.
+    --]]
+    createNode = function(self)
+        local state = getState(self)
+
+        if not state.nodeClass then
+            return nil
+        end
+
+        state.nodeCounter = state.nodeCounter + 1
+        local nodeId = self.id .. "_" .. state.nodeClassName .. "_" .. state.nodeCounter
+
+        local node = state.nodeClass:new({
+            id = nodeId,
+        })
+
+        -- Initialize
+        if node.Sys and node.Sys.onInit then
+            node.Sys.onInit(node)
+        end
+
+        -- Configure
+        if node.In and node.In.onConfigure and state.nodeConfig then
+            node.In.onConfigure(node, state.nodeConfig)
+        end
+
+        -- Track
+        state.allNodes[nodeId] = node
+        state.lastActivity[nodeId] = os.clock()
+
+        -- Fire nodeCreated
+        self.Out:Fire("nodeCreated", {
+            nodeId = nodeId,
+            poolId = self.id,
+        })
+
+        return node
+    end
+
+    --[[
+        Private: Get an available node from the pool.
+    --]]
+    local function getAvailableNode(self)
+        local state = getState(self)
+        if #state.available > 0 then
+            return table.remove(state.available)
+        end
+        return nil
+    end
+
+    --[[
+        Private: Release a node back to the pool.
+    --]]
+    releaseNode = function(self, entityId)
+        local state = getState(self)
+        local record = state.inUse[entityId]
+        if not record then
+            return false
+        end
+
+        local node = record.node
+        local nodeId = record.nodeId
+
+        -- Clear from in-use
+        state.inUse[entityId] = nil
+
+        -- Reset node state
+        resetNode(self, node)
+
+        -- Update activity timestamp
+        state.lastActivity[nodeId] = os.clock()
+
+        -- Return to available pool
+        table.insert(state.available, node)
+
+        -- Fire released
+        self.Out:Fire("released", {
+            nodeId = nodeId,
+            entityId = entityId,
+            poolId = self.id,
+        })
+
+        return true
+    end
+
+    --[[
+        Private: Send checkout signals to a node.
+    --]]
+    local function sendCheckoutSignals(self, node, checkoutData)
+        local state = getState(self)
+
+        for _, signalDef in ipairs(state.checkoutSignals) do
             local signal = signalDef.signal
             local mapping = signalDef.map or {}
 
@@ -576,7 +357,7 @@ local NodePool = Node.extend({
                 if type(sourceField) == "string" and string.sub(sourceField, 1, 1) == "$" then
                     -- Context reference
                     local contextKey = string.sub(sourceField, 2)
-                    value = self._context[contextKey]
+                    value = state.context[contextKey]
                 else
                     -- Direct field from checkout data
                     value = checkoutData[sourceField]
@@ -590,13 +371,14 @@ local NodePool = Node.extend({
                 node.In[signal](node, signalData)
             end
         end
-    end,
+    end
 
     --[[
-        Setup auto-release listener on a node.
+        Private: Setup auto-release listener on a node.
     --]]
-    _setupAutoRelease = function(self, node, entityId)
-        local releaseSignal = self._releaseOn
+    local function setupAutoRelease(self, node, entityId)
+        local state = getState(self)
+        local releaseSignal = state.releaseOn
         local poolSelf = self
 
         -- Store original Out channel
@@ -616,49 +398,33 @@ local NodePool = Node.extend({
             -- Check for release signal
             if signal == releaseSignal then
                 -- Auto-release this node
-                poolSelf:_releaseNode(entityId)
+                releaseNode(poolSelf, entityId)
             end
         end
 
         node.Out = wrapper
-    end,
+    end
 
     --[[
-        Start the shrink monitor for elastic mode.
+        Private: Check for nodes that can be shrunk (destroyed).
     --]]
-    _startShrinkMonitor = function(self)
-        self._shrinkTask = task.spawn(function()
-            while true do
-                task.wait(self._shrinkDelay / 2)  -- Check at half the shrink delay
-
-                if self._poolMode ~= "elastic" then
-                    break
-                end
-
-                self:_checkForShrink()
-            end
-        end)
-    end,
-
-    --[[
-        Check for nodes that can be shrunk (destroyed).
-    --]]
-    _checkForShrink = function(self)
+    checkForShrink = function(self)
+        local state = getState(self)
         local now = os.clock()
-        local totalNodes = self:_getTotalNodeCount()
+        local totalNodes = getTotalNodeCount(self)
 
         -- Only shrink if above minimum
-        if totalNodes <= self._minSize then
+        if totalNodes <= state.minSize then
             return
         end
 
         -- Check available nodes for idle time
         local toRemove = {}
-        for i, node in ipairs(self._available) do
-            local lastActive = self._lastActivity[node.id] or 0
+        for i, node in ipairs(state.available) do
+            local lastActive = state.lastActivity[node.id] or 0
             local idleTime = now - lastActive
 
-            if idleTime >= self._shrinkDelay and totalNodes - #toRemove > self._minSize then
+            if idleTime >= state.shrinkDelay and totalNodes - #toRemove > state.minSize then
                 table.insert(toRemove, { index = i, node = node })
             end
         end
@@ -671,7 +437,7 @@ local NodePool = Node.extend({
             local nodeId = node.id
 
             -- Remove from available
-            table.remove(self._available, item.index)
+            table.remove(state.available, item.index)
 
             -- Stop the node
             if node.Sys and node.Sys.onStop then
@@ -679,8 +445,8 @@ local NodePool = Node.extend({
             end
 
             -- Remove from tracking
-            self._allNodes[nodeId] = nil
-            self._lastActivity[nodeId] = nil
+            state.allNodes[nodeId] = nil
+            state.lastActivity[nodeId] = nil
 
             -- Fire nodeDestroyed
             self.Out:Fire("nodeDestroyed", {
@@ -688,44 +454,341 @@ local NodePool = Node.extend({
                 poolId = self.id,
             })
         end
-    end,
-
-    ----------------------------------------------------------------------------
-    -- PUBLIC QUERY METHODS
-    ----------------------------------------------------------------------------
+    end
 
     --[[
-        Get pool statistics.
+        Private: Start the shrink monitor for elastic mode.
     --]]
-    getStats = function(self)
-        local inUseCount = 0
-        for _ in pairs(self._inUse) do
-            inUseCount = inUseCount + 1
-        end
+    local function startShrinkMonitor(self)
+        local state = getState(self)
 
-        return {
-            available = #self._available,
-            inUse = inUseCount,
-            total = self:_getTotalNodeCount(),
-            mode = self._poolMode,
-            minSize = self._minSize,
-            maxSize = self._maxSize,
-        }
-    end,
+        state.shrinkTask = task.spawn(function()
+            while true do
+                task.wait(state.shrinkDelay / 2)  -- Check at half the shrink delay
 
-    --[[
-        Check if pool has available nodes.
-    --]]
-    hasAvailable = function(self)
-        if #self._available > 0 then
-            return true
-        end
-        -- In elastic mode, check if we can grow
-        if self._poolMode == "elastic" then
-            return self:_getTotalNodeCount() < self._maxSize
-        end
-        return false
-    end,
-})
+                if state.poolMode ~= "elastic" then
+                    break
+                end
+
+                checkForShrink(self)
+            end
+        end)
+    end
+
+    ----------------------------------------------------------------------------
+    -- PUBLIC INTERFACE
+    -- Only this table exists on the node.
+    ----------------------------------------------------------------------------
+
+    return {
+        name = "NodePool",
+        domain = "server",
+
+        ------------------------------------------------------------------------
+        -- SYSTEM HANDLERS
+        ------------------------------------------------------------------------
+
+        Sys = {
+            onInit = function(self)
+                local state = getState(self)
+
+                -- Default attributes
+                if not self:getAttribute("PoolMode") then
+                    self:setAttribute("PoolMode", "elastic")
+                end
+            end,
+
+            onStart = function(self)
+                local state = getState(self)
+
+                -- Start shrink monitor for elastic mode
+                if state.poolMode == "elastic" and state.shrinkDelay > 0 then
+                    startShrinkMonitor(self)
+                end
+            end,
+
+            onStop = function(self)
+                local state = getState(self)
+
+                -- Stop shrink monitor
+                if state.shrinkTask then
+                    task.cancel(state.shrinkTask)
+                    state.shrinkTask = nil
+                end
+
+                -- Stop all nodes
+                for nodeId, node in pairs(state.allNodes) do
+                    if node.Sys and node.Sys.onStop then
+                        node.Sys.onStop(node)
+                    end
+                end
+
+                cleanupState(self)  -- CRITICAL: prevents memory leak
+            end,
+        },
+
+        ------------------------------------------------------------------------
+        -- INPUT HANDLERS
+        ------------------------------------------------------------------------
+
+        In = {
+            --[[
+                Configure the pool.
+            --]]
+            onConfigure = function(self, data)
+                if not data then return end
+
+                local state = getState(self)
+
+                -- Resolve node class
+                if data.nodeClass then
+                    if type(data.nodeClass) == "string" then
+                        -- Look up in Components
+                        local Components = require(script.Parent)
+                        state.nodeClass = Components[data.nodeClass]
+                        state.nodeClassName = data.nodeClass
+                        if not state.nodeClass then
+                            self.Err:Fire({
+                                reason = "invalid_class",
+                                message = "Unknown node class: " .. data.nodeClass,
+                                poolId = self.id,
+                            })
+                            return
+                        end
+                    else
+                        -- Direct class reference
+                        state.nodeClass = data.nodeClass
+                        state.nodeClassName = data.nodeClass.name or "PooledNode"
+                    end
+                end
+
+                -- Pool mode
+                if data.poolMode then
+                    state.poolMode = data.poolMode
+                    self:setAttribute("PoolMode", data.poolMode)
+                end
+
+                -- Fixed mode settings
+                if data.poolSize then
+                    state.poolSize = data.poolSize
+                end
+
+                -- Elastic mode settings
+                if data.minSize then
+                    state.minSize = data.minSize
+                end
+                if data.maxSize then
+                    state.maxSize = data.maxSize
+                end
+                if data.shrinkDelay then
+                    state.shrinkDelay = data.shrinkDelay
+                end
+
+                -- Node configuration
+                if data.nodeConfig then
+                    state.nodeConfig = data.nodeConfig
+                end
+
+                -- Checkout signals
+                if data.checkoutSignals then
+                    state.checkoutSignals = data.checkoutSignals
+                end
+
+                -- Auto-release signal
+                if data.releaseOn then
+                    state.releaseOn = data.releaseOn
+                end
+
+                -- Shared context
+                if data.context then
+                    state.context = data.context
+                end
+
+                state.configured = true
+
+                -- Pre-allocate for fixed mode
+                if state.poolMode == "fixed" then
+                    preallocate(self, state.poolSize)
+                elseif state.poolMode == "elastic" and state.minSize > 0 then
+                    -- Pre-allocate minimum for elastic
+                    preallocate(self, state.minSize)
+                end
+            end,
+
+            --[[
+                Check out a node from the pool.
+            --]]
+            onCheckout = function(self, data)
+                local state = getState(self)
+
+                if not state.configured or not state.nodeClass then
+                    self.Err:Fire({
+                        reason = "not_configured",
+                        message = "Pool not configured. Call onConfigure first.",
+                        poolId = self.id,
+                    })
+                    return
+                end
+
+                data = data or {}
+                local entityId = data.entityId or ("entity_" .. os.clock())
+
+                -- Check if already checked out
+                if state.inUse[entityId] then
+                    self.Err:Fire({
+                        reason = "already_checked_out",
+                        message = "Entity already has a checked out node: " .. entityId,
+                        poolId = self.id,
+                        entityId = entityId,
+                    })
+                    return
+                end
+
+                -- Try to get an available node
+                local node = getAvailableNode(self)
+
+                if not node then
+                    -- No available nodes
+                    local totalNodes = getTotalNodeCount(self)
+
+                    if state.poolMode == "elastic" and totalNodes < state.maxSize then
+                        -- Create a new node
+                        node = createNode(self)
+                    else
+                        -- At capacity, fire exhausted
+                        self.Out:Fire("exhausted", {
+                            entityId = entityId,
+                            poolId = self.id,
+                            currentSize = totalNodes,
+                            maxSize = state.maxSize,
+                        })
+                        return
+                    end
+                end
+
+                -- Mark as in use
+                state.inUse[entityId] = {
+                    node = node,
+                    nodeId = node.id,
+                    checkoutTime = os.clock(),
+                }
+
+                -- Send checkout signals to the node
+                sendCheckoutSignals(self, node, data)
+
+                -- Setup auto-release listener
+                if state.releaseOn then
+                    setupAutoRelease(self, node, entityId)
+                end
+
+                -- Fire checkedOut
+                self.Out:Fire("checkedOut", {
+                    nodeId = node.id,
+                    entityId = entityId,
+                    node = node,
+                    poolId = self.id,
+                })
+            end,
+
+            --[[
+                Release a node back to the pool.
+            --]]
+            onRelease = function(self, data)
+                if not data or not data.entityId then
+                    return
+                end
+
+                releaseNode(self, data.entityId)
+            end,
+
+            --[[
+                Release all checked-out nodes.
+            --]]
+            onReleaseAll = function(self)
+                local state = getState(self)
+                local toRelease = {}
+                for entityId in pairs(state.inUse) do
+                    table.insert(toRelease, entityId)
+                end
+
+                for _, entityId in ipairs(toRelease) do
+                    releaseNode(self, entityId)
+                end
+            end,
+
+            --[[
+                Destroy all nodes and reset pool.
+            --]]
+            onDestroy = function(self)
+                local state = getState(self)
+
+                -- Stop all nodes
+                for nodeId, node in pairs(state.allNodes) do
+                    if node.Sys and node.Sys.onStop then
+                        node.Sys.onStop(node)
+                    end
+                end
+
+                -- Clear state
+                state.available = {}
+                state.inUse = {}
+                state.allNodes = {}
+                state.lastActivity = {}
+                state.nodeCounter = 0
+            end,
+        },
+
+        ------------------------------------------------------------------------
+        -- OUTPUT SIGNALS
+        ------------------------------------------------------------------------
+
+        Out = {
+            checkedOut = {},    -- { nodeId, entityId, node, poolId }
+            released = {},      -- { nodeId, entityId, poolId }
+            exhausted = {},     -- { entityId, poolId, currentSize, maxSize }
+            nodeCreated = {},   -- { nodeId, poolId }
+            nodeDestroyed = {}, -- { nodeId, poolId }
+        },
+
+        ------------------------------------------------------------------------
+        -- PUBLIC QUERY METHODS (intentionally exposed)
+        ------------------------------------------------------------------------
+
+        --[[
+            Get pool statistics.
+        --]]
+        getStats = function(self)
+            local state = getState(self)
+            local inUseCount = 0
+            for _ in pairs(state.inUse) do
+                inUseCount = inUseCount + 1
+            end
+
+            return {
+                available = #state.available,
+                inUse = inUseCount,
+                total = getTotalNodeCount(self),
+                mode = state.poolMode,
+                minSize = state.minSize,
+                maxSize = state.maxSize,
+            }
+        end,
+
+        --[[
+            Check if pool has available nodes.
+        --]]
+        hasAvailable = function(self)
+            local state = getState(self)
+            if #state.available > 0 then
+                return true
+            end
+            -- In elastic mode, check if we can grow
+            if state.poolMode == "elastic" then
+                return getTotalNodeCount(self) < state.maxSize
+            end
+            return false
+        end,
+    }
+end)
 
 return NodePool

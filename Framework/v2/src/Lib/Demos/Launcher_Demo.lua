@@ -438,34 +438,119 @@ function Demo.run(config)
     end
 
     ---------------------------------------------------------------------------
-    -- AUTO-DEMO (optional)
+    -- AUTO-DEMO (runs by default)
     ---------------------------------------------------------------------------
 
-    if config.autoDemo then
+    local autoDemo = config.autoDemo ~= false  -- Default to true
+
+    if autoDemo then
         task.spawn(function()
-            -- Continuous firing at target
-            while demoFolder.Parent do
+            print("============================================")
+            print("  SIGNAL-BASED LAUNCHER DEMO")
+            print("============================================")
+            print("")
+            print("Controller fires signals -> Launcher receives and fires")
+            print("Proper Out:Fire / In pattern")
+            print("")
+            print("Starting automated showcase...")
+            print("")
+
+            task.wait(1)
+
+            -- Phase 1: Basic firing
+            print("[Phase 1] Basic impulse firing...")
+            for i = 1, 5 do
+                if not demoFolder.Parent then return end
+                controls.fireAt()
+                task.wait(0.4)
+            end
+
+            task.wait(1)
+
+            -- Phase 2: Rapid fire with lower cooldown
+            print("[Phase 2] Rapid fire (cooldown 0.1s)...")
+            controls.setCooldown(0.1)
+            for i = 1, 10 do
+                if not demoFolder.Parent then return end
+                controls.fireAt()
+                task.wait(0.15)
+            end
+
+            task.wait(1)
+
+            -- Phase 3: Spring method
+            print("[Phase 3] Spring launch method...")
+            controls.setCooldown(0.3)
+            controls.setMethod("spring")
+            controls.setForce(120)
+            for i = 1, 5 do
+                if not demoFolder.Parent then return end
                 controls.fireAt()
                 task.wait(0.5)
             end
-        end)
-    end
 
-    print("============================================")
-    print("  SIGNAL-BASED LAUNCHER DEMO")
-    print("============================================")
-    print("")
-    print("Controller fires signals -> Launcher receives and fires")
-    print("Proper Out:Fire / In pattern")
-    print("")
-    print("Controls:")
-    print("  demo.fire()              - Fire signal (muzzle direction)")
-    print("  demo.fireAt(pos)         - Fire signal (at target)")
-    print("  demo.setForce(200)       - Configure signal (force)")
-    print("  demo.setMethod('spring') - Configure signal (method)")
-    print("  demo.setCooldown(0.2)    - Configure signal (cooldown)")
-    print("  demo.cleanup()           - Remove demo")
-    print("")
+            task.wait(1)
+
+            -- Phase 4: High power
+            print("[Phase 4] High power shots...")
+            controls.setMethod("impulse")
+            controls.setForce(200)
+            for i = 1, 5 do
+                if not demoFolder.Parent then return end
+                controls.fireAt()
+                task.wait(0.5)
+            end
+
+            task.wait(1)
+
+            -- Phase 5: Directional firing (sweep)
+            print("[Phase 5] Directional sweep...")
+            controls.setForce(100)
+            controls.setCooldown(0.2)
+            for angle = -45, 45, 15 do
+                if not demoFolder.Parent then return end
+                controls.setMuzzleAngle(-10, angle)
+                task.wait(0.1)
+                controls.fire()
+                task.wait(0.25)
+            end
+
+            -- Reset to center
+            controls.setMuzzleAngle(-10, 0)
+
+            task.wait(1)
+
+            print("")
+            print("============================================")
+            print("  DEMO COMPLETE")
+            print("============================================")
+            print("")
+            print("Manual controls available:")
+            print("  demo.fire()              - Fire signal (muzzle direction)")
+            print("  demo.fireAt(pos)         - Fire signal (at target)")
+            print("  demo.setForce(200)       - Configure signal (force)")
+            print("  demo.setMethod('spring') - Configure signal (method)")
+            print("  demo.setCooldown(0.2)    - Configure signal (cooldown)")
+            print("  demo.cleanup()           - Remove demo")
+            print("")
+        end)
+    else
+        print("============================================")
+        print("  SIGNAL-BASED LAUNCHER DEMO")
+        print("============================================")
+        print("")
+        print("Controller fires signals -> Launcher receives and fires")
+        print("Proper Out:Fire / In pattern")
+        print("")
+        print("Controls:")
+        print("  demo.fire()              - Fire signal (muzzle direction)")
+        print("  demo.fireAt(pos)         - Fire signal (at target)")
+        print("  demo.setForce(200)       - Configure signal (force)")
+        print("  demo.setMethod('spring') - Configure signal (method)")
+        print("  demo.setCooldown(0.2)    - Configure signal (cooldown)")
+        print("  demo.cleanup()           - Remove demo")
+        print("")
+    end
 
     return controls
 end

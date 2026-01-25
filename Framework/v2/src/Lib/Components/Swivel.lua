@@ -127,173 +127,219 @@
 local RunService = game:GetService("RunService")
 local Node = require(script.Parent.Parent.Node)
 
-local Swivel = Node.extend({
-    name = "Swivel",
-    domain = "server",
+--------------------------------------------------------------------------------
+-- SWIVEL NODE (Closure-Based Privacy Pattern)
+--------------------------------------------------------------------------------
 
+local Swivel = Node.extend(function(parent)
     ----------------------------------------------------------------------------
-    -- LIFECYCLE
-    ----------------------------------------------------------------------------
-
-    Sys = {
-        onInit = function(self)
-            -- Current state
-            self._currentAngle = 0
-            self._targetAngle = 0
-            self._rotating = false
-            self._direction = 1  -- 1 = forward, -1 = reverse
-
-            -- Physics objects
-            self._hinge = nil
-            self._anchorAttachment = nil
-            self._modelAttachment = nil
-            self._monitorConnection = nil
-
-            -- Default attributes
-            if not self:getAttribute("Axis") then
-                self:setAttribute("Axis", "Y")
-            end
-            if not self:getAttribute("Mode") then
-                self:setAttribute("Mode", "continuous")
-            end
-            if not self:getAttribute("Speed") then
-                self:setAttribute("Speed", 90)
-            end
-            if not self:getAttribute("StepSize") then
-                self:setAttribute("StepSize", 5)
-            end
-            if not self:getAttribute("MinAngle") then
-                self:setAttribute("MinAngle", -180)
-            end
-            if not self:getAttribute("MaxAngle") then
-                self:setAttribute("MaxAngle", 180)
-            end
-
-            -- Set up physics constraint
-            self:_setupHinge()
-        end,
-
-        onStart = function(self)
-            -- Start monitoring hinge angle for signals
-            self:_startMonitoring()
-        end,
-
-        onStop = function(self)
-            self:_stopRotation()
-            self:_stopMonitoring()
-        end,
-    },
-
-    ----------------------------------------------------------------------------
-    -- INPUT HANDLERS
+    -- PRIVATE SCOPE
+    -- Nothing here exists on the node instance.
     ----------------------------------------------------------------------------
 
-    In = {
-        --[[
-            Configure swivel settings.
-        --]]
-        onConfigure = function(self, data)
-            if not data then return end
+    -- Per-instance state registry (keyed by instance.id)
+    local instanceStates = {}
 
-            if data.axis then
-                local axis = string.upper(data.axis)
-                if axis == "X" or axis == "Y" or axis == "Z" then
-                    self:setAttribute("Axis", axis)
-                    -- Reconfigure hinge axis
-                    self:_updateHingeAxis()
-                end
-            end
+    local function getState(self)
+        if not instanceStates[self.id] then
+            instanceStates[self.id] = {
+                currentAngle = 0,
+                targetAngle = 0,
+                rotating = false,
+                direction = 1,  -- 1 = forward, -1 = reverse
+                hinge = nil,
+                anchorAttachment = nil,
+                modelAttachment = nil,
+                monitorConnection = nil,
+                createdAnchor = nil,
+            }
+        end
+        return instanceStates[self.id]
+    end
 
-            if data.mode then
-                local mode = string.lower(data.mode)
-                if mode == "continuous" or mode == "stepped" then
-                    self:setAttribute("Mode", mode)
-                end
-            end
-
-            if data.speed then
-                self:setAttribute("Speed", math.abs(data.speed))
-                -- Update hinge speed
-                if self._hinge then
-                    self._hinge.AngularSpeed = math.rad(data.speed)
-                end
-            end
-
-            if data.stepSize then
-                self:setAttribute("StepSize", math.abs(data.stepSize))
-            end
-
-            if data.minAngle then
-                self:setAttribute("MinAngle", data.minAngle)
-                if self._hinge then
-                    self._hinge.LowerAngle = data.minAngle
-                end
-            end
-
-            if data.maxAngle then
-                self:setAttribute("MaxAngle", data.maxAngle)
-                if self._hinge then
-                    self._hinge.UpperAngle = data.maxAngle
-                end
-            end
-        end,
-
-        --[[
-            Start rotating in a direction.
-            Continuous mode: uses Motor actuator type
-            Stepped mode: uses Servo to move one increment
-        --]]
-        onRotate = function(self, data)
-            data = data or {}
-            local direction = data.direction or "forward"
-            self._direction = direction == "forward" and 1 or -1
-
-            local mode = self:getAttribute("Mode") or "continuous"
-
-            if mode == "continuous" then
-                self:_startContinuousRotation()
-            else
-                -- Stepped mode: rotate one increment using servo
-                local stepSize = self:getAttribute("StepSize") or 5
-                local targetAngle = self._currentAngle + (stepSize * self._direction)
-                self:_setTargetAngle(targetAngle)
-            end
-        end,
-
-        --[[
-            Set angle directly using servo.
-        --]]
-        onSetAngle = function(self, data)
-            if not data or data.degrees == nil then return end
-            self:_setTargetAngle(data.degrees)
-        end,
-
-        --[[
-            Stop continuous rotation.
-        --]]
-        onStop = function(self)
-            self:_stopRotation()
-        end,
-    },
-
-    ----------------------------------------------------------------------------
-    -- OUTPUT SCHEMA
-    ----------------------------------------------------------------------------
-
-    Out = {
-        rotated = {},      -- { angle: number }
-        limitReached = {}, -- { limit: "min" | "max" }
-        stopped = {},      -- {}
-    },
-
-    ----------------------------------------------------------------------------
-    -- PRIVATE METHODS
-    ----------------------------------------------------------------------------
+    local function cleanupState(self)
+        instanceStates[self.id] = nil
+    end
 
     --[[
-        Set up the HingeConstraint between anchor and model.
+        Private: Get attachment CFrame for the given axis.
+        Rotates attachment so PrimaryAxis aligns with rotation axis.
     --]]
-    _setupHinge = function(self)
+    local function getAttachmentCFrame(axis)
+        if axis == "X" then
+            -- PrimaryAxis (X) already points along X
+            return CFrame.new()
+        elseif axis == "Y" then
+            -- Rotate so PrimaryAxis (X) points along Y
+            return CFrame.Angles(0, 0, math.rad(90))
+        else -- Z
+            -- Rotate so PrimaryAxis (X) points along Z
+            return CFrame.Angles(0, math.rad(90), 0)
+        end
+    end
+
+    --[[
+        Private: Update hinge axis orientation.
+    --]]
+    local function updateHingeAxis(self)
+        local state = getState(self)
+        if not state.anchorAttachment or not state.modelAttachment then
+            return
+        end
+
+        local axis = self:getAttribute("Axis") or "Y"
+        local attachmentCFrame = getAttachmentCFrame(axis)
+
+        state.anchorAttachment.CFrame = attachmentCFrame
+        state.modelAttachment.CFrame = attachmentCFrame
+    end
+
+    --[[
+        Private: Stop rotation.
+    --]]
+    local function stopRotation(self)
+        local state = getState(self)
+        if not state.hinge then return end
+
+        local wasRotating = state.rotating
+        state.rotating = false
+
+        -- Switch back to Servo mode and hold current angle
+        state.hinge.ActuatorType = Enum.ActuatorType.Servo
+        state.hinge.TargetAngle = state.hinge.CurrentAngle
+        state.targetAngle = state.hinge.CurrentAngle
+
+        if wasRotating then
+            self.Out:Fire("stopped", {})
+        end
+    end
+
+    --[[
+        Private: Set target angle (uses Servo mode).
+    --]]
+    local function setTargetAngle(self, targetAngle)
+        local state = getState(self)
+        if not state.hinge then return end
+
+        local minAngle = self:getAttribute("MinAngle") or -180
+        local maxAngle = self:getAttribute("MaxAngle") or 180
+
+        -- Clamp to limits
+        local clampedAngle = math.clamp(targetAngle, minAngle, maxAngle)
+        state.targetAngle = clampedAngle
+
+        -- Check for limit
+        local hitLimit = nil
+        if targetAngle <= minAngle then
+            hitLimit = "min"
+        elseif targetAngle >= maxAngle then
+            hitLimit = "max"
+        end
+
+        -- Switch to Servo mode and set target
+        state.hinge.ActuatorType = Enum.ActuatorType.Servo
+        state.hinge.TargetAngle = clampedAngle
+        state.rotating = false
+
+        -- Emit limit signal if hit
+        if hitLimit then
+            self.Out:Fire("limitReached", { limit = hitLimit })
+        end
+    end
+
+    --[[
+        Private: Start continuous rotation (uses Motor mode).
+    --]]
+    local function startContinuousRotation(self)
+        local state = getState(self)
+        if not state.hinge then return end
+
+        state.rotating = true
+        local speed = self:getAttribute("Speed") or 90
+
+        -- Switch to Motor mode for continuous rotation
+        state.hinge.ActuatorType = Enum.ActuatorType.Motor
+        state.hinge.AngularVelocity = math.rad(speed) * state.direction
+    end
+
+    --[[
+        Private: Stop monitoring and cleanup physics objects.
+    --]]
+    local function stopMonitoring(self)
+        local state = getState(self)
+
+        if state.monitorConnection then
+            state.monitorConnection:Disconnect()
+            state.monitorConnection = nil
+        end
+
+        -- Cleanup created objects
+        if state.hinge then
+            state.hinge:Destroy()
+            state.hinge = nil
+        end
+        if state.anchorAttachment then
+            state.anchorAttachment:Destroy()
+            state.anchorAttachment = nil
+        end
+        if state.modelAttachment then
+            state.modelAttachment:Destroy()
+            state.modelAttachment = nil
+        end
+        if state.createdAnchor then
+            state.createdAnchor:Destroy()
+            state.createdAnchor = nil
+        end
+    end
+
+    --[[
+        Private: Start monitoring hinge angle for signals.
+    --]]
+    local function startMonitoring(self)
+        local state = getState(self)
+        if state.monitorConnection then return end
+
+        local lastAngle = state.currentAngle
+        local lastLimitSignal = nil
+
+        state.monitorConnection = RunService.Heartbeat:Connect(function()
+            if not state.hinge then return end
+
+            local currentAngle = state.hinge.CurrentAngle
+            state.currentAngle = currentAngle
+
+            -- Emit rotated signal if angle changed significantly
+            if math.abs(currentAngle - lastAngle) > 0.1 then
+                self.Out:Fire("rotated", { angle = currentAngle })
+                lastAngle = currentAngle
+            end
+
+            -- Check for limits during continuous rotation
+            if state.rotating then
+                local minAngle = self:getAttribute("MinAngle") or -180
+                local maxAngle = self:getAttribute("MaxAngle") or 180
+
+                if currentAngle <= minAngle + 0.5 and lastLimitSignal ~= "min" then
+                    lastLimitSignal = "min"
+                    self.Out:Fire("limitReached", { limit = "min" })
+                    stopRotation(self)
+                elseif currentAngle >= maxAngle - 0.5 and lastLimitSignal ~= "max" then
+                    lastLimitSignal = "max"
+                    self.Out:Fire("limitReached", { limit = "max" })
+                    stopRotation(self)
+                else
+                    lastLimitSignal = nil
+                end
+            end
+        end)
+    end
+
+    --[[
+        Private: Set up the HingeConstraint between anchor and model.
+    --]]
+    local function setupHinge(self)
+        local state = getState(self)
+
         if not self.model then
             warn("[Swivel] No model provided")
             return
@@ -324,7 +370,7 @@ local Swivel = Node.extend({
                 anchorPart.CanCollide = false
                 anchorPart.Transparency = 1
                 anchorPart.Parent = modelPart.Parent or workspace
-                self._createdAnchor = anchorPart
+                state.createdAnchor = anchorPart
             end
         end
 
@@ -335,231 +381,232 @@ local Swivel = Node.extend({
 
         -- Create attachments
         local axis = self:getAttribute("Axis") or "Y"
-        local attachmentCFrame = self:_getAttachmentCFrame(axis)
+        local attachmentCFrame = getAttachmentCFrame(axis)
 
-        self._anchorAttachment = Instance.new("Attachment")
-        self._anchorAttachment.Name = "SwivelAnchor"
-        self._anchorAttachment.CFrame = attachmentCFrame
-        self._anchorAttachment.Parent = anchorPart
+        state.anchorAttachment = Instance.new("Attachment")
+        state.anchorAttachment.Name = "SwivelAnchor"
+        state.anchorAttachment.CFrame = attachmentCFrame
+        state.anchorAttachment.Parent = anchorPart
 
-        self._modelAttachment = Instance.new("Attachment")
-        self._modelAttachment.Name = "SwivelModel"
-        self._modelAttachment.CFrame = attachmentCFrame
-        self._modelAttachment.Parent = modelPart
+        state.modelAttachment = Instance.new("Attachment")
+        state.modelAttachment.Name = "SwivelModel"
+        state.modelAttachment.CFrame = attachmentCFrame
+        state.modelAttachment.Parent = modelPart
 
         -- Create HingeConstraint
-        self._hinge = Instance.new("HingeConstraint")
-        self._hinge.Name = "SwivelHinge"
-        self._hinge.Attachment0 = self._anchorAttachment
-        self._hinge.Attachment1 = self._modelAttachment
-        self._hinge.ActuatorType = Enum.ActuatorType.Servo
-        self._hinge.AngularSpeed = math.rad(self:getAttribute("Speed") or 90)
-        self._hinge.ServoMaxTorque = 100000
-        self._hinge.MotorMaxTorque = 100000
-        self._hinge.TargetAngle = 0
-        self._hinge.LimitsEnabled = true
-        self._hinge.LowerAngle = self:getAttribute("MinAngle") or -180
-        self._hinge.UpperAngle = self:getAttribute("MaxAngle") or 180
-        self._hinge.Parent = anchorPart
-    end,
+        state.hinge = Instance.new("HingeConstraint")
+        state.hinge.Name = "SwivelHinge"
+        state.hinge.Attachment0 = state.anchorAttachment
+        state.hinge.Attachment1 = state.modelAttachment
+        state.hinge.ActuatorType = Enum.ActuatorType.Servo
+        state.hinge.AngularSpeed = math.rad(self:getAttribute("Speed") or 90)
+        state.hinge.ServoMaxTorque = 100000
+        state.hinge.MotorMaxTorque = 100000
+        state.hinge.TargetAngle = 0
+        state.hinge.LimitsEnabled = true
+        state.hinge.LowerAngle = self:getAttribute("MinAngle") or -180
+        state.hinge.UpperAngle = self:getAttribute("MaxAngle") or 180
+        state.hinge.Parent = anchorPart
+    end
 
-    --[[
-        Get attachment CFrame for the given axis.
-        Rotates attachment so PrimaryAxis aligns with rotation axis.
-    --]]
-    _getAttachmentCFrame = function(self, axis)
-        if axis == "X" then
-            -- PrimaryAxis (X) already points along X
-            return CFrame.new()
-        elseif axis == "Y" then
-            -- Rotate so PrimaryAxis (X) points along Y
-            return CFrame.Angles(0, 0, math.rad(90))
-        else -- Z
-            -- Rotate so PrimaryAxis (X) points along Z
-            return CFrame.Angles(0, math.rad(90), 0)
-        end
-    end,
+    ----------------------------------------------------------------------------
+    -- PUBLIC INTERFACE
+    -- Only this table exists on the node.
+    ----------------------------------------------------------------------------
 
-    --[[
-        Update hinge axis orientation.
-    --]]
-    _updateHingeAxis = function(self)
-        if not self._anchorAttachment or not self._modelAttachment then
-            return
-        end
+    return {
+        name = "Swivel",
+        domain = "server",
 
-        local axis = self:getAttribute("Axis") or "Y"
-        local attachmentCFrame = self:_getAttachmentCFrame(axis)
+        ------------------------------------------------------------------------
+        -- SYSTEM HANDLERS
+        ------------------------------------------------------------------------
 
-        self._anchorAttachment.CFrame = attachmentCFrame
-        self._modelAttachment.CFrame = attachmentCFrame
-    end,
+        Sys = {
+            onInit = function(self)
+                local state = getState(self)
 
-    --[[
-        Set target angle (uses Servo mode).
-    --]]
-    _setTargetAngle = function(self, targetAngle)
-        if not self._hinge then return end
-
-        local minAngle = self:getAttribute("MinAngle") or -180
-        local maxAngle = self:getAttribute("MaxAngle") or 180
-
-        -- Clamp to limits
-        local clampedAngle = math.clamp(targetAngle, minAngle, maxAngle)
-        self._targetAngle = clampedAngle
-
-        -- Check for limit
-        local hitLimit = nil
-        if targetAngle <= minAngle then
-            hitLimit = "min"
-        elseif targetAngle >= maxAngle then
-            hitLimit = "max"
-        end
-
-        -- Switch to Servo mode and set target
-        self._hinge.ActuatorType = Enum.ActuatorType.Servo
-        self._hinge.TargetAngle = clampedAngle
-        self._rotating = false
-
-        -- Emit limit signal if hit
-        if hitLimit then
-            self.Out:Fire("limitReached", { limit = hitLimit })
-        end
-    end,
-
-    --[[
-        Start continuous rotation (uses Motor mode).
-    --]]
-    _startContinuousRotation = function(self)
-        if not self._hinge then return end
-
-        self._rotating = true
-        local speed = self:getAttribute("Speed") or 90
-
-        -- Switch to Motor mode for continuous rotation
-        self._hinge.ActuatorType = Enum.ActuatorType.Motor
-        self._hinge.AngularVelocity = math.rad(speed) * self._direction
-    end,
-
-    --[[
-        Stop rotation.
-    --]]
-    _stopRotation = function(self)
-        if not self._hinge then return end
-
-        local wasRotating = self._rotating
-        self._rotating = false
-
-        -- Switch back to Servo mode and hold current angle
-        self._hinge.ActuatorType = Enum.ActuatorType.Servo
-        self._hinge.TargetAngle = self._hinge.CurrentAngle
-        self._targetAngle = self._hinge.CurrentAngle
-
-        if wasRotating then
-            self.Out:Fire("stopped", {})
-        end
-    end,
-
-    --[[
-        Start monitoring hinge angle for signals.
-    --]]
-    _startMonitoring = function(self)
-        if self._monitorConnection then return end
-
-        local lastAngle = self._currentAngle
-        local lastLimitSignal = nil
-
-        self._monitorConnection = RunService.Heartbeat:Connect(function()
-            if not self._hinge then return end
-
-            local currentAngle = self._hinge.CurrentAngle
-            self._currentAngle = currentAngle
-
-            -- Emit rotated signal if angle changed significantly
-            if math.abs(currentAngle - lastAngle) > 0.1 then
-                self.Out:Fire("rotated", { angle = currentAngle })
-                lastAngle = currentAngle
-            end
-
-            -- Check for limits during continuous rotation
-            if self._rotating then
-                local minAngle = self:getAttribute("MinAngle") or -180
-                local maxAngle = self:getAttribute("MaxAngle") or 180
-
-                if currentAngle <= minAngle + 0.5 and lastLimitSignal ~= "min" then
-                    lastLimitSignal = "min"
-                    self.Out:Fire("limitReached", { limit = "min" })
-                    self:_stopRotation()
-                elseif currentAngle >= maxAngle - 0.5 and lastLimitSignal ~= "max" then
-                    lastLimitSignal = "max"
-                    self.Out:Fire("limitReached", { limit = "max" })
-                    self:_stopRotation()
-                else
-                    lastLimitSignal = nil
+                -- Default attributes
+                if not self:getAttribute("Axis") then
+                    self:setAttribute("Axis", "Y")
                 end
+                if not self:getAttribute("Mode") then
+                    self:setAttribute("Mode", "continuous")
+                end
+                if not self:getAttribute("Speed") then
+                    self:setAttribute("Speed", 90)
+                end
+                if not self:getAttribute("StepSize") then
+                    self:setAttribute("StepSize", 5)
+                end
+                if not self:getAttribute("MinAngle") then
+                    self:setAttribute("MinAngle", -180)
+                end
+                if not self:getAttribute("MaxAngle") then
+                    self:setAttribute("MaxAngle", 180)
+                end
+
+                -- Set up physics constraint
+                setupHinge(self)
+            end,
+
+            onStart = function(self)
+                -- Start monitoring hinge angle for signals
+                startMonitoring(self)
+            end,
+
+            onStop = function(self)
+                stopRotation(self)
+                stopMonitoring(self)
+                cleanupState(self)  -- CRITICAL: prevents memory leak
+            end,
+        },
+
+        ------------------------------------------------------------------------
+        -- INPUT HANDLERS
+        ------------------------------------------------------------------------
+
+        In = {
+            --[[
+                Configure swivel settings.
+            --]]
+            onConfigure = function(self, data)
+                if not data then return end
+
+                local state = getState(self)
+
+                if data.axis then
+                    local axis = string.upper(data.axis)
+                    if axis == "X" or axis == "Y" or axis == "Z" then
+                        self:setAttribute("Axis", axis)
+                        -- Reconfigure hinge axis
+                        updateHingeAxis(self)
+                    end
+                end
+
+                if data.mode then
+                    local mode = string.lower(data.mode)
+                    if mode == "continuous" or mode == "stepped" then
+                        self:setAttribute("Mode", mode)
+                    end
+                end
+
+                if data.speed then
+                    self:setAttribute("Speed", math.abs(data.speed))
+                    -- Update hinge speed
+                    if state.hinge then
+                        state.hinge.AngularSpeed = math.rad(data.speed)
+                    end
+                end
+
+                if data.stepSize then
+                    self:setAttribute("StepSize", math.abs(data.stepSize))
+                end
+
+                if data.minAngle then
+                    self:setAttribute("MinAngle", data.minAngle)
+                    if state.hinge then
+                        state.hinge.LowerAngle = data.minAngle
+                    end
+                end
+
+                if data.maxAngle then
+                    self:setAttribute("MaxAngle", data.maxAngle)
+                    if state.hinge then
+                        state.hinge.UpperAngle = data.maxAngle
+                    end
+                end
+            end,
+
+            --[[
+                Start rotating in a direction.
+                Continuous mode: uses Motor actuator type
+                Stepped mode: uses Servo to move one increment
+            --]]
+            onRotate = function(self, data)
+                data = data or {}
+                local state = getState(self)
+                local direction = data.direction or "forward"
+                state.direction = direction == "forward" and 1 or -1
+
+                local mode = self:getAttribute("Mode") or "continuous"
+
+                if mode == "continuous" then
+                    startContinuousRotation(self)
+                else
+                    -- Stepped mode: rotate one increment using servo
+                    local stepSize = self:getAttribute("StepSize") or 5
+                    local targetAngle = state.currentAngle + (stepSize * state.direction)
+                    setTargetAngle(self, targetAngle)
+                end
+            end,
+
+            --[[
+                Set angle directly using servo.
+            --]]
+            onSetAngle = function(self, data)
+                if not data or data.degrees == nil then return end
+                setTargetAngle(self, data.degrees)
+            end,
+
+            --[[
+                Stop continuous rotation.
+            --]]
+            onStop = function(self)
+                stopRotation(self)
+            end,
+        },
+
+        ------------------------------------------------------------------------
+        -- OUTPUT SIGNALS
+        ------------------------------------------------------------------------
+
+        Out = {
+            rotated = {},      -- { angle: number }
+            limitReached = {}, -- { limit: "min" | "max" }
+            stopped = {},      -- {}
+        },
+
+        ------------------------------------------------------------------------
+        -- PUBLIC QUERY METHODS (intentionally exposed)
+        ------------------------------------------------------------------------
+
+        --[[
+            Get current angle.
+        --]]
+        getCurrentAngle = function(self)
+            local state = getState(self)
+            if state.hinge then
+                return state.hinge.CurrentAngle
             end
-        end)
-    end,
+            return state.currentAngle
+        end,
 
-    --[[
-        Stop monitoring.
-    --]]
-    _stopMonitoring = function(self)
-        if self._monitorConnection then
-            self._monitorConnection:Disconnect()
-            self._monitorConnection = nil
-        end
+        --[[
+            Check if currently rotating.
+        --]]
+        isRotating = function(self)
+            local state = getState(self)
+            return state.rotating
+        end,
 
-        -- Cleanup created objects
-        if self._hinge then
-            self._hinge:Destroy()
-            self._hinge = nil
-        end
-        if self._anchorAttachment then
-            self._anchorAttachment:Destroy()
-            self._anchorAttachment = nil
-        end
-        if self._modelAttachment then
-            self._modelAttachment:Destroy()
-            self._modelAttachment = nil
-        end
-        if self._createdAnchor then
-            self._createdAnchor:Destroy()
-            self._createdAnchor = nil
-        end
-    end,
+        --[[
+            Check if servo has reached target (within tolerance).
+        --]]
+        isAtTarget = function(self)
+            local state = getState(self)
+            if not state.hinge then return true end
+            return math.abs(state.hinge.CurrentAngle - state.targetAngle) < 1
+        end,
 
-    --[[
-        Get current angle.
-    --]]
-    getCurrentAngle = function(self)
-        if self._hinge then
-            return self._hinge.CurrentAngle
-        end
-        return self._currentAngle
-    end,
-
-    --[[
-        Check if currently rotating.
-    --]]
-    isRotating = function(self)
-        return self._rotating
-    end,
-
-    --[[
-        Check if servo has reached target (within tolerance).
-    --]]
-    isAtTarget = function(self)
-        if not self._hinge then return true end
-        return math.abs(self._hinge.CurrentAngle - self._targetAngle) < 1
-    end,
-
-    --[[
-        Get the HingeConstraint (for advanced usage).
-    --]]
-    getHinge = function(self)
-        return self._hinge
-    end,
-})
+        --[[
+            Get the HingeConstraint (for advanced usage).
+        --]]
+        getHinge = function(self)
+            local state = getState(self)
+            return state.hinge
+        end,
+    }
+end)
 
 return Swivel

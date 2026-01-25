@@ -301,39 +301,104 @@ function Demo.run(config)
     end
 
     ---------------------------------------------------------------------------
-    -- AUTO-DEMO (optional)
+    -- AUTO-DEMO (runs by default)
     ---------------------------------------------------------------------------
 
-    if config.autoDemo then
-        task.spawn(function()
-            -- Sweep back and forth using signals
-            while demoFolder.Parent do
-                controls.rotateForward()
-                task.wait(3)
-                controls.rotateReverse()
-                task.wait(3)
-            end
-        end)
-    end
+    local autoDemo = config.autoDemo ~= false  -- Default to true
 
-    print("============================================")
-    print("  PHYSICS-BASED SWIVEL DEMO")
-    print("============================================")
-    print("")
-    print("Architecture:")
-    print("  base       - Anchored (fixed)")
-    print("  turretHead - HingeConstraint servo (Y axis)")
-    print("  barrel     - WeldConstraint to turretHead")
-    print("")
-    print("All motion via physics - no CFrame manipulation!")
-    print("")
-    print("Controls:")
-    print("  demo.rotateForward()  - Motor mode, continuous")
-    print("  demo.rotateReverse()  - Motor mode, continuous")
-    print("  demo.stop()           - Stop and hold position")
-    print("  demo.setAngle(45)     - Servo mode, smooth move")
-    print("  demo.cleanup()        - Remove demo")
-    print("")
+    if autoDemo then
+        task.spawn(function()
+            print("============================================")
+            print("  PHYSICS-BASED SWIVEL DEMO")
+            print("============================================")
+            print("")
+            print("Architecture:")
+            print("  base       - Anchored (fixed)")
+            print("  turretHead - HingeConstraint servo (Y axis)")
+            print("  barrel     - WeldConstraint to turretHead")
+            print("")
+            print("All motion via physics - no CFrame manipulation!")
+            print("")
+            print("Starting automated showcase...")
+            print("")
+
+            task.wait(1)
+
+            -- Phase 1: Continuous rotation forward
+            print("[Phase 1] Continuous rotation forward...")
+            controls.rotateForward()
+            task.wait(3)
+
+            -- Phase 2: Stop and hold
+            print("[Phase 2] Stopping and holding position...")
+            controls.stop()
+            task.wait(1)
+
+            -- Phase 3: Continuous rotation reverse
+            print("[Phase 3] Continuous rotation reverse...")
+            controls.rotateReverse()
+            task.wait(3)
+
+            -- Phase 4: Stop at center
+            print("[Phase 4] Return to center (0 degrees)...")
+            controls.setAngle(0)
+            task.wait(2)
+
+            -- Phase 5: Servo mode - specific angles
+            print("[Phase 5] Servo mode - moving to specific angles...")
+            for _, angle in ipairs({45, -45, 90, -90, 0}) do
+                if not demoFolder.Parent then return end
+                print("  -> Setting angle to " .. angle .. " degrees")
+                controls.setAngle(angle)
+                task.wait(2)
+            end
+
+            -- Phase 6: Speed change demo
+            print("[Phase 6] High speed rotation...")
+            controls.setSpeed(180)  -- Fast
+            controls.rotateForward()
+            task.wait(2)
+            controls.rotateReverse()
+            task.wait(2)
+            controls.stop()
+            controls.setSpeed(60)  -- Reset to normal
+
+            task.wait(1)
+
+            print("")
+            print("============================================")
+            print("  DEMO COMPLETE")
+            print("============================================")
+            print("")
+            print("Manual controls available:")
+            print("  demo.rotateForward()  - Motor mode, continuous")
+            print("  demo.rotateReverse()  - Motor mode, continuous")
+            print("  demo.stop()           - Stop and hold position")
+            print("  demo.setAngle(45)     - Servo mode, smooth move")
+            print("  demo.setSpeed(90)     - Change rotation speed")
+            print("  demo.cleanup()        - Remove demo")
+            print("")
+        end)
+    else
+        print("============================================")
+        print("  PHYSICS-BASED SWIVEL DEMO")
+        print("============================================")
+        print("")
+        print("Architecture:")
+        print("  base       - Anchored (fixed)")
+        print("  turretHead - HingeConstraint servo (Y axis)")
+        print("  barrel     - WeldConstraint to turretHead")
+        print("")
+        print("All motion via physics - no CFrame manipulation!")
+        print("")
+        print("Controls:")
+        print("  demo.rotateForward()  - Motor mode, continuous")
+        print("  demo.rotateReverse()  - Motor mode, continuous")
+        print("  demo.stop()           - Stop and hold position")
+        print("  demo.setAngle(45)     - Servo mode, smooth move")
+        print("  demo.cleanup()        - Remove demo")
+        print("")
+    end
 
     return controls
 end

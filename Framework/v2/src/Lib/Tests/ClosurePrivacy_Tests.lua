@@ -19,12 +19,23 @@
     Or run specific test groups:
 
     ```lua
+    -- Phase 0-2 tests
     Tests.runGroup("Node Factory")
     Tests.runGroup("StatusEffect Privacy")
     Tests.runGroup("DamageCalculator Privacy")
     Tests.runGroup("Checkpoint Privacy")
     Tests.runGroup("Instance Isolation")
     Tests.runGroup("Memory Cleanup")
+    Tests.runGroup("Signal Flow")
+    Tests.runGroup("Backwards Compatibility")
+
+    -- Phase 3 tests
+    Tests.runGroup("Zone Privacy")
+    Tests.runGroup("Launcher Privacy")
+    Tests.runGroup("Targeter Privacy")
+    Tests.runGroup("Swivel Privacy")
+    Tests.runGroup("Phase 3 Isolation")
+    Tests.runGroup("Phase 3 Cleanup")
     ```
 
     Or list available groups:
@@ -676,6 +687,550 @@ test("DamageCalculator fires signals for true damage", "Signal Flow", function()
     assert_true(foundDamageCalculated, "Should have fired damageCalculated")
 
     calc.Sys.onStop(calc)
+end)
+
+--------------------------------------------------------------------------------
+-- ZONE PRIVACY TESTS (Phase 3)
+--------------------------------------------------------------------------------
+
+test("Zone class exists", "Zone Privacy", function()
+    assert_not_nil(Components.Zone, "Zone should exist in Components")
+end)
+
+test("Zone._enableCollisionMode is nil", "Zone Privacy", function()
+    local zone = Components.Zone:new({ id = "zone_privacy_1" })
+    zone.Sys.onInit(zone)
+    assert_nil(zone._enableCollisionMode, "_enableCollisionMode should not exist on instance")
+    zone.Sys.onStop(zone)
+end)
+
+test("Zone._enableProximityMode is nil", "Zone Privacy", function()
+    local zone = Components.Zone:new({ id = "zone_privacy_2" })
+    zone.Sys.onInit(zone)
+    assert_nil(zone._enableProximityMode, "_enableProximityMode should not exist on instance")
+    zone.Sys.onStop(zone)
+end)
+
+test("Zone._handleEnter is nil", "Zone Privacy", function()
+    local zone = Components.Zone:new({ id = "zone_privacy_3" })
+    zone.Sys.onInit(zone)
+    assert_nil(zone._handleEnter, "_handleEnter should not exist on instance")
+    zone.Sys.onStop(zone)
+end)
+
+test("Zone._handleExit is nil", "Zone Privacy", function()
+    local zone = Components.Zone:new({ id = "zone_privacy_4" })
+    zone.Sys.onInit(zone)
+    assert_nil(zone._handleExit, "_handleExit should not exist on instance")
+    zone.Sys.onStop(zone)
+end)
+
+test("Zone._passesFilter is nil", "Zone Privacy", function()
+    local zone = Components.Zone:new({ id = "zone_privacy_5" })
+    zone.Sys.onInit(zone)
+    assert_nil(zone._passesFilter, "_passesFilter should not exist on instance")
+    zone.Sys.onStop(zone)
+end)
+
+test("Zone._enabled state is nil", "Zone Privacy", function()
+    local zone = Components.Zone:new({ id = "zone_privacy_6" })
+    zone.Sys.onInit(zone)
+    assert_nil(zone._enabled, "_enabled should not exist on instance")
+    zone.Sys.onStop(zone)
+end)
+
+test("Zone._entitiesInZone state is nil", "Zone Privacy", function()
+    local zone = Components.Zone:new({ id = "zone_privacy_7" })
+    zone.Sys.onInit(zone)
+    assert_nil(zone._entitiesInZone, "_entitiesInZone should not exist on instance")
+    zone.Sys.onStop(zone)
+end)
+
+test("Zone In handlers exist", "Zone Privacy", function()
+    local zone = Components.Zone:new({ id = "zone_privacy_8" })
+    zone.Sys.onInit(zone)
+    assert_not_nil(zone.In.onConfigure, "onConfigure should exist")
+    assert_not_nil(zone.In.onEnable, "onEnable should exist")
+    assert_not_nil(zone.In.onDisable, "onDisable should exist")
+    zone.Sys.onStop(zone)
+end)
+
+test("Zone Out signals exist", "Zone Privacy", function()
+    local zone = Components.Zone:new({ id = "zone_privacy_9" })
+    zone.Sys.onInit(zone)
+    assert_not_nil(zone.Out, "Out channel should exist")
+    assert_not_nil(zone.Out.Fire, "Out:Fire should exist")
+    zone.Sys.onStop(zone)
+end)
+
+--------------------------------------------------------------------------------
+-- LAUNCHER PRIVACY TESTS (Phase 3)
+--------------------------------------------------------------------------------
+
+test("Launcher class exists", "Launcher Privacy", function()
+    assert_not_nil(Components.Launcher, "Launcher should exist in Components")
+end)
+
+test("Launcher._getMuzzleInfo is nil", "Launcher Privacy", function()
+    local launcher = Components.Launcher:new({ id = "launcher_privacy_1" })
+    launcher.Sys.onInit(launcher)
+    assert_nil(launcher._getMuzzleInfo, "_getMuzzleInfo should not exist on instance")
+    launcher.Sys.onStop(launcher)
+end)
+
+test("Launcher._getPhysicsPart is nil", "Launcher Privacy", function()
+    local launcher = Components.Launcher:new({ id = "launcher_privacy_2" })
+    launcher.Sys.onInit(launcher)
+    assert_nil(launcher._getPhysicsPart, "_getPhysicsPart should not exist on instance")
+    launcher.Sys.onStop(launcher)
+end)
+
+test("Launcher._prepareProjectile is nil", "Launcher Privacy", function()
+    local launcher = Components.Launcher:new({ id = "launcher_privacy_3" })
+    launcher.Sys.onInit(launcher)
+    assert_nil(launcher._prepareProjectile, "_prepareProjectile should not exist on instance")
+    launcher.Sys.onStop(launcher)
+end)
+
+test("Launcher._launchImpulse is nil", "Launcher Privacy", function()
+    local launcher = Components.Launcher:new({ id = "launcher_privacy_4" })
+    launcher.Sys.onInit(launcher)
+    assert_nil(launcher._launchImpulse, "_launchImpulse should not exist on instance")
+    launcher.Sys.onStop(launcher)
+end)
+
+test("Launcher._launchSpring is nil", "Launcher Privacy", function()
+    local launcher = Components.Launcher:new({ id = "launcher_privacy_5" })
+    launcher.Sys.onInit(launcher)
+    assert_nil(launcher._launchSpring, "_launchSpring should not exist on instance")
+    launcher.Sys.onStop(launcher)
+end)
+
+test("Launcher._lastFireTime state is nil", "Launcher Privacy", function()
+    local launcher = Components.Launcher:new({ id = "launcher_privacy_6" })
+    launcher.Sys.onInit(launcher)
+    assert_nil(launcher._lastFireTime, "_lastFireTime should not exist on instance")
+    launcher.Sys.onStop(launcher)
+end)
+
+test("Launcher._muzzle state is nil", "Launcher Privacy", function()
+    local launcher = Components.Launcher:new({ id = "launcher_privacy_7" })
+    launcher.Sys.onInit(launcher)
+    assert_nil(launcher._muzzle, "_muzzle should not exist on instance")
+    launcher.Sys.onStop(launcher)
+end)
+
+test("Launcher public query methods exist", "Launcher Privacy", function()
+    local launcher = Components.Launcher:new({ id = "launcher_privacy_8" })
+    launcher.Sys.onInit(launcher)
+    assert_not_nil(launcher.isReady, "isReady should exist")
+    assert_not_nil(launcher.getCooldownRemaining, "getCooldownRemaining should exist")
+    launcher.Sys.onStop(launcher)
+end)
+
+test("Launcher.isReady returns boolean", "Launcher Privacy", function()
+    local launcher = Components.Launcher:new({ id = "launcher_privacy_9" })
+    launcher.Sys.onInit(launcher)
+    local ready = launcher:isReady()
+    assert_type(ready, "boolean", "isReady should return boolean")
+    assert_true(ready, "New launcher should be ready")
+    launcher.Sys.onStop(launcher)
+end)
+
+test("Launcher.getCooldownRemaining returns number", "Launcher Privacy", function()
+    local launcher = Components.Launcher:new({ id = "launcher_privacy_10" })
+    launcher.Sys.onInit(launcher)
+    local remaining = launcher:getCooldownRemaining()
+    assert_type(remaining, "number", "getCooldownRemaining should return number")
+    assert_eq(remaining, 0, "New launcher should have 0 cooldown remaining")
+    launcher.Sys.onStop(launcher)
+end)
+
+test("Launcher In handlers exist", "Launcher Privacy", function()
+    local launcher = Components.Launcher:new({ id = "launcher_privacy_11" })
+    launcher.Sys.onInit(launcher)
+    assert_not_nil(launcher.In.onConfigure, "onConfigure should exist")
+    assert_not_nil(launcher.In.onFire, "onFire should exist")
+    launcher.Sys.onStop(launcher)
+end)
+
+--------------------------------------------------------------------------------
+-- TARGETER PRIVACY TESTS (Phase 3)
+--------------------------------------------------------------------------------
+
+test("Targeter class exists", "Targeter Privacy", function()
+    assert_not_nil(Components.Targeter, "Targeter should exist in Components")
+end)
+
+test("Targeter._getOrigin is nil", "Targeter Privacy", function()
+    local targeter = Components.Targeter:new({ id = "targeter_privacy_1" })
+    targeter.Sys.onInit(targeter)
+    assert_nil(targeter._getOrigin, "_getOrigin should not exist on instance")
+    targeter.Sys.onStop(targeter)
+end)
+
+test("Targeter._getDirection is nil", "Targeter Privacy", function()
+    local targeter = Components.Targeter:new({ id = "targeter_privacy_2" })
+    targeter.Sys.onInit(targeter)
+    assert_nil(targeter._getDirection, "_getDirection should not exist on instance")
+    targeter.Sys.onStop(targeter)
+end)
+
+test("Targeter._generateRays is nil", "Targeter Privacy", function()
+    local targeter = Components.Targeter:new({ id = "targeter_privacy_3" })
+    targeter.Sys.onInit(targeter)
+    assert_nil(targeter._generateRays, "_generateRays should not exist on instance")
+    targeter.Sys.onStop(targeter)
+end)
+
+test("Targeter._performScan is nil", "Targeter Privacy", function()
+    local targeter = Components.Targeter:new({ id = "targeter_privacy_4" })
+    targeter.Sys.onInit(targeter)
+    assert_nil(targeter._performScan, "_performScan should not exist on instance")
+    targeter.Sys.onStop(targeter)
+end)
+
+test("Targeter._processResults is nil", "Targeter Privacy", function()
+    local targeter = Components.Targeter:new({ id = "targeter_privacy_5" })
+    targeter.Sys.onInit(targeter)
+    assert_nil(targeter._processResults, "_processResults should not exist on instance")
+    targeter.Sys.onStop(targeter)
+end)
+
+test("Targeter._startScanning is nil", "Targeter Privacy", function()
+    local targeter = Components.Targeter:new({ id = "targeter_privacy_6" })
+    targeter.Sys.onInit(targeter)
+    assert_nil(targeter._startScanning, "_startScanning should not exist on instance")
+    targeter.Sys.onStop(targeter)
+end)
+
+test("Targeter._stopScanning is nil", "Targeter Privacy", function()
+    local targeter = Components.Targeter:new({ id = "targeter_privacy_7" })
+    targeter.Sys.onInit(targeter)
+    assert_nil(targeter._stopScanning, "_stopScanning should not exist on instance")
+    targeter.Sys.onStop(targeter)
+end)
+
+test("Targeter state is not exposed", "Targeter Privacy", function()
+    local targeter = Components.Targeter:new({ id = "targeter_privacy_8" })
+    targeter.Sys.onInit(targeter)
+    assert_nil(targeter._enabled, "_enabled should not exist on instance")
+    assert_nil(targeter._scanning, "_scanning should not exist on instance")
+    assert_nil(targeter._hasTargets, "_hasTargets should not exist on instance")
+    assert_nil(targeter._filter, "_filter should not exist on instance")
+    assert_nil(targeter._raycastParams, "_raycastParams should not exist on instance")
+    targeter.Sys.onStop(targeter)
+end)
+
+test("Targeter public query methods exist", "Targeter Privacy", function()
+    local targeter = Components.Targeter:new({ id = "targeter_privacy_9" })
+    targeter.Sys.onInit(targeter)
+    assert_not_nil(targeter.isScanning, "isScanning should exist")
+    assert_not_nil(targeter.hasTargets, "hasTargets should exist")
+    assert_not_nil(targeter.isEnabled, "isEnabled should exist")
+    targeter.Sys.onStop(targeter)
+end)
+
+test("Targeter.isScanning returns boolean", "Targeter Privacy", function()
+    local targeter = Components.Targeter:new({ id = "targeter_privacy_10" })
+    targeter.Sys.onInit(targeter)
+    local scanning = targeter:isScanning()
+    assert_type(scanning, "boolean", "isScanning should return boolean")
+    assert_false(scanning, "New targeter should not be scanning")
+    targeter.Sys.onStop(targeter)
+end)
+
+test("Targeter.hasTargets returns boolean", "Targeter Privacy", function()
+    local targeter = Components.Targeter:new({ id = "targeter_privacy_11" })
+    targeter.Sys.onInit(targeter)
+    local targets = targeter:hasTargets()
+    assert_type(targets, "boolean", "hasTargets should return boolean")
+    assert_false(targets, "New targeter should have no targets")
+    targeter.Sys.onStop(targeter)
+end)
+
+test("Targeter.isEnabled returns boolean", "Targeter Privacy", function()
+    local targeter = Components.Targeter:new({ id = "targeter_privacy_12" })
+    targeter.Sys.onInit(targeter)
+    local enabled = targeter:isEnabled()
+    assert_type(enabled, "boolean", "isEnabled should return boolean")
+    assert_false(enabled, "New targeter should not be enabled")
+    targeter.Sys.onStop(targeter)
+end)
+
+test("Targeter In handlers exist", "Targeter Privacy", function()
+    local targeter = Components.Targeter:new({ id = "targeter_privacy_13" })
+    targeter.Sys.onInit(targeter)
+    assert_not_nil(targeter.In.onConfigure, "onConfigure should exist")
+    assert_not_nil(targeter.In.onEnable, "onEnable should exist")
+    assert_not_nil(targeter.In.onDisable, "onDisable should exist")
+    assert_not_nil(targeter.In.onScan, "onScan should exist")
+    targeter.Sys.onStop(targeter)
+end)
+
+--------------------------------------------------------------------------------
+-- SWIVEL PRIVACY TESTS (Phase 3)
+--------------------------------------------------------------------------------
+
+test("Swivel class exists", "Swivel Privacy", function()
+    assert_not_nil(Components.Swivel, "Swivel should exist in Components")
+end)
+
+test("Swivel._setupHinge is nil", "Swivel Privacy", function()
+    local swivel = Components.Swivel:new({ id = "swivel_privacy_1" })
+    swivel.Sys.onInit(swivel)
+    assert_nil(swivel._setupHinge, "_setupHinge should not exist on instance")
+    swivel.Sys.onStop(swivel)
+end)
+
+test("Swivel._getAttachmentCFrame is nil", "Swivel Privacy", function()
+    local swivel = Components.Swivel:new({ id = "swivel_privacy_2" })
+    swivel.Sys.onInit(swivel)
+    assert_nil(swivel._getAttachmentCFrame, "_getAttachmentCFrame should not exist on instance")
+    swivel.Sys.onStop(swivel)
+end)
+
+test("Swivel._updateHingeAxis is nil", "Swivel Privacy", function()
+    local swivel = Components.Swivel:new({ id = "swivel_privacy_3" })
+    swivel.Sys.onInit(swivel)
+    assert_nil(swivel._updateHingeAxis, "_updateHingeAxis should not exist on instance")
+    swivel.Sys.onStop(swivel)
+end)
+
+test("Swivel._setTargetAngle is nil", "Swivel Privacy", function()
+    local swivel = Components.Swivel:new({ id = "swivel_privacy_4" })
+    swivel.Sys.onInit(swivel)
+    assert_nil(swivel._setTargetAngle, "_setTargetAngle should not exist on instance")
+    swivel.Sys.onStop(swivel)
+end)
+
+test("Swivel._startContinuousRotation is nil", "Swivel Privacy", function()
+    local swivel = Components.Swivel:new({ id = "swivel_privacy_5" })
+    swivel.Sys.onInit(swivel)
+    assert_nil(swivel._startContinuousRotation, "_startContinuousRotation should not exist on instance")
+    swivel.Sys.onStop(swivel)
+end)
+
+test("Swivel._stopRotation is nil", "Swivel Privacy", function()
+    local swivel = Components.Swivel:new({ id = "swivel_privacy_6" })
+    swivel.Sys.onInit(swivel)
+    assert_nil(swivel._stopRotation, "_stopRotation should not exist on instance")
+    swivel.Sys.onStop(swivel)
+end)
+
+test("Swivel._startMonitoring is nil", "Swivel Privacy", function()
+    local swivel = Components.Swivel:new({ id = "swivel_privacy_7" })
+    swivel.Sys.onInit(swivel)
+    assert_nil(swivel._startMonitoring, "_startMonitoring should not exist on instance")
+    swivel.Sys.onStop(swivel)
+end)
+
+test("Swivel._stopMonitoring is nil", "Swivel Privacy", function()
+    local swivel = Components.Swivel:new({ id = "swivel_privacy_8" })
+    swivel.Sys.onInit(swivel)
+    assert_nil(swivel._stopMonitoring, "_stopMonitoring should not exist on instance")
+    swivel.Sys.onStop(swivel)
+end)
+
+test("Swivel state is not exposed", "Swivel Privacy", function()
+    local swivel = Components.Swivel:new({ id = "swivel_privacy_9" })
+    swivel.Sys.onInit(swivel)
+    assert_nil(swivel._currentAngle, "_currentAngle should not exist on instance")
+    assert_nil(swivel._targetAngle, "_targetAngle should not exist on instance")
+    assert_nil(swivel._rotating, "_rotating should not exist on instance")
+    assert_nil(swivel._hinge, "_hinge should not exist on instance")
+    assert_nil(swivel._monitorConnection, "_monitorConnection should not exist on instance")
+    swivel.Sys.onStop(swivel)
+end)
+
+test("Swivel public query methods exist", "Swivel Privacy", function()
+    local swivel = Components.Swivel:new({ id = "swivel_privacy_10" })
+    swivel.Sys.onInit(swivel)
+    assert_not_nil(swivel.getCurrentAngle, "getCurrentAngle should exist")
+    assert_not_nil(swivel.isRotating, "isRotating should exist")
+    assert_not_nil(swivel.isAtTarget, "isAtTarget should exist")
+    assert_not_nil(swivel.getHinge, "getHinge should exist")
+    swivel.Sys.onStop(swivel)
+end)
+
+test("Swivel.getCurrentAngle returns number", "Swivel Privacy", function()
+    local swivel = Components.Swivel:new({ id = "swivel_privacy_11" })
+    swivel.Sys.onInit(swivel)
+    local angle = swivel:getCurrentAngle()
+    assert_type(angle, "number", "getCurrentAngle should return number")
+    swivel.Sys.onStop(swivel)
+end)
+
+test("Swivel.isRotating returns boolean", "Swivel Privacy", function()
+    local swivel = Components.Swivel:new({ id = "swivel_privacy_12" })
+    swivel.Sys.onInit(swivel)
+    local rotating = swivel:isRotating()
+    assert_type(rotating, "boolean", "isRotating should return boolean")
+    assert_false(rotating, "New swivel should not be rotating")
+    swivel.Sys.onStop(swivel)
+end)
+
+test("Swivel.isAtTarget returns boolean", "Swivel Privacy", function()
+    local swivel = Components.Swivel:new({ id = "swivel_privacy_13" })
+    swivel.Sys.onInit(swivel)
+    local atTarget = swivel:isAtTarget()
+    assert_type(atTarget, "boolean", "isAtTarget should return boolean")
+    swivel.Sys.onStop(swivel)
+end)
+
+test("Swivel In handlers exist", "Swivel Privacy", function()
+    local swivel = Components.Swivel:new({ id = "swivel_privacy_14" })
+    swivel.Sys.onInit(swivel)
+    assert_not_nil(swivel.In.onConfigure, "onConfigure should exist")
+    assert_not_nil(swivel.In.onRotate, "onRotate should exist")
+    assert_not_nil(swivel.In.onSetAngle, "onSetAngle should exist")
+    assert_not_nil(swivel.In.onStop, "onStop should exist")
+    swivel.Sys.onStop(swivel)
+end)
+
+--------------------------------------------------------------------------------
+-- PHASE 3 INSTANCE ISOLATION TESTS
+--------------------------------------------------------------------------------
+
+test("Zone instances have isolated state", "Phase 3 Isolation", function()
+    local zone1 = Components.Zone:new({ id = "iso_zone_1" })
+    local zone2 = Components.Zone:new({ id = "iso_zone_2" })
+    zone1.Sys.onInit(zone1)
+    zone2.Sys.onInit(zone2)
+
+    -- Configure with different settings
+    zone1.In.onConfigure(zone1, { radius = 10 })
+    zone2.In.onConfigure(zone2, { radius = 20 })
+
+    -- Verify attributes are isolated
+    assert_eq(zone1:getAttribute("Radius"), 10, "zone1 should have Radius 10")
+    assert_eq(zone2:getAttribute("Radius"), 20, "zone2 should have Radius 20")
+
+    zone1.Sys.onStop(zone1)
+    zone2.Sys.onStop(zone2)
+end)
+
+test("Launcher instances have isolated state", "Phase 3 Isolation", function()
+    local launcher1 = Components.Launcher:new({ id = "iso_launcher_1" })
+    local launcher2 = Components.Launcher:new({ id = "iso_launcher_2" })
+    launcher1.Sys.onInit(launcher1)
+    launcher2.Sys.onInit(launcher2)
+
+    -- Configure with different cooldowns
+    launcher1.In.onConfigure(launcher1, { cooldown = 0.5 })
+    launcher2.In.onConfigure(launcher2, { cooldown = 2.0 })
+
+    -- Verify attributes are isolated
+    assert_eq(launcher1:getAttribute("Cooldown"), 0.5, "launcher1 should have Cooldown 0.5")
+    assert_eq(launcher2:getAttribute("Cooldown"), 2.0, "launcher2 should have Cooldown 2.0")
+
+    -- Both should be ready independently
+    assert_true(launcher1:isReady(), "launcher1 should be ready")
+    assert_true(launcher2:isReady(), "launcher2 should be ready")
+
+    launcher1.Sys.onStop(launcher1)
+    launcher2.Sys.onStop(launcher2)
+end)
+
+test("Targeter instances have isolated state", "Phase 3 Isolation", function()
+    local targeter1 = Components.Targeter:new({ id = "iso_targeter_1" })
+    local targeter2 = Components.Targeter:new({ id = "iso_targeter_2" })
+    targeter1.Sys.onInit(targeter1)
+    targeter2.Sys.onInit(targeter2)
+
+    -- Configure with different beam modes
+    targeter1.In.onConfigure(targeter1, { beamMode = "pinpoint" })
+    targeter2.In.onConfigure(targeter2, { beamMode = "cone" })
+
+    -- Verify attributes are isolated
+    assert_eq(targeter1:getAttribute("BeamMode"), "pinpoint", "targeter1 should have pinpoint mode")
+    assert_eq(targeter2:getAttribute("BeamMode"), "cone", "targeter2 should have cone mode")
+
+    targeter1.Sys.onStop(targeter1)
+    targeter2.Sys.onStop(targeter2)
+end)
+
+test("Swivel instances have isolated state", "Phase 3 Isolation", function()
+    local swivel1 = Components.Swivel:new({ id = "iso_swivel_1" })
+    local swivel2 = Components.Swivel:new({ id = "iso_swivel_2" })
+    swivel1.Sys.onInit(swivel1)
+    swivel2.Sys.onInit(swivel2)
+
+    -- Configure with different speeds
+    swivel1.In.onConfigure(swivel1, { speed = 45 })
+    swivel2.In.onConfigure(swivel2, { speed = 180 })
+
+    -- Verify attributes are isolated
+    assert_eq(swivel1:getAttribute("Speed"), 45, "swivel1 should have Speed 45")
+    assert_eq(swivel2:getAttribute("Speed"), 180, "swivel2 should have Speed 180")
+
+    swivel1.Sys.onStop(swivel1)
+    swivel2.Sys.onStop(swivel2)
+end)
+
+--------------------------------------------------------------------------------
+-- PHASE 3 MEMORY CLEANUP TESTS
+--------------------------------------------------------------------------------
+
+test("Zone cleans up on onStop", "Phase 3 Cleanup", function()
+    local zone = Components.Zone:new({ id = "cleanup_zone_1" })
+    zone.Sys.onInit(zone)
+
+    local success, err = pcall(function()
+        zone.Sys.onStop(zone)
+    end)
+    assert_true(success, "Zone onStop should not error: " .. tostring(err))
+end)
+
+test("Launcher cleans up on onStop", "Phase 3 Cleanup", function()
+    local launcher = Components.Launcher:new({ id = "cleanup_launcher_1" })
+    launcher.Sys.onInit(launcher)
+
+    local success, err = pcall(function()
+        launcher.Sys.onStop(launcher)
+    end)
+    assert_true(success, "Launcher onStop should not error: " .. tostring(err))
+end)
+
+test("Targeter cleans up on onStop", "Phase 3 Cleanup", function()
+    local targeter = Components.Targeter:new({ id = "cleanup_targeter_1" })
+    targeter.Sys.onInit(targeter)
+
+    local success, err = pcall(function()
+        targeter.Sys.onStop(targeter)
+    end)
+    assert_true(success, "Targeter onStop should not error: " .. tostring(err))
+end)
+
+test("Swivel cleans up on onStop", "Phase 3 Cleanup", function()
+    local swivel = Components.Swivel:new({ id = "cleanup_swivel_1" })
+    swivel.Sys.onInit(swivel)
+
+    local success, err = pcall(function()
+        swivel.Sys.onStop(swivel)
+    end)
+    assert_true(success, "Swivel onStop should not error: " .. tostring(err))
+end)
+
+test("Phase 3 components: 50 create/destroy cycles", "Phase 3 Cleanup", function()
+    for i = 1, 50 do
+        local zone = Components.Zone:new({ id = "leak_zone_" .. i })
+        local launcher = Components.Launcher:new({ id = "leak_launcher_" .. i })
+        local targeter = Components.Targeter:new({ id = "leak_targeter_" .. i })
+        local swivel = Components.Swivel:new({ id = "leak_swivel_" .. i })
+
+        zone.Sys.onInit(zone)
+        launcher.Sys.onInit(launcher)
+        targeter.Sys.onInit(targeter)
+        swivel.Sys.onInit(swivel)
+
+        zone.Sys.onStop(zone)
+        launcher.Sys.onStop(launcher)
+        targeter.Sys.onStop(targeter)
+        swivel.Sys.onStop(swivel)
+    end
+
+    assert_true(true, "50 create/destroy cycles completed without hanging")
 end)
 
 --------------------------------------------------------------------------------

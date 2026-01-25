@@ -101,212 +101,61 @@
 local Node = require(script.Parent.Parent.Node)
 local SpawnerCore = require(script.Parent.Parent.Internal.SpawnerCore)
 
-local Launcher = Node.extend({
-    name = "Launcher",
-    domain = "server",
+--------------------------------------------------------------------------------
+-- LAUNCHER NODE (Closure-Based Privacy Pattern)
+--------------------------------------------------------------------------------
 
+local Launcher = Node.extend(function(parent)
     ----------------------------------------------------------------------------
-    -- LIFECYCLE
-    ----------------------------------------------------------------------------
-
-    Sys = {
-        onInit = function(self)
-            -- Internal state
-            self._lastFireTime = 0
-            self._muzzle = nil
-
-            -- Get muzzle from model
-            if self.model then
-                if self.model:IsA("BasePart") then
-                    self._muzzle = self.model
-                elseif self.model:IsA("Model") and self.model.PrimaryPart then
-                    self._muzzle = self.model.PrimaryPart
-                end
-            end
-
-            -- Ensure SpawnerCore is initialized
-            if not SpawnerCore.isInitialized() then
-                SpawnerCore.init({
-                    templates = game:GetService("ReplicatedStorage"):FindFirstChild("Templates"),
-                })
-            end
-
-            -- Default attributes
-            if not self:getAttribute("ProjectileTemplate") then
-                self:setAttribute("ProjectileTemplate", "")
-            end
-            if not self:getAttribute("LaunchForce") then
-                self:setAttribute("LaunchForce", 100)
-            end
-            if not self:getAttribute("LaunchMethod") then
-                self:setAttribute("LaunchMethod", "impulse")
-            end
-            if not self:getAttribute("Cooldown") then
-                self:setAttribute("Cooldown", 0.5)
-            end
-        end,
-
-        onStart = function(self)
-            -- Nothing additional on start
-        end,
-
-        onStop = function(self)
-            -- Nothing additional on stop
-        end,
-    },
-
-    ----------------------------------------------------------------------------
-    -- INPUT HANDLERS
+    -- PRIVATE SCOPE
+    -- Nothing here exists on the node instance.
     ----------------------------------------------------------------------------
 
-    In = {
-        --[[
-            Configure launcher settings.
-        --]]
-        onConfigure = function(self, data)
-            if not data then return end
+    -- Per-instance state registry (keyed by instance.id)
+    local instanceStates = {}
 
-            if data.projectileTemplate then
-                self:setAttribute("ProjectileTemplate", data.projectileTemplate)
-            end
+    local function getState(self)
+        if not instanceStates[self.id] then
+            instanceStates[self.id] = {
+                lastFireTime = 0,
+                muzzle = nil,
+            }
+        end
+        return instanceStates[self.id]
+    end
 
-            if data.launchForce then
-                self:setAttribute("LaunchForce", math.abs(data.launchForce))
-            end
-
-            if data.launchMethod then
-                local method = string.lower(data.launchMethod)
-                if method == "impulse" or method == "spring" then
-                    self:setAttribute("LaunchMethod", method)
-                end
-            end
-
-            if data.cooldown then
-                self:setAttribute("Cooldown", math.max(0, data.cooldown))
-            end
-        end,
-
-        --[[
-            Fire a projectile.
-            With targetPosition: calculate direction to target.
-            Without: fire in muzzle LookVector direction.
-        --]]
-        onFire = function(self, data)
-            data = data or {}
-
-            -- Check cooldown
-            local cooldown = self:getAttribute("Cooldown") or 0.5
-            local currentTime = os.clock()
-            local timeSinceFire = currentTime - self._lastFireTime
-
-            if timeSinceFire < cooldown then
-                self.Err:Fire({
-                    reason = "cooldown",
-                    message = "Fire attempted before cooldown expired",
-                    remaining = cooldown - timeSinceFire,
-                })
-                return
-            end
-
-            -- Get template name
-            local templateName = self:getAttribute("ProjectileTemplate")
-            if not templateName or templateName == "" then
-                self.Err:Fire({
-                    reason = "no_template",
-                    message = "ProjectileTemplate not configured",
-                    launcherId = self.id,
-                })
-                return
-            end
-
-            -- Get muzzle position and direction
-            local muzzlePosition, muzzleDirection = self:_getMuzzleInfo()
-
-            -- Calculate direction
-            local direction
-            if data.targetPosition then
-                direction = (data.targetPosition - muzzlePosition).Unit
-            else
-                direction = muzzleDirection
-            end
-
-            -- Spawn projectile
-            local result, err = SpawnerCore.spawn({
-                templateName = templateName,
-                parent = workspace,
-                cframe = CFrame.new(muzzlePosition, muzzlePosition + direction),
-                attributes = {
-                    NodeClass = templateName,
-                    NodeSpawnSource = self.id,
-                    LaunchTime = currentTime,
-                },
-            })
-
-            if not result then
-                self.Err:Fire({
-                    reason = "spawn_failed",
-                    message = err or "Unknown spawn error",
-                    launcherId = self.id,
-                    templateName = templateName,
-                })
-                return
-            end
-
-            local projectile = result.instance
-
-            -- Make projectile physics-enabled
-            self:_prepareProjectile(projectile)
-
-            -- Apply launch force
-            local launchMethod = self:getAttribute("LaunchMethod") or "impulse"
-            local launchForce = self:getAttribute("LaunchForce") or 100
-
-            if launchMethod == "impulse" then
-                self:_launchImpulse(projectile, direction, launchForce)
-            else -- spring
-                self:_launchSpring(projectile, direction, launchForce)
-            end
-
-            -- Update cooldown timer
-            self._lastFireTime = currentTime
-
-            -- Fire output signal
-            self.Out:Fire("fired", {
-                projectile = projectile,
-                direction = direction,
-                assetId = result.assetId,
-                launcherId = self.id,
-            })
-        end,
-    },
-
-    ----------------------------------------------------------------------------
-    -- OUTPUT SCHEMA
-    ----------------------------------------------------------------------------
-
-    Out = {
-        fired = {},  -- { projectile: Instance, direction: Vector3, assetId: string }
-    },
-
-    ----------------------------------------------------------------------------
-    -- PRIVATE METHODS
-    ----------------------------------------------------------------------------
+    local function cleanupState(self)
+        instanceStates[self.id] = nil
+    end
 
     --[[
-        Get muzzle position and direction.
+        Private: Get muzzle position and direction.
     --]]
-    _getMuzzleInfo = function(self)
-        if self._muzzle then
-            return self._muzzle.Position, self._muzzle.CFrame.LookVector
+    local function getMuzzleInfo(self)
+        local state = getState(self)
+        if state.muzzle then
+            return state.muzzle.Position, state.muzzle.CFrame.LookVector
         end
         return Vector3.new(0, 0, 0), Vector3.new(0, 0, -1)
-    end,
+    end
 
     --[[
-        Prepare projectile for physics.
+        Private: Get the primary physics part of a projectile.
+    --]]
+    local function getPhysicsPart(projectile)
+        if projectile:IsA("BasePart") then
+            return projectile
+        elseif projectile:IsA("Model") then
+            return projectile.PrimaryPart or projectile:FindFirstChildWhichIsA("BasePart")
+        end
+        return nil
+    end
+
+    --[[
+        Private: Prepare projectile for physics.
         Unanchor, enable collisions, setup mass.
     --]]
-    _prepareProjectile = function(self, projectile)
+    local function prepareProjectile(projectile)
         local function preparePart(part)
             if part:IsA("BasePart") then
                 part.Anchored = false
@@ -333,38 +182,26 @@ local Launcher = Node.extend({
                 preparePart(projectile.PrimaryPart)
             end
         end
-    end,
+    end
 
     --[[
-        Get the primary physics part of a projectile.
+        Private: Launch using direct velocity (impulse method).
     --]]
-    _getPhysicsPart = function(self, projectile)
-        if projectile:IsA("BasePart") then
-            return projectile
-        elseif projectile:IsA("Model") then
-            return projectile.PrimaryPart or projectile:FindFirstChildWhichIsA("BasePart")
-        end
-        return nil
-    end,
-
-    --[[
-        Launch using direct velocity (impulse method).
-    --]]
-    _launchImpulse = function(self, projectile, direction, force)
-        local physicsPart = self:_getPhysicsPart(projectile)
+    local function launchImpulse(projectile, direction, force)
+        local physicsPart = getPhysicsPart(projectile)
         if not physicsPart then
             return
         end
 
         -- Set velocity directly
         physicsPart.AssemblyLinearVelocity = direction * force
-    end,
+    end
 
     --[[
-        Launch using spring constraint (spring method).
+        Private: Launch using spring constraint (spring method).
     --]]
-    _launchSpring = function(self, projectile, direction, force)
-        local physicsPart = self:_getPhysicsPart(projectile)
+    local function launchSpring(projectile, direction, force)
+        local physicsPart = getPhysicsPart(projectile)
         if not physicsPart then
             return
         end
@@ -404,25 +241,223 @@ local Launcher = Node.extend({
                 anchorAttachment:Destroy()
             end
         end)
-    end,
+    end
 
-    --[[
-        Check if ready to fire (cooldown elapsed).
-    --]]
-    isReady = function(self)
-        local cooldown = self:getAttribute("Cooldown") or 0.5
-        local timeSinceFire = os.clock() - self._lastFireTime
-        return timeSinceFire >= cooldown
-    end,
+    ----------------------------------------------------------------------------
+    -- PUBLIC INTERFACE
+    -- Only this table exists on the node.
+    ----------------------------------------------------------------------------
 
-    --[[
-        Get time remaining until ready to fire.
-    --]]
-    getCooldownRemaining = function(self)
-        local cooldown = self:getAttribute("Cooldown") or 0.5
-        local timeSinceFire = os.clock() - self._lastFireTime
-        return math.max(0, cooldown - timeSinceFire)
-    end,
-})
+    return {
+        name = "Launcher",
+        domain = "server",
+
+        ------------------------------------------------------------------------
+        -- SYSTEM HANDLERS
+        ------------------------------------------------------------------------
+
+        Sys = {
+            onInit = function(self)
+                local state = getState(self)
+
+                -- Get muzzle from model
+                if self.model then
+                    if self.model:IsA("BasePart") then
+                        state.muzzle = self.model
+                    elseif self.model:IsA("Model") and self.model.PrimaryPart then
+                        state.muzzle = self.model.PrimaryPart
+                    end
+                end
+
+                -- Ensure SpawnerCore is initialized
+                if not SpawnerCore.isInitialized() then
+                    SpawnerCore.init({
+                        templates = game:GetService("ReplicatedStorage"):FindFirstChild("Templates"),
+                    })
+                end
+
+                -- Default attributes
+                if not self:getAttribute("ProjectileTemplate") then
+                    self:setAttribute("ProjectileTemplate", "")
+                end
+                if not self:getAttribute("LaunchForce") then
+                    self:setAttribute("LaunchForce", 100)
+                end
+                if not self:getAttribute("LaunchMethod") then
+                    self:setAttribute("LaunchMethod", "impulse")
+                end
+                if not self:getAttribute("Cooldown") then
+                    self:setAttribute("Cooldown", 0.5)
+                end
+            end,
+
+            onStart = function(self)
+                -- Nothing additional on start
+            end,
+
+            onStop = function(self)
+                cleanupState(self)  -- CRITICAL: prevents memory leak
+            end,
+        },
+
+        ------------------------------------------------------------------------
+        -- INPUT HANDLERS
+        ------------------------------------------------------------------------
+
+        In = {
+            --[[
+                Configure launcher settings.
+            --]]
+            onConfigure = function(self, data)
+                if not data then return end
+
+                if data.projectileTemplate then
+                    self:setAttribute("ProjectileTemplate", data.projectileTemplate)
+                end
+
+                if data.launchForce then
+                    self:setAttribute("LaunchForce", math.abs(data.launchForce))
+                end
+
+                if data.launchMethod then
+                    local method = string.lower(data.launchMethod)
+                    if method == "impulse" or method == "spring" then
+                        self:setAttribute("LaunchMethod", method)
+                    end
+                end
+
+                if data.cooldown then
+                    self:setAttribute("Cooldown", math.max(0, data.cooldown))
+                end
+            end,
+
+            --[[
+                Fire a projectile.
+                With targetPosition: calculate direction to target.
+                Without: fire in muzzle LookVector direction.
+            --]]
+            onFire = function(self, data)
+                data = data or {}
+                local state = getState(self)
+
+                -- Check cooldown
+                local cooldown = self:getAttribute("Cooldown") or 0.5
+                local currentTime = os.clock()
+                local timeSinceFire = currentTime - state.lastFireTime
+
+                if timeSinceFire < cooldown then
+                    self.Err:Fire({
+                        reason = "cooldown",
+                        message = "Fire attempted before cooldown expired",
+                        remaining = cooldown - timeSinceFire,
+                    })
+                    return
+                end
+
+                -- Get template name
+                local templateName = self:getAttribute("ProjectileTemplate")
+                if not templateName or templateName == "" then
+                    self.Err:Fire({
+                        reason = "no_template",
+                        message = "ProjectileTemplate not configured",
+                        launcherId = self.id,
+                    })
+                    return
+                end
+
+                -- Get muzzle position and direction
+                local muzzlePosition, muzzleDirection = getMuzzleInfo(self)
+
+                -- Calculate direction
+                local direction
+                if data.targetPosition then
+                    direction = (data.targetPosition - muzzlePosition).Unit
+                else
+                    direction = muzzleDirection
+                end
+
+                -- Spawn projectile
+                local result, err = SpawnerCore.spawn({
+                    templateName = templateName,
+                    parent = workspace,
+                    cframe = CFrame.new(muzzlePosition, muzzlePosition + direction),
+                    attributes = {
+                        NodeClass = templateName,
+                        NodeSpawnSource = self.id,
+                        LaunchTime = currentTime,
+                    },
+                })
+
+                if not result then
+                    self.Err:Fire({
+                        reason = "spawn_failed",
+                        message = err or "Unknown spawn error",
+                        launcherId = self.id,
+                        templateName = templateName,
+                    })
+                    return
+                end
+
+                local projectile = result.instance
+
+                -- Make projectile physics-enabled
+                prepareProjectile(projectile)
+
+                -- Apply launch force
+                local launchMethod = self:getAttribute("LaunchMethod") or "impulse"
+                local launchForce = self:getAttribute("LaunchForce") or 100
+
+                if launchMethod == "impulse" then
+                    launchImpulse(projectile, direction, launchForce)
+                else -- spring
+                    launchSpring(projectile, direction, launchForce)
+                end
+
+                -- Update cooldown timer
+                state.lastFireTime = currentTime
+
+                -- Fire output signal
+                self.Out:Fire("fired", {
+                    projectile = projectile,
+                    direction = direction,
+                    assetId = result.assetId,
+                    launcherId = self.id,
+                })
+            end,
+        },
+
+        ------------------------------------------------------------------------
+        -- OUTPUT SIGNALS
+        ------------------------------------------------------------------------
+
+        Out = {
+            fired = {},  -- { projectile: Instance, direction: Vector3, assetId: string }
+        },
+
+        ------------------------------------------------------------------------
+        -- PUBLIC QUERY METHODS (intentionally exposed)
+        ------------------------------------------------------------------------
+
+        --[[
+            Check if ready to fire (cooldown elapsed).
+        --]]
+        isReady = function(self)
+            local state = getState(self)
+            local cooldown = self:getAttribute("Cooldown") or 0.5
+            local timeSinceFire = os.clock() - state.lastFireTime
+            return timeSinceFire >= cooldown
+        end,
+
+        --[[
+            Get time remaining until ready to fire.
+        --]]
+        getCooldownRemaining = function(self)
+            local state = getState(self)
+            local cooldown = self:getAttribute("Cooldown") or 0.5
+            local timeSinceFire = os.clock() - state.lastFireTime
+            return math.max(0, cooldown - timeSinceFire)
+        end,
+    }
+end)
 
 return Launcher

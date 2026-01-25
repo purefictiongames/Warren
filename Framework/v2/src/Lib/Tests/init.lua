@@ -58,4 +58,7 @@ Tests.Launcher = safeRequire("Launcher_Tests", script:WaitForChild("Launcher_Tes
 -- Attribute System
 Tests.AttributeSet = safeRequire("AttributeSet_Tests", script:WaitForChild("AttributeSet_Tests"))
 
+-- Privacy Pattern (Closure-Based Refactor)
+Tests.ClosurePrivacy = safeRequire("ClosurePrivacy_Tests", script:WaitForChild("ClosurePrivacy_Tests"))
+
 return Tests

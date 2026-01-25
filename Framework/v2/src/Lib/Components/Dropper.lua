@@ -160,244 +160,48 @@
 local Node = require(script.Parent.Parent.Node)
 local SpawnerCore = require(script.Parent.Parent.Internal.SpawnerCore)
 
-local Dropper = Node.extend({
-    name = "Dropper",
-    domain = "server",
+--------------------------------------------------------------------------------
+-- DROPPER NODE (Closure-Based Privacy Pattern)
+--------------------------------------------------------------------------------
 
+local Dropper = Node.extend(function(parent)
     ----------------------------------------------------------------------------
-    -- LIFECYCLE
-    ----------------------------------------------------------------------------
-
-    Sys = {
-        onInit = function(self)
-            -- Internal state
-            self._running = false
-            self._loopConnection = nil
-            self._spawnedAssetIds = {}  -- { [assetId] = true }
-            self._spawnCounter = 0
-
-            -- Pool state
-            self._pool = nil           -- Array of template names
-            self._poolIndex = 0        -- Current index for sequential mode
-            self._capacity = nil       -- Total spawn limit (nil = unlimited)
-            self._remaining = nil      -- Remaining spawns (nil = unlimited)
-
-            -- Ensure SpawnerCore is initialized
-            if not SpawnerCore.isInitialized() then
-                SpawnerCore.init({
-                    templates = game:GetService("ReplicatedStorage"):FindFirstChild("Templates"),
-                })
-            end
-
-            -- Default attributes
-            if not self:getAttribute("Interval") then
-                self:setAttribute("Interval", 2)
-            end
-            if not self:getAttribute("TemplateName") then
-                self:setAttribute("TemplateName", "")
-            end
-            if not self:getAttribute("MaxActive") then
-                self:setAttribute("MaxActive", 0)
-            end
-            if not self:getAttribute("PoolMode") then
-                self:setAttribute("PoolMode", "single")
-            end
-            if self:getAttribute("AutoStart") == nil then
-                self:setAttribute("AutoStart", false)
-            end
-
-            -- Auto-start if configured
-            if self:getAttribute("AutoStart") then
-                self:_startLoop()
-            end
-        end,
-
-        onStart = function(self)
-            -- Nothing additional on start
-        end,
-
-        onStop = function(self)
-            self:_stopLoop()
-            -- Optionally despawn all on stop
-            -- self:_despawnAll()
-        end,
-    },
-
-    ----------------------------------------------------------------------------
-    -- INPUT HANDLERS
+    -- PRIVATE SCOPE
+    -- Nothing here exists on the node instance.
     ----------------------------------------------------------------------------
 
-    In = {
-        --[[
-            Configure dropper settings.
-        --]]
-        onConfigure = function(self, data)
-            if not data then return end
+    -- Per-instance state registry (keyed by instance.id)
+    local instanceStates = {}
 
-            if data.interval then
-                self:setAttribute("Interval", data.interval)
-            end
+    local function getState(self)
+        if not instanceStates[self.id] then
+            instanceStates[self.id] = {
+                running = false,
+                spawnedAssetIds = {},  -- { [assetId] = true }
+                spawnCounter = 0,
+                pool = nil,            -- Array of template names
+                poolIndex = 0,         -- Current index for sequential mode
+                capacity = nil,        -- Total spawn limit (nil = unlimited)
+                remaining = nil,       -- Remaining spawns (nil = unlimited)
+                spawnPosition = nil,   -- Override spawn position
+            }
+        end
+        return instanceStates[self.id]
+    end
 
-            if data.templateName then
-                self:setAttribute("TemplateName", data.templateName)
-            end
-
-            if data.maxActive then
-                self:setAttribute("MaxActive", data.maxActive)
-            end
-
-            if data.spawnPosition then
-                self._spawnPosition = data.spawnPosition
-            end
-
-            if data.spawnOffset then
-                self:setAttribute("SpawnOffset", data.spawnOffset)
-            end
-
-            -- Pool configuration
-            if data.pool then
-                self._pool = data.pool
-                self._poolIndex = 0
-            end
-
-            if data.poolMode then
-                self:setAttribute("PoolMode", data.poolMode)
-            end
-
-            -- Capacity configuration
-            if data.capacity ~= nil then
-                self._capacity = data.capacity
-                self._remaining = data.capacity
-                self:setAttribute("Capacity", data.capacity)
-            end
-        end,
-
-        --[[
-            Start the spawn loop.
-        --]]
-        onStart = function(self)
-            self:_startLoop()
-        end,
-
-        --[[
-            Stop the spawn loop.
-        --]]
-        onStop = function(self)
-            self:_stopLoop()
-        end,
-
-        --[[
-            Despawn a specific entity by assetId.
-            Typically called when entity reaches end zone.
-        --]]
-        onReturn = function(self, data)
-            if not data or not data.assetId then
-                return
-            end
-
-            local assetId = data.assetId
-
-            -- Only despawn if we spawned it
-            if not self._spawnedAssetIds[assetId] then
-                return
-            end
-
-            -- Get entity info before despawn
-            local record = SpawnerCore.getRecord(assetId)
-            local entityId = record and record.instance and record.instance:GetAttribute("NodeId")
-
-            -- Despawn
-            local success = SpawnerCore.despawn(assetId)
-            if success then
-                self._spawnedAssetIds[assetId] = nil
-
-                -- Fire despawned signal
-                self.Out:Fire("despawned", {
-                    assetId = assetId,
-                    entityId = entityId,
-                    dropperId = self.id,
-                })
-            end
-        end,
-
-        --[[
-            Despawn all entities spawned by this dropper.
-        --]]
-        onDespawnAll = function(self)
-            self:_despawnAll()
-        end,
-
-        --[[
-            One-shot spawn - bypasses interval loop.
-            Use for dispenser-style on-demand spawning.
-        --]]
-        onDispense = function(self, data)
-            data = data or {}
-            local count = data.count or 1
-            local templateOverride = data.templateName
-
-            for _ = 1, count do
-                -- Check if we can spawn (capacity + maxActive)
-                if not self:_canSpawn() then
-                    break
-                end
-
-                -- Spawn with optional template override
-                self:_spawn(templateOverride)
-            end
-        end,
-
-        --[[
-            Restore capacity.
-            amount = nil: full refill to original capacity
-            amount = number: add that amount (capped at capacity)
-        --]]
-        onRefill = function(self, data)
-            data = data or {}
-
-            if self._capacity == nil then
-                -- Unlimited capacity, nothing to refill
-                return
-            end
-
-            if data.amount then
-                -- Partial refill
-                self._remaining = math.min(
-                    (self._remaining or 0) + data.amount,
-                    self._capacity
-                )
-            else
-                -- Full refill
-                self._remaining = self._capacity
-            end
-
-            self:setAttribute("Remaining", self._remaining)
-        end,
-    },
-
-    ----------------------------------------------------------------------------
-    -- OUTPUT SCHEMA (documentation)
-    ----------------------------------------------------------------------------
-
-    Out = {
-        spawned = {},    -- { assetId, instance, entityId, templateName, dropperId }
-        despawned = {},  -- { assetId, entityId, dropperId }
-        depleted = {},   -- { dropperId }
-        loopStarted = {},
-        loopStopped = {},
-    },
-
-    ----------------------------------------------------------------------------
-    -- PRIVATE METHODS
-    ----------------------------------------------------------------------------
+    local function cleanupState(self)
+        instanceStates[self.id] = nil
+    end
 
     --[[
-        Get the spawn position.
+        Private: Get the spawn position.
     --]]
-    _getSpawnPosition = function(self)
+    local function getSpawnPosition(self)
+        local state = getState(self)
+
         -- Use configured position if set
-        if self._spawnPosition then
-            return self._spawnPosition
+        if state.spawnPosition then
+            return state.spawnPosition
         end
 
         -- Use model position + offset
@@ -425,55 +229,60 @@ local Dropper = Node.extend({
         end
 
         return basePosition
-    end,
+    end
 
     --[[
-        Get the current count of active spawned entities.
+        Private: Get the current count of active spawned entities.
     --]]
-    _getActiveCount = function(self)
+    local function getActiveCount(self)
+        local state = getState(self)
         local count = 0
-        for assetId in pairs(self._spawnedAssetIds) do
+        for assetId in pairs(state.spawnedAssetIds) do
             -- Verify still exists
             if SpawnerCore.getInstance(assetId) then
                 count = count + 1
             else
                 -- Clean up stale reference
-                self._spawnedAssetIds[assetId] = nil
+                state.spawnedAssetIds[assetId] = nil
             end
         end
         return count
-    end,
+    end
 
     --[[
-        Check if we can spawn (respects MaxActive and Capacity).
+        Private: Check if we can spawn (respects MaxActive and Capacity).
     --]]
-    _canSpawn = function(self)
+    local function canSpawn(self)
+        local state = getState(self)
+
         -- Check capacity (total limit)
-        if self._remaining ~= nil and self._remaining <= 0 then
+        if state.remaining ~= nil and state.remaining <= 0 then
             return false
         end
 
         -- Check maxActive (concurrent limit)
         local maxActive = self:getAttribute("MaxActive") or 0
-        if maxActive > 0 and self:_getActiveCount() >= maxActive then
+        if maxActive > 0 and getActiveCount(self) >= maxActive then
             return false
         end
 
         return true
-    end,
+    end
 
     --[[
-        Select template name based on pool mode.
+        Private: Select template name based on pool mode.
         Returns template name string.
     --]]
-    _selectTemplate = function(self, override)
+    local function selectTemplate(self, override)
+        local state = getState(self)
+
         -- If override provided, use it
         if override then
             return override
         end
 
         -- If no pool, use single template
-        local pool = self._pool
+        local pool = state.pool
         if not pool or #pool == 0 then
             return self:getAttribute("TemplateName")
         end
@@ -482,23 +291,25 @@ local Dropper = Node.extend({
         local mode = self:getAttribute("PoolMode") or "single"
 
         if mode == "sequential" then
-            self._poolIndex = (self._poolIndex % #pool) + 1
-            return pool[self._poolIndex]
+            state.poolIndex = (state.poolIndex % #pool) + 1
+            return pool[state.poolIndex]
         elseif mode == "random" then
             return pool[math.random(#pool)]
         else
             -- "single" mode - just use first item
             return pool[1]
         end
-    end,
+    end
 
     --[[
-        Spawn a single entity.
+        Private: Spawn a single entity.
         templateOverride: optional template name to use instead of pool selection
     --]]
-    _spawn = function(self, templateOverride)
+    local function spawn(self, templateOverride)
+        local state = getState(self)
+
         -- Select template (from pool, single, or override)
-        local templateName = self:_selectTemplate(templateOverride)
+        local templateName = selectTemplate(self, templateOverride)
         if not templateName or templateName == "" then
             self.Err:Fire({
                 reason = "no_template",
@@ -509,19 +320,19 @@ local Dropper = Node.extend({
         end
 
         -- Check limits (capacity + maxActive)
-        if not self:_canSpawn() then
+        if not canSpawn(self) then
             return nil
         end
 
         -- Generate entity ID
-        self._spawnCounter = self._spawnCounter + 1
-        local entityId = self.id .. "_entity_" .. self._spawnCounter
+        state.spawnCounter = state.spawnCounter + 1
+        local entityId = self.id .. "_entity_" .. state.spawnCounter
 
         -- Spawn via SpawnerCore
         local result, err = SpawnerCore.spawn({
             templateName = templateName,
             parent = workspace,
-            position = self:_getSpawnPosition(),
+            position = getSpawnPosition(self),
             attributes = {
                 NodeId = entityId,
                 NodeClass = templateName,
@@ -540,15 +351,15 @@ local Dropper = Node.extend({
         end
 
         -- Track this spawn
-        self._spawnedAssetIds[result.assetId] = true
+        state.spawnedAssetIds[result.assetId] = true
 
         -- Decrement capacity if finite
-        if self._remaining ~= nil then
-            self._remaining = self._remaining - 1
-            self:setAttribute("Remaining", self._remaining)
+        if state.remaining ~= nil then
+            state.remaining = state.remaining - 1
+            self:setAttribute("Remaining", state.remaining)
 
             -- Fire depleted if capacity exhausted
-            if self._remaining <= 0 then
+            if state.remaining <= 0 then
                 self.Out:Fire("depleted", { dropperId = self.id })
             end
         end
@@ -563,58 +374,294 @@ local Dropper = Node.extend({
         })
 
         return result
-    end,
+    end
+
+    -- Forward declaration for startLoop (used by onInit for AutoStart)
+    local startLoop
 
     --[[
-        Start the spawn loop.
+        Private: Stop the spawn loop.
     --]]
-    _startLoop = function(self)
-        if self._running then
+    local function stopLoop(self)
+        local state = getState(self)
+
+        if not state.running then
             return
         end
 
-        self._running = true
+        state.running = false
+        self.Out:Fire("loopStopped", { dropperId = self.id })
+    end
+
+    --[[
+        Private: Start the spawn loop.
+    --]]
+    startLoop = function(self)
+        local state = getState(self)
+
+        if state.running then
+            return
+        end
+
+        state.running = true
         self.Out:Fire("loopStarted", { dropperId = self.id })
 
         -- Spawn loop
         task.spawn(function()
-            while self._running do
+            while state.running do
                 -- Spawn one entity
-                self:_spawn()
+                spawn(self)
 
                 -- Wait for interval
                 local interval = self:getAttribute("Interval") or 2
                 task.wait(interval)
             end
         end)
-    end,
+    end
 
     --[[
-        Stop the spawn loop.
+        Private: Despawn all entities spawned by this dropper.
     --]]
-    _stopLoop = function(self)
-        if not self._running then
-            return
-        end
-
-        self._running = false
-        self.Out:Fire("loopStopped", { dropperId = self.id })
-    end,
-
-    --[[
-        Despawn all entities spawned by this dropper.
-    --]]
-    _despawnAll = function(self)
+    local function despawnAll(self)
+        local state = getState(self)
         local toRemove = {}
-        for assetId in pairs(self._spawnedAssetIds) do
+        for assetId in pairs(state.spawnedAssetIds) do
             table.insert(toRemove, assetId)
         end
 
         for _, assetId in ipairs(toRemove) do
             SpawnerCore.despawn(assetId)
-            self._spawnedAssetIds[assetId] = nil
+            state.spawnedAssetIds[assetId] = nil
         end
-    end,
-})
+    end
+
+    ----------------------------------------------------------------------------
+    -- PUBLIC INTERFACE
+    -- Only this table exists on the node.
+    ----------------------------------------------------------------------------
+
+    return {
+        name = "Dropper",
+        domain = "server",
+
+        ------------------------------------------------------------------------
+        -- SYSTEM HANDLERS
+        ------------------------------------------------------------------------
+
+        Sys = {
+            onInit = function(self)
+                local state = getState(self)
+
+                -- Ensure SpawnerCore is initialized
+                if not SpawnerCore.isInitialized() then
+                    SpawnerCore.init({
+                        templates = game:GetService("ReplicatedStorage"):FindFirstChild("Templates"),
+                    })
+                end
+
+                -- Default attributes
+                if not self:getAttribute("Interval") then
+                    self:setAttribute("Interval", 2)
+                end
+                if not self:getAttribute("TemplateName") then
+                    self:setAttribute("TemplateName", "")
+                end
+                if not self:getAttribute("MaxActive") then
+                    self:setAttribute("MaxActive", 0)
+                end
+                if not self:getAttribute("PoolMode") then
+                    self:setAttribute("PoolMode", "single")
+                end
+                if self:getAttribute("AutoStart") == nil then
+                    self:setAttribute("AutoStart", false)
+                end
+
+                -- Auto-start if configured
+                if self:getAttribute("AutoStart") then
+                    startLoop(self)
+                end
+            end,
+
+            onStart = function(self)
+                -- Nothing additional on start
+            end,
+
+            onStop = function(self)
+                stopLoop(self)
+                cleanupState(self)  -- CRITICAL: prevents memory leak
+            end,
+        },
+
+        ------------------------------------------------------------------------
+        -- INPUT HANDLERS
+        ------------------------------------------------------------------------
+
+        In = {
+            --[[
+                Configure dropper settings.
+            --]]
+            onConfigure = function(self, data)
+                if not data then return end
+
+                local state = getState(self)
+
+                if data.interval then
+                    self:setAttribute("Interval", data.interval)
+                end
+
+                if data.templateName then
+                    self:setAttribute("TemplateName", data.templateName)
+                end
+
+                if data.maxActive then
+                    self:setAttribute("MaxActive", data.maxActive)
+                end
+
+                if data.spawnPosition then
+                    state.spawnPosition = data.spawnPosition
+                end
+
+                if data.spawnOffset then
+                    self:setAttribute("SpawnOffset", data.spawnOffset)
+                end
+
+                -- Pool configuration
+                if data.pool then
+                    state.pool = data.pool
+                    state.poolIndex = 0
+                end
+
+                if data.poolMode then
+                    self:setAttribute("PoolMode", data.poolMode)
+                end
+
+                -- Capacity configuration
+                if data.capacity ~= nil then
+                    state.capacity = data.capacity
+                    state.remaining = data.capacity
+                    self:setAttribute("Capacity", data.capacity)
+                end
+            end,
+
+            --[[
+                Start the spawn loop.
+            --]]
+            onStart = function(self)
+                startLoop(self)
+            end,
+
+            --[[
+                Stop the spawn loop.
+            --]]
+            onStop = function(self)
+                stopLoop(self)
+            end,
+
+            --[[
+                Despawn a specific entity by assetId.
+                Typically called when entity reaches end zone.
+            --]]
+            onReturn = function(self, data)
+                if not data or not data.assetId then
+                    return
+                end
+
+                local state = getState(self)
+                local assetId = data.assetId
+
+                -- Only despawn if we spawned it
+                if not state.spawnedAssetIds[assetId] then
+                    return
+                end
+
+                -- Get entity info before despawn
+                local record = SpawnerCore.getRecord(assetId)
+                local entityId = record and record.instance and record.instance:GetAttribute("NodeId")
+
+                -- Despawn
+                local success = SpawnerCore.despawn(assetId)
+                if success then
+                    state.spawnedAssetIds[assetId] = nil
+
+                    -- Fire despawned signal
+                    self.Out:Fire("despawned", {
+                        assetId = assetId,
+                        entityId = entityId,
+                        dropperId = self.id,
+                    })
+                end
+            end,
+
+            --[[
+                Despawn all entities spawned by this dropper.
+            --]]
+            onDespawnAll = function(self)
+                despawnAll(self)
+            end,
+
+            --[[
+                One-shot spawn - bypasses interval loop.
+                Use for dispenser-style on-demand spawning.
+            --]]
+            onDispense = function(self, data)
+                data = data or {}
+                local count = data.count or 1
+                local templateOverride = data.templateName
+
+                for _ = 1, count do
+                    -- Check if we can spawn (capacity + maxActive)
+                    if not canSpawn(self) then
+                        break
+                    end
+
+                    -- Spawn with optional template override
+                    spawn(self, templateOverride)
+                end
+            end,
+
+            --[[
+                Restore capacity.
+                amount = nil: full refill to original capacity
+                amount = number: add that amount (capped at capacity)
+            --]]
+            onRefill = function(self, data)
+                data = data or {}
+                local state = getState(self)
+
+                if state.capacity == nil then
+                    -- Unlimited capacity, nothing to refill
+                    return
+                end
+
+                if data.amount then
+                    -- Partial refill
+                    state.remaining = math.min(
+                        (state.remaining or 0) + data.amount,
+                        state.capacity
+                    )
+                else
+                    -- Full refill
+                    state.remaining = state.capacity
+                end
+
+                self:setAttribute("Remaining", state.remaining)
+            end,
+        },
+
+        ------------------------------------------------------------------------
+        -- OUTPUT SIGNALS
+        ------------------------------------------------------------------------
+
+        Out = {
+            spawned = {},    -- { assetId, instance, entityId, templateName, dropperId }
+            despawned = {},  -- { assetId, entityId, dropperId }
+            depleted = {},   -- { dropperId }
+            loopStarted = {},
+            loopStopped = {},
+        },
+
+        -- Err (detour) signals documented in header
+    }
+end)
 
 return Dropper

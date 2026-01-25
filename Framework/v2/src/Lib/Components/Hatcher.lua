@@ -123,242 +123,39 @@
 local Node = require(script.Parent.Parent.Node)
 local SpawnerCore = require(script.Parent.Parent.Internal.SpawnerCore)
 
-local Hatcher = Node.extend({
-    name = "Hatcher",
-    domain = "server",  -- Hatching should be server-authoritative
+--------------------------------------------------------------------------------
+-- HATCHER NODE (Closure-Based Privacy Pattern)
+--------------------------------------------------------------------------------
 
+local Hatcher = Node.extend(function(parent)
     ----------------------------------------------------------------------------
-    -- LIFECYCLE
-    ----------------------------------------------------------------------------
-
-    Sys = {
-        onInit = function(self)
-            -- Reward pool configuration
-            self._pool = nil
-            self._totalWeight = 0
-
-            -- Pity tracking per player (userId -> count)
-            self._pityCounters = {}
-
-            -- Pending hatch state (waiting for cost confirmation)
-            self._pendingHatch = nil  -- { player, timestamp }
-
-            -- Default attributes
-            if not self:getAttribute("HatchTime") then
-                self:setAttribute("HatchTime", 0)
-            end
-            if not self:getAttribute("Cost") then
-                self:setAttribute("Cost", 0)
-            end
-            if not self:getAttribute("CostType") then
-                self:setAttribute("CostType", "")
-            end
-            if not self:getAttribute("PityThreshold") then
-                self:setAttribute("PityThreshold", 0)
-            end
-            if not self:getAttribute("CostConfirmTimeout") then
-                self:setAttribute("CostConfirmTimeout", 10)
-            end
-
-            -- Initialize SpawnerCore if not already initialized
-            if not SpawnerCore.isInitialized() then
-                SpawnerCore.init({})
-            end
-        end,
-
-        onStart = function(self)
-            -- Nothing to do on start - we wait for signals
-        end,
-
-        onStop = function(self)
-            -- Clear pending state
-            self._pendingHatch = nil
-        end,
-    },
-
-    ----------------------------------------------------------------------------
-    -- INPUT HANDLERS
+    -- PRIVATE SCOPE
+    -- Nothing here exists on the node instance.
     ----------------------------------------------------------------------------
 
-    In = {
-        --[[
-            Configure the reward pool.
-        --]]
-        onConfigure = function(self, data)
-            if not data or not data.pool or type(data.pool) ~= "table" then
-                self.Err:Fire({
-                    reason = "invalid_pool",
-                    message = "onConfigure requires { pool: table }",
-                    hatcherId = self.id,
-                })
-                return
-            end
+    -- Per-instance state registry (keyed by instance.id)
+    local instanceStates = {}
 
-            self._pool = data.pool
-
-            -- Calculate total weight
-            self._totalWeight = 0
-            for _, entry in ipairs(self._pool) do
-                self._totalWeight = self._totalWeight + (entry.weight or 0)
-            end
-
-            -- Validate pool has valid entries
-            if self._totalWeight <= 0 then
-                self.Err:Fire({
-                    reason = "invalid_pool",
-                    message = "Pool has no valid weighted entries",
-                    hatcherId = self.id,
-                })
-                self._pool = nil
-            end
-        end,
-
-        --[[
-            Trigger a hatch attempt.
-            Fires costCheck and waits for onCostConfirmed.
-        --]]
-        onHatch = function(self, data)
-            local player = data and data.player
-
-            -- Validate pool is configured
-            if not self._pool then
-                self.Out:Fire("hatchFailed", {
-                    player = player,
-                    reason = "no_pool",
-                    hatcherId = self.id,
-                })
-                return
-            end
-
-            -- Check if already waiting for confirmation
-            if self._pendingHatch then
-                self.Out:Fire("hatchFailed", {
-                    player = player,
-                    reason = "hatch_in_progress",
-                    hatcherId = self.id,
-                })
-                return
-            end
-
-            local cost = self:getAttribute("Cost") or 0
-            local costType = self:getAttribute("CostType") or ""
-
-            -- If no cost, skip cost check
-            if cost <= 0 then
-                self:_executeHatch(player, false)
-                return
-            end
-
-            -- Store pending hatch state
-            self._pendingHatch = {
-                player = player,
-                timestamp = os.clock(),
+    local function getState(self)
+        if not instanceStates[self.id] then
+            instanceStates[self.id] = {
+                pool = nil,
+                totalWeight = 0,
+                pityCounters = {},
+                pendingHatch = nil,
             }
+        end
+        return instanceStates[self.id]
+    end
 
-            -- Fire cost check signal
-            self.Out:Fire("costCheck", {
-                player = player,
-                cost = cost,
-                costType = costType,
-                hatcherId = self.id,
-            })
-
-            -- Wait for confirmation with timeout
-            local timeout = self:getAttribute("CostConfirmTimeout") or 10
-            local confirmed = self:waitForSignal("onCostConfirmed", timeout)
-
-            -- Clear pending state
-            local pendingPlayer = self._pendingHatch and self._pendingHatch.player
-            self._pendingHatch = nil
-
-            if not confirmed then
-                self.Out:Fire("hatchFailed", {
-                    player = pendingPlayer,
-                    reason = "cost_timeout",
-                    hatcherId = self.id,
-                })
-            end
-            -- Note: actual hatch execution happens in onCostConfirmed handler
-        end,
-
-        --[[
-            Response to costCheck signal.
-        --]]
-        onCostConfirmed = function(self, data)
-            if not data then
-                return
-            end
-
-            local approved = data.approved
-            local player = data.player
-
-            -- Verify this matches our pending hatch
-            if not self._pendingHatch then
-                -- No pending hatch - ignore stale confirmation
-                return
-            end
-
-            -- Verify player matches (if both are provided)
-            local pendingPlayer = self._pendingHatch.player
-            if player and pendingPlayer and player ~= pendingPlayer then
-                -- Player mismatch - ignore
-                return
-            end
-
-            local actualPlayer = player or pendingPlayer
-
-            if approved then
-                -- Execute the hatch
-                self:_executeHatch(actualPlayer, false)
-            else
-                -- Clear pending and fire failure
-                self._pendingHatch = nil
-                self.Out:Fire("hatchFailed", {
-                    player = actualPlayer,
-                    reason = "cost_denied",
-                    hatcherId = self.id,
-                })
-            end
-        end,
-
-        --[[
-            Manually set pity counter for a player.
-        --]]
-        onSetPity = function(self, data)
-            if not data or not data.player then
-                return
-            end
-
-            local playerId = self:_getPlayerId(data.player)
-            if playerId then
-                self._pityCounters[playerId] = data.count or 0
-            end
-        end,
-    },
-
-    ----------------------------------------------------------------------------
-    -- OUTPUT SCHEMA (documentation)
-    ----------------------------------------------------------------------------
-
-    Out = {
-        costCheck = {},     -- { player, cost, costType, hatcherId }
-        hatchStarted = {},  -- { player, hatchTime, hatcherId }
-        hatched = {},       -- { player, result, rarity, assetId, pityTriggered, hatcherId }
-        hatchFailed = {},   -- { player, reason, hatcherId }
-    },
-
-    -- Err (detour) signals:
-    -- { reason = "invalid_pool", message, hatcherId }
-    -- { reason = "spawn_failed", message, hatcherId }
-
-    ----------------------------------------------------------------------------
-    -- PRIVATE METHODS
-    ----------------------------------------------------------------------------
+    local function cleanupState(self)
+        instanceStates[self.id] = nil
+    end
 
     --[[
-        Get a consistent player identifier for pity tracking.
+        Private: Get a consistent player identifier for pity tracking.
     --]]
-    _getPlayerId = function(self, player)
+    local function getPlayerId(player)
         if not player then
             return "anonymous"
         end
@@ -366,124 +163,121 @@ local Hatcher = Node.extend({
             return tostring(player.UserId)
         end
         return tostring(player)
-    end,
+    end
 
     --[[
-        Get pity counter for a player.
+        Private: Get pity counter for a player.
     --]]
-    _getPityCount = function(self, player)
-        local playerId = self:_getPlayerId(player)
-        return self._pityCounters[playerId] or 0
-    end,
+    local function getPityCount(self, player)
+        local state = getState(self)
+        local playerId = getPlayerId(player)
+        return state.pityCounters[playerId] or 0
+    end
 
     --[[
-        Increment pity counter for a player.
+        Private: Increment pity counter for a player.
     --]]
-    _incrementPity = function(self, player)
-        local playerId = self:_getPlayerId(player)
-        self._pityCounters[playerId] = (self._pityCounters[playerId] or 0) + 1
-        return self._pityCounters[playerId]
-    end,
+    local function incrementPity(self, player)
+        local state = getState(self)
+        local playerId = getPlayerId(player)
+        state.pityCounters[playerId] = (state.pityCounters[playerId] or 0) + 1
+        return state.pityCounters[playerId]
+    end
 
     --[[
-        Reset pity counter for a player.
+        Private: Reset pity counter for a player.
     --]]
-    _resetPity = function(self, player)
-        local playerId = self:_getPlayerId(player)
-        self._pityCounters[playerId] = 0
-    end,
+    local function resetPity(self, player)
+        local state = getState(self)
+        local playerId = getPlayerId(player)
+        state.pityCounters[playerId] = 0
+    end
 
     --[[
-        Select a random entry from the pool using weighted selection.
+        Private: Select a random entry from the pool using weighted selection.
     --]]
-    _selectFromPool = function(self)
-        if not self._pool or self._totalWeight <= 0 then
+    local function selectFromPool(self)
+        local state = getState(self)
+        if not state.pool or state.totalWeight <= 0 then
             return nil
         end
 
-        local roll = math.random() * self._totalWeight
+        local roll = math.random() * state.totalWeight
         local cumulative = 0
 
-        for _, entry in ipairs(self._pool) do
+        for _, entry in ipairs(state.pool) do
             cumulative = cumulative + (entry.weight or 0)
             if roll <= cumulative then
                 return entry
             end
         end
 
-        -- Fallback to last entry (shouldn't happen with valid weights)
-        return self._pool[#self._pool]
-    end,
+        return state.pool[#state.pool]
+    end
 
     --[[
-        Get the pity item from the pool.
+        Private: Get the pity item from the pool.
     --]]
-    _getPityItem = function(self)
-        if not self._pool then
+    local function getPityItem(self)
+        local state = getState(self)
+        if not state.pool then
             return nil
         end
 
-        for _, entry in ipairs(self._pool) do
+        for _, entry in ipairs(state.pool) do
             if entry.pity then
                 return entry
             end
         end
 
         return nil
-    end,
+    end
 
     --[[
-        Check if pity should trigger for a player.
+        Private: Check if pity should trigger for a player.
     --]]
-    _shouldTriggerPity = function(self, player)
+    local function shouldTriggerPity(self, player)
         local threshold = self:getAttribute("PityThreshold") or 0
         if threshold <= 0 then
             return false
         end
 
-        local count = self:_getPityCount(player)
+        local count = getPityCount(self, player)
         return count >= threshold
-    end,
+    end
 
     --[[
-        Execute the hatch after cost validation.
-
-        @param player Player - The player hatching
-        @param fromPending boolean - Whether this came from pending state resolution
+        Private: Execute the hatch after cost validation.
     --]]
-    _executeHatch = function(self, player, fromPending)
+    local function executeHatch(self, player, fromPending)
+        local state = getState(self)
         local hatchTime = self:getAttribute("HatchTime") or 0
 
-        -- Fire hatch started
         self.Out:Fire("hatchStarted", {
             player = player,
             hatchTime = hatchTime,
             hatcherId = self.id,
         })
 
-        -- Wait for hatch time (in a spawned task to not block)
         task.spawn(function()
             if hatchTime > 0 then
                 task.wait(hatchTime)
             end
 
-            -- Select result
             local pityTriggered = false
             local result
 
-            if self:_shouldTriggerPity(player) then
-                result = self:_getPityItem()
+            if shouldTriggerPity(self, player) then
+                result = getPityItem(self)
                 if result then
                     pityTriggered = true
-                    self:_resetPity(player)
+                    resetPity(self, player)
                 end
             end
 
-            -- If no pity or pity item not found, roll normally
             if not result then
-                result = self:_selectFromPool()
-                -- Increment pity counter (only reset when pity triggers)
-                self:_incrementPity(player)
+                result = selectFromPool(self)
+                incrementPity(self, player)
             end
 
             if not result then
@@ -495,11 +289,9 @@ local Hatcher = Node.extend({
                 return
             end
 
-            -- Spawn the result using SpawnerCore
             local spawnParent = self:getAttribute("SpawnParent")
             local spawnPosition
 
-            -- Determine spawn position
             if self.model and self.model.PrimaryPart then
                 spawnPosition = self.model.PrimaryPart.Position + Vector3.new(0, 3, 0)
             elseif self.model then
@@ -537,7 +329,6 @@ local Hatcher = Node.extend({
                 return
             end
 
-            -- Fire hatched signal
             self.Out:Fire("hatched", {
                 player = player,
                 result = result,
@@ -549,7 +340,205 @@ local Hatcher = Node.extend({
                 hatcherId = self.id,
             })
         end)
-    end,
-})
+    end
+
+    ----------------------------------------------------------------------------
+    -- PUBLIC INTERFACE
+    -- Only this table exists on the node.
+    ----------------------------------------------------------------------------
+
+    return {
+        name = "Hatcher",
+        domain = "server",
+
+        ------------------------------------------------------------------------
+        -- SYSTEM HANDLERS
+        ------------------------------------------------------------------------
+
+        Sys = {
+            onInit = function(self)
+                local state = getState(self)
+
+                if not self:getAttribute("HatchTime") then
+                    self:setAttribute("HatchTime", 0)
+                end
+                if not self:getAttribute("Cost") then
+                    self:setAttribute("Cost", 0)
+                end
+                if not self:getAttribute("CostType") then
+                    self:setAttribute("CostType", "")
+                end
+                if not self:getAttribute("PityThreshold") then
+                    self:setAttribute("PityThreshold", 0)
+                end
+                if not self:getAttribute("CostConfirmTimeout") then
+                    self:setAttribute("CostConfirmTimeout", 10)
+                end
+
+                if not SpawnerCore.isInitialized() then
+                    SpawnerCore.init({})
+                end
+            end,
+
+            onStart = function(self)
+                -- Nothing to do on start - we wait for signals
+            end,
+
+            onStop = function(self)
+                local state = getState(self)
+                state.pendingHatch = nil
+                cleanupState(self)  -- CRITICAL: prevents memory leak
+            end,
+        },
+
+        ------------------------------------------------------------------------
+        -- INPUT HANDLERS
+        ------------------------------------------------------------------------
+
+        In = {
+            onConfigure = function(self, data)
+                if not data or not data.pool or type(data.pool) ~= "table" then
+                    self.Err:Fire({
+                        reason = "invalid_pool",
+                        message = "onConfigure requires { pool: table }",
+                        hatcherId = self.id,
+                    })
+                    return
+                end
+
+                local state = getState(self)
+                state.pool = data.pool
+
+                state.totalWeight = 0
+                for _, entry in ipairs(state.pool) do
+                    state.totalWeight = state.totalWeight + (entry.weight or 0)
+                end
+
+                if state.totalWeight <= 0 then
+                    self.Err:Fire({
+                        reason = "invalid_pool",
+                        message = "Pool has no valid weighted entries",
+                        hatcherId = self.id,
+                    })
+                    state.pool = nil
+                end
+            end,
+
+            onHatch = function(self, data)
+                local state = getState(self)
+                local player = data and data.player
+
+                if not state.pool then
+                    self.Out:Fire("hatchFailed", {
+                        player = player,
+                        reason = "no_pool",
+                        hatcherId = self.id,
+                    })
+                    return
+                end
+
+                if state.pendingHatch then
+                    self.Out:Fire("hatchFailed", {
+                        player = player,
+                        reason = "hatch_in_progress",
+                        hatcherId = self.id,
+                    })
+                    return
+                end
+
+                local cost = self:getAttribute("Cost") or 0
+                local costType = self:getAttribute("CostType") or ""
+
+                if cost <= 0 then
+                    executeHatch(self, player, false)
+                    return
+                end
+
+                state.pendingHatch = {
+                    player = player,
+                    timestamp = os.clock(),
+                }
+
+                self.Out:Fire("costCheck", {
+                    player = player,
+                    cost = cost,
+                    costType = costType,
+                    hatcherId = self.id,
+                })
+
+                local timeout = self:getAttribute("CostConfirmTimeout") or 10
+                local confirmed = self:waitForSignal("onCostConfirmed", timeout)
+
+                local pendingPlayer = state.pendingHatch and state.pendingHatch.player
+                state.pendingHatch = nil
+
+                if not confirmed then
+                    self.Out:Fire("hatchFailed", {
+                        player = pendingPlayer,
+                        reason = "cost_timeout",
+                        hatcherId = self.id,
+                    })
+                end
+            end,
+
+            onCostConfirmed = function(self, data)
+                if not data then
+                    return
+                end
+
+                local state = getState(self)
+                local approved = data.approved
+                local player = data.player
+
+                if not state.pendingHatch then
+                    return
+                end
+
+                local pendingPlayer = state.pendingHatch.player
+                if player and pendingPlayer and player ~= pendingPlayer then
+                    return
+                end
+
+                local actualPlayer = player or pendingPlayer
+
+                if approved then
+                    executeHatch(self, actualPlayer, false)
+                else
+                    state.pendingHatch = nil
+                    self.Out:Fire("hatchFailed", {
+                        player = actualPlayer,
+                        reason = "cost_denied",
+                        hatcherId = self.id,
+                    })
+                end
+            end,
+
+            onSetPity = function(self, data)
+                if not data or not data.player then
+                    return
+                end
+
+                local state = getState(self)
+                local playerId = getPlayerId(data.player)
+                if playerId then
+                    state.pityCounters[playerId] = data.count or 0
+                end
+            end,
+        },
+
+        ------------------------------------------------------------------------
+        -- OUTPUT SIGNALS
+        ------------------------------------------------------------------------
+
+        Out = {
+            costCheck = {},     -- { player, cost, costType, hatcherId }
+            hatchStarted = {},  -- { player, hatchTime, hatcherId }
+            hatched = {},       -- { player, result, rarity, assetId, pityTriggered, hatcherId }
+            hatchFailed = {},   -- { player, reason, hatcherId }
+        },
+
+        -- Err (detour) signals documented in header
+    }
+end)
 
 return Hatcher

@@ -58,6 +58,10 @@ Components.Swivel = require(script.Swivel)
 Components.Targeter = require(script.Targeter)
 Components.Launcher = require(script.Launcher)
 
+-- Projectiles & Beams
+Components.Tracer = require(script.Tracer)
+Components.PlasmaBeam = require(script.PlasmaBeam)
+
 -- Attribute System
 Components.EntityStats = require(script.EntityStats)
 Components.DamageCalculator = require(script.DamageCalculator)

@@ -17,6 +17,10 @@
     - Auto: continuous fire while trigger held, with magazine
     - Beam: continuous beam with heat/power management
 
+    Components:
+    - Tracer: straight-flying projectile with glowing trail
+    - PlasmaBeam: pulsing cyan beam with hit detection
+
     Systems:
     - Magazine capacity and reload
     - Projectile velocity
@@ -113,9 +117,13 @@ function Demo.run(config)
         attributes = {
             fireMode = "manual",
             cooldown = 0.3,
-            projectileVelocity = 80,
+            -- Use Tracer component for projectiles (straight-flying with trail)
+            projectileComponent = "Tracer",
+            projectileVelocity = 150,
             magazineCapacity = 5,
             reloadTime = 1.5,
+            -- Use PlasmaBeam component for beam mode (pulsing cyan beam)
+            beamComponent = "PlasmaBeam",
             beamMaxHeat = 100,
             beamHeatRate = 40,      -- Overheats in ~2.5s
             beamCoolRate = 20,

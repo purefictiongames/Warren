@@ -84,12 +84,14 @@ local LauncherDemoOrchestrator = Orchestrator.extend(function(parent)
                     cooldown = config.cooldown or 0.5,
 
                     -- Projectile
+                    projectileComponent = config.projectileComponent or "",
                     projectileTemplate = config.projectileTemplate or "",
                     projectileVelocity = config.projectileVelocity or 100,
                     magazineCapacity = config.magazineCapacity or -1,
                     reloadTime = config.reloadTime or 1.5,
 
                     -- Beam
+                    beamComponent = config.beamComponent or "",
                     beamIntensity = config.beamIntensity or 1.0,
                     beamMaxHeat = config.beamMaxHeat or 100,
                     beamHeatRate = config.beamHeatRate or 25,

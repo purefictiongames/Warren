@@ -72,12 +72,14 @@
     Cooldown: number (default 0.5) - seconds between shots
 
     -- Projectile
-    ProjectileTemplate: string (optional)
+    ProjectileComponent: string (optional) - component name (e.g., "Tracer")
+    ProjectileTemplate: string (optional) - SpawnerCore template fallback
     ProjectileVelocity: number (default 100) - studs/second
     MagazineCapacity: number (default -1, infinite)
     ReloadTime: number (default 1.5) - seconds
 
     -- Beam
+    BeamComponent: string (optional) - component name (e.g., "PlasmaBeam")
     BeamIntensity: number (default 1.0)
     BeamMaxHeat: number (default 100)
     BeamHeatRate: number (default 25) - heat per second while firing
@@ -120,6 +122,7 @@ local Launcher = Node.extend(function(parent)
 
                 -- Beam state
                 activeBeam = nil,
+                activeBeamComponent = nil,
                 beamHeat = 0,
                 beamPower = 100,
                 isOverheated = false,
@@ -140,6 +143,9 @@ local Launcher = Node.extend(function(parent)
             end
             if state.activeBeam then
                 state.activeBeam:Destroy()
+            end
+            if state.activeBeamComponent then
+                state.activeBeamComponent.Sys.onStop(state.activeBeamComponent)
             end
             if state.muzzleIsDefault and state.muzzle then
                 state.muzzle:Destroy()
@@ -388,9 +394,38 @@ local Launcher = Node.extend(function(parent)
 
         -- Create projectile
         local projectile
+        local projectileComponent = self:getAttribute("ProjectileComponent")
         local templateName = self:getAttribute("ProjectileTemplate")
+        local velocity = self:getAttribute("ProjectileVelocity") or 100
 
-        if templateName and templateName ~= "" then
+        if projectileComponent and projectileComponent ~= "" then
+            -- Use component-based projectile
+            local Components = require(script.Parent)
+            local ComponentClass = Components[projectileComponent]
+
+            if ComponentClass then
+                local comp = ComponentClass:new({
+                    id = self.id .. "_Projectile_" .. tostring(os.clock()),
+                })
+                comp.Sys.onInit(comp)
+                comp.Sys.onStart(comp)
+
+                -- Launch the component
+                comp.In.onLaunch(comp, {
+                    position = muzzlePosition,
+                    direction = direction,
+                    velocity = velocity,
+                })
+
+                -- Get the visual part for the fired signal
+                projectile = comp.model
+            else
+                self.Err:Fire({ reason = "component_not_found", component = projectileComponent })
+                return false
+            end
+
+        elseif templateName and templateName ~= "" then
+            -- Use SpawnerCore template
             local SpawnerCore = require(script.Parent.Parent.Internal.SpawnerCore)
             if not SpawnerCore.isInitialized() then
                 SpawnerCore.init({
@@ -412,22 +447,31 @@ local Launcher = Node.extend(function(parent)
                     projectile.PrimaryPart.Anchored = false
                 end
             end
+
+            -- Apply velocity for template-based projectiles
+            if projectile then
+                local physicsPart = projectile:IsA("BasePart") and projectile or
+                    (projectile:IsA("Model") and projectile.PrimaryPart)
+                if physicsPart then
+                    physicsPart.AssemblyLinearVelocity = direction * velocity
+                end
+            end
+
         else
+            -- Use default projectile
             projectile = createDefaultProjectile(muzzlePosition, direction)
+
+            -- Apply velocity for default projectile
+            local physicsPart = projectile:IsA("BasePart") and projectile or
+                (projectile:IsA("Model") and projectile.PrimaryPart)
+            if physicsPart then
+                physicsPart.AssemblyLinearVelocity = direction * velocity
+            end
         end
 
         if not projectile then
             self.Err:Fire({ reason = "spawn_failed" })
             return false
-        end
-
-        -- Apply velocity
-        local velocity = self:getAttribute("ProjectileVelocity") or 100
-        local physicsPart = projectile:IsA("BasePart") and projectile or
-            (projectile:IsA("Model") and projectile.PrimaryPart)
-
-        if physicsPart then
-            physicsPart.AssemblyLinearVelocity = direction * velocity
         end
 
         -- Consume ammo
@@ -525,6 +569,7 @@ local Launcher = Node.extend(function(parent)
                 end
 
                 -- Default attributes
+                self:setAttribute("ProjectileComponent", self:getAttribute("ProjectileComponent") or "")
                 self:setAttribute("ProjectileTemplate", self:getAttribute("ProjectileTemplate") or "")
                 self:setAttribute("ProjectileVelocity", self:getAttribute("ProjectileVelocity") or 100)
                 self:setAttribute("FireMode", self:getAttribute("FireMode") or "manual")
@@ -532,6 +577,7 @@ local Launcher = Node.extend(function(parent)
                 self:setAttribute("MagazineCapacity", self:getAttribute("MagazineCapacity") or -1)
                 self:setAttribute("ReloadTime", self:getAttribute("ReloadTime") or 1.5)
 
+                self:setAttribute("BeamComponent", self:getAttribute("BeamComponent") or "")
                 self:setAttribute("BeamIntensity", self:getAttribute("BeamIntensity") or 1.0)
                 self:setAttribute("BeamMaxHeat", self:getAttribute("BeamMaxHeat") or 100)
                 self:setAttribute("BeamHeatRate", self:getAttribute("BeamHeatRate") or 25)
@@ -561,6 +607,9 @@ local Launcher = Node.extend(function(parent)
                 if not data then return end
                 local state = getState(self)
 
+                if data.projectileComponent ~= nil then
+                    self:setAttribute("ProjectileComponent", data.projectileComponent)
+                end
                 if data.projectileTemplate ~= nil then
                     self:setAttribute("ProjectileTemplate", data.projectileTemplate)
                 end
@@ -588,6 +637,9 @@ local Launcher = Node.extend(function(parent)
                 end
 
                 -- Beam config
+                if data.beamComponent ~= nil then
+                    self:setAttribute("BeamComponent", data.beamComponent)
+                end
                 if data.beamIntensity then
                     self:setAttribute("BeamIntensity", math.max(0.1, data.beamIntensity))
                 end
@@ -644,9 +696,39 @@ local Launcher = Node.extend(function(parent)
                     local direction = data and data.targetPosition and
                         (data.targetPosition - muzzlePosition).Unit or muzzleDirection
 
-                    local beam = createDefaultBeam(self, direction)
+                    local beamComponent = self:getAttribute("BeamComponent")
                     local intensity = self:getAttribute("BeamIntensity") or 1.0
-                    self.Out:Fire("beamStart", { beam = beam, intensity = intensity })
+
+                    if beamComponent and beamComponent ~= "" then
+                        -- Use component-based beam
+                        local Components = require(script.Parent)
+                        local ComponentClass = Components[beamComponent]
+
+                        if ComponentClass then
+                            local comp = ComponentClass:new({
+                                id = self.id .. "_Beam",
+                            })
+                            comp.Sys.onInit(comp)
+                            comp.Sys.onStart(comp)
+
+                            -- Activate the beam
+                            comp.In.onActivate(comp, {
+                                origin = state.muzzle,
+                                direction = direction,
+                            })
+
+                            state.activeBeamComponent = comp
+                            self.Out:Fire("beamStart", { beam = comp.model, intensity = intensity })
+                        else
+                            self.Err:Fire({ reason = "component_not_found", component = beamComponent })
+                            return
+                        end
+                    else
+                        -- Use default beam
+                        local beam = createDefaultBeam(self, direction)
+                        self.Out:Fire("beamStart", { beam = beam, intensity = intensity })
+                    end
+
                     startBeamUpdate(self, direction)
                 end
             end,
@@ -661,7 +743,16 @@ local Launcher = Node.extend(function(parent)
                     stopAutoFire(self)
                 elseif fireMode == "beam" then
                     stopBeamUpdate(self)
-                    destroyBeam(self)
+
+                    -- Deactivate beam component if used
+                    if state.activeBeamComponent then
+                        state.activeBeamComponent.In.onDeactivate(state.activeBeamComponent, {})
+                        state.activeBeamComponent.Sys.onStop(state.activeBeamComponent)
+                        state.activeBeamComponent = nil
+                    else
+                        destroyBeam(self)
+                    end
+
                     self.Out:Fire("beamEnd", {})
                     startIdleCooldown(self)
                 end

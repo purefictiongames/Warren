@@ -42,6 +42,7 @@
     ATTRIBUTES
     ============================================================================
 
+    Velocity: number (default 200) - studs/second
     Lifetime: number (default 5) - seconds before auto-destroy
     MaxDistance: number (default 500) - studs before auto-destroy
     TrailColor: Color3 (default bright yellow)
@@ -246,6 +247,7 @@ local Tracer = Node.extend(function(parent)
                 end
 
                 -- Default attributes
+                self:setAttribute("Velocity", self:getAttribute("Velocity") or 200)
                 self:setAttribute("Lifetime", self:getAttribute("Lifetime") or 5)
                 self:setAttribute("MaxDistance", self:getAttribute("MaxDistance") or 500)
                 self:setAttribute("TrailColor", self:getAttribute("TrailColor") or Color3.new(1, 0.9, 0.3))
@@ -267,6 +269,9 @@ local Tracer = Node.extend(function(parent)
             onConfigure = function(self, data)
                 if not data then return end
 
+                if data.velocity then
+                    self:setAttribute("Velocity", math.max(1, data.velocity))
+                end
                 if data.lifetime then
                     self:setAttribute("Lifetime", math.max(0.1, data.lifetime))
                 end
@@ -289,7 +294,7 @@ local Tracer = Node.extend(function(parent)
                 state.launched = true
 
                 state.direction = data.direction and data.direction.Unit or Vector3.new(0, 0, -1)
-                state.velocity = data.velocity or 100
+                state.velocity = self:getAttribute("Velocity")
 
                 -- Set initial position
                 if data.position then

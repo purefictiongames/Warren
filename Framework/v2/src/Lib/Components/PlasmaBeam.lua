@@ -142,7 +142,6 @@ local PlasmaBeam = Node.extend(function(parent)
         impact.Color = color
         impact.Material = Enum.Material.Neon
         impact.Transparency = 0.3
-        impact.Visible = false
         impact.Parent = workspace
 
         -- Impact light
@@ -154,6 +153,7 @@ local PlasmaBeam = Node.extend(function(parent)
         impactLight.Parent = impact
 
         state.impactPart = impact
+        state.impactPart.Transparency = 1  -- Start hidden
 
         return beam
     end
@@ -219,11 +219,11 @@ local PlasmaBeam = Node.extend(function(parent)
 
         -- Update impact effect
         if hitSomething then
-            state.impactPart.Visible = true
+            state.impactPart.Transparency = 0.3
             state.impactPart.Position = endPos
             state.impactPart.Size = Vector3.new(pulseWidth * 3, pulseWidth * 3, pulseWidth * 3)
         else
-            state.impactPart.Visible = false
+            state.impactPart.Transparency = 1
         end
     end
 
@@ -253,7 +253,7 @@ local PlasmaBeam = Node.extend(function(parent)
             state.beamPart.Transparency = 1
         end
         if state.impactPart then
-            state.impactPart.Visible = false
+            state.impactPart.Transparency = 1
         end
     end
 

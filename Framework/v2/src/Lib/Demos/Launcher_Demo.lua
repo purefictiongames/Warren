@@ -118,11 +118,12 @@ function Demo.run(config)
             fireMode = "manual",
             cooldown = 0.3,
             -- Use Tracer component for projectiles (straight-flying with trail)
+            -- Tracer owns its own velocity (default 200 studs/sec)
             projectileComponent = "Tracer",
-            projectileVelocity = 150,
             magazineCapacity = 5,
             reloadTime = 1.5,
             -- Use PlasmaBeam component for beam mode (pulsing cyan beam)
+            -- PlasmaBeam owns its own width/color/pulse settings
             beamComponent = "PlasmaBeam",
             beamMaxHeat = 100,
             beamHeatRate = 40,      -- Overheats in ~2.5s

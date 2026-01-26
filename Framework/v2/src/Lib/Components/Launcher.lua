@@ -410,11 +410,10 @@ local Launcher = Node.extend(function(parent)
                 comp.Sys.onInit(comp)
                 comp.Sys.onStart(comp)
 
-                -- Launch the component
+                -- Launch the component (component defines its own velocity)
                 comp.In.onLaunch(comp, {
                     position = muzzlePosition,
                     direction = direction,
-                    velocity = velocity,
                 })
 
                 -- Get the visual part for the fired signal

@@ -79,282 +79,333 @@ local System = require(script.Parent.Parent.System)
 local AttributeSet = require(script.Parent.Parent.Internal.AttributeSet)
 
 --------------------------------------------------------------------------------
--- ENTITYSTATS NODE
+-- ENTITYSTATS NODE (Closure-Based Privacy Pattern)
 --------------------------------------------------------------------------------
 
-local EntityStats = Node.extend({
-    name = "EntityStats",
-    domain = "server",  -- Server authoritative
+local EntityStats = Node.extend(function(parent)
+    ----------------------------------------------------------------------------
+    -- PRIVATE SCOPE
+    -- Nothing here exists on the node instance.
+    ----------------------------------------------------------------------------
 
-    --------------------------------------------------------------------------------
-    -- SYSTEM HANDLERS
-    --------------------------------------------------------------------------------
+    -- Per-instance state registry (keyed by instance.id)
+    local instanceStates = {}
 
-    Sys = {
-        onInit = function(self)
-            self._attributeSet = nil
-            self._entityId = nil
-            self._configured = false
+    local function getState(self)
+        if not instanceStates[self.id] then
+            instanceStates[self.id] = {
+                attributeSet = nil,
+                entityId = nil,
+                configured = false,
+            }
+        end
+        return instanceStates[self.id]
+    end
 
-            System.Debug.trace("EntityStats", "Initialized:", self.id)
-        end,
+    local function cleanupState(self)
+        instanceStates[self.id] = nil
+    end
 
-        onStart = function(self)
-            System.Debug.trace("EntityStats", "Started:", self.id)
-        end,
+    ----------------------------------------------------------------------------
+    -- PUBLIC INTERFACE
+    -- Only this table exists on the node.
+    ----------------------------------------------------------------------------
 
-        onStop = function(self)
-            -- Clean up attribute set
-            if self._attributeSet then
-                self._attributeSet = nil
-            end
-            System.Debug.trace("EntityStats", "Stopped:", self.id)
-        end,
-    },
+    return {
+        name = "EntityStats",
+        domain = "server",  -- Server authoritative
 
-    --------------------------------------------------------------------------------
-    -- INPUT HANDLERS
-    --------------------------------------------------------------------------------
+        ------------------------------------------------------------------------
+        -- SYSTEM HANDLERS
+        ------------------------------------------------------------------------
 
-    In = {
-        --[[
-            Configure the attribute set with schema.
+        Sys = {
+            onInit = function(self)
+                local state = getState(self)
+                state.attributeSet = nil
+                state.entityId = nil
+                state.configured = false
 
-            @param data.schema table - Attribute definitions
-            @param data.entityId string - Entity identifier
-            @param data.initialValues table? - Optional initial values
-        --]]
-        onConfigure = function(self, data)
-            if self._configured then
-                System.Debug.warn("EntityStats", "Already configured:", self.id)
-                return
-            end
+                System.Debug.trace("EntityStats", "Initialized:", self.id)
+            end,
 
-            if not data.schema then
-                System.Debug.warn("EntityStats", "No schema provided")
-                return
-            end
+            onStart = function(self)
+                System.Debug.trace("EntityStats", "Started:", self.id)
+            end,
 
-            self._entityId = data.entityId or self.id
-
-            -- Create attribute set
-            self._attributeSet = AttributeSet.new(data.schema)
-
-            -- Apply initial values
-            if data.initialValues then
-                for attrName, value in pairs(data.initialValues) do
-                    self._attributeSet:setBase(attrName, value)
+            onStop = function(self)
+                -- Clean up attribute set
+                local state = getState(self)
+                if state.attributeSet then
+                    state.attributeSet = nil
                 end
-            end
+                System.Debug.trace("EntityStats", "Stopped:", self.id)
+                cleanupState(self)  -- CRITICAL: prevents memory leak
+            end,
+        },
 
-            -- Subscribe to all changes
-            self._attributeSet:subscribeAll(function(attrName, newValue, oldValue)
-                self.Out:Fire("attributeChanged", {
-                    entityId = self._entityId,
-                    attribute = attrName,
-                    value = newValue,
-                    oldValue = oldValue,
-                })
+        ------------------------------------------------------------------------
+        -- INPUT HANDLERS
+        ------------------------------------------------------------------------
 
-                -- Death detection
-                if attrName == "health" and newValue <= 0 then
-                    self.Out:Fire("died", {
-                        entityId = self._entityId,
+        In = {
+            --[[
+                Configure the attribute set with schema.
+
+                @param data.schema table - Attribute definitions
+                @param data.entityId string - Entity identifier
+                @param data.initialValues table? - Optional initial values
+            --]]
+            onConfigure = function(self, data)
+                local state = getState(self)
+
+                if state.configured then
+                    System.Debug.warn("EntityStats", "Already configured:", self.id)
+                    return
+                end
+
+                if not data.schema then
+                    System.Debug.warn("EntityStats", "No schema provided")
+                    return
+                end
+
+                state.entityId = data.entityId or self.id
+
+                -- Create attribute set
+                state.attributeSet = AttributeSet.new(data.schema)
+
+                -- Apply initial values
+                if data.initialValues then
+                    for attrName, value in pairs(data.initialValues) do
+                        state.attributeSet:setBase(attrName, value)
+                    end
+                end
+
+                -- Subscribe to all changes
+                state.attributeSet:subscribeAll(function(attrName, newValue, oldValue)
+                    self.Out:Fire("attributeChanged", {
+                        entityId = state.entityId,
+                        attribute = attrName,
+                        value = newValue,
+                        oldValue = oldValue,
                     })
-                    System.Debug.info("EntityStats", "Entity died:", self._entityId)
+
+                    -- Death detection
+                    if attrName == "health" and newValue <= 0 then
+                        self.Out:Fire("died", {
+                            entityId = state.entityId,
+                        })
+                        System.Debug.info("EntityStats", "Entity died:", state.entityId)
+                    end
+                end)
+
+                state.configured = true
+                System.Debug.info("EntityStats", "Configured:", state.entityId)
+            end,
+
+            --[[
+                Apply a modifier to an attribute.
+
+                @param data.attribute string - Attribute name
+                @param data.operation string - "additive", "multiplicative", "override"
+                @param data.value number - Modifier value
+                @param data.source string - Source identifier
+            --]]
+            onApplyModifier = function(self, data)
+                local state = getState(self)
+
+                if not state.attributeSet then
+                    System.Debug.warn("EntityStats", "Not configured, cannot apply modifier")
+                    return
                 end
-            end)
 
-            self._configured = true
-            System.Debug.info("EntityStats", "Configured:", self._entityId)
-        end,
-
-        --[[
-            Apply a modifier to an attribute.
-
-            @param data.attribute string - Attribute name
-            @param data.operation string - "additive", "multiplicative", "override"
-            @param data.value number - Modifier value
-            @param data.source string - Source identifier
-        --]]
-        onApplyModifier = function(self, data)
-            if not self._attributeSet then
-                System.Debug.warn("EntityStats", "Not configured, cannot apply modifier")
-                return
-            end
-
-            local modId = self._attributeSet:applyModifier(data.attribute, {
-                operation = data.operation,
-                value = data.value,
-                source = data.source,
-                priority = data.priority,
-            })
-
-            if modId then
-                self.Out:Fire("modifierApplied", {
-                    entityId = self._entityId,
-                    attribute = data.attribute,
-                    modifierId = modId,
+                local modId = state.attributeSet:applyModifier(data.attribute, {
+                    operation = data.operation,
+                    value = data.value,
                     source = data.source,
+                    priority = data.priority,
                 })
 
-                System.Debug.trace("EntityStats", "Modifier applied:",
-                    data.attribute, data.operation, data.value, "from", data.source)
-            end
-        end,
-
-        --[[
-            Remove modifier(s).
-
-            @param data.modifierId number? - Specific modifier ID
-            @param data.source string? - Remove all from source
-        --]]
-        onRemoveModifier = function(self, data)
-            if not self._attributeSet then
-                System.Debug.warn("EntityStats", "Not configured, cannot remove modifier")
-                return
-            end
-
-            if data.modifierId then
-                local success = self._attributeSet:removeModifier(data.modifierId)
-                if success then
-                    self.Out:Fire("modifierRemoved", {
-                        entityId = self._entityId,
-                        modifierId = data.modifierId,
-                    })
-                end
-            elseif data.source then
-                local count = self._attributeSet:removeModifiersFromSource(data.source)
-                if count > 0 then
-                    self.Out:Fire("modifierRemoved", {
-                        entityId = self._entityId,
+                if modId then
+                    self.Out:Fire("modifierApplied", {
+                        entityId = state.entityId,
+                        attribute = data.attribute,
+                        modifierId = modId,
                         source = data.source,
-                        count = count,
                     })
-                    System.Debug.trace("EntityStats", "Removed", count, "modifiers from", data.source)
+
+                    System.Debug.trace("EntityStats", "Modifier applied:",
+                        data.attribute, data.operation, data.value, "from", data.source)
                 end
+            end,
+
+            --[[
+                Remove modifier(s).
+
+                @param data.modifierId number? - Specific modifier ID
+                @param data.source string? - Remove all from source
+            --]]
+            onRemoveModifier = function(self, data)
+                local state = getState(self)
+
+                if not state.attributeSet then
+                    System.Debug.warn("EntityStats", "Not configured, cannot remove modifier")
+                    return
+                end
+
+                if data.modifierId then
+                    local success = state.attributeSet:removeModifier(data.modifierId)
+                    if success then
+                        self.Out:Fire("modifierRemoved", {
+                            entityId = state.entityId,
+                            modifierId = data.modifierId,
+                        })
+                    end
+                elseif data.source then
+                    local count = state.attributeSet:removeModifiersFromSource(data.source)
+                    if count > 0 then
+                        self.Out:Fire("modifierRemoved", {
+                            entityId = state.entityId,
+                            source = data.source,
+                            count = count,
+                        })
+                        System.Debug.trace("EntityStats", "Removed", count, "modifiers from", data.source)
+                    end
+                end
+            end,
+
+            --[[
+                Set base value directly.
+
+                @param data.attribute string - Attribute name
+                @param data.value number - New base value
+            --]]
+            onSetAttribute = function(self, data)
+                local state = getState(self)
+
+                if not state.attributeSet then
+                    System.Debug.warn("EntityStats", "Not configured, cannot set attribute")
+                    return
+                end
+
+                state.attributeSet:setBase(data.attribute, data.value)
+                System.Debug.trace("EntityStats", "Set", data.attribute, "to", data.value)
+            end,
+
+            --[[
+                Query current attribute value.
+
+                @param data.attribute string - Attribute name
+                @param data.queryId any - Correlation ID for response
+            --]]
+            onQueryAttribute = function(self, data)
+                local state = getState(self)
+
+                if not state.attributeSet then
+                    System.Debug.warn("EntityStats", "Not configured, cannot query")
+                    return
+                end
+
+                local value = state.attributeSet:get(data.attribute)
+
+                self.Out:Fire("attributeQueried", {
+                    entityId = state.entityId,
+                    attribute = data.attribute,
+                    value = value,
+                    queryId = data.queryId,
+                })
+            end,
+        },
+
+        ------------------------------------------------------------------------
+        -- OUTPUT SIGNALS
+        ------------------------------------------------------------------------
+
+        Out = {
+            attributeChanged = {},   -- { entityId, attribute, value, oldValue }
+            attributeQueried = {},   -- { entityId, attribute, value, queryId }
+            died = {},               -- { entityId }
+            modifierApplied = {},    -- { entityId, attribute, modifierId, source }
+            modifierRemoved = {},    -- { entityId, modifierId?, source?, count? }
+        },
+
+        ------------------------------------------------------------------------
+        -- PUBLIC METHODS
+        -- These are intentionally exposed for direct attribute queries.
+        -- EntityStats exposes AttributeSet methods as PUBLIC by design.
+        ------------------------------------------------------------------------
+
+        --[[
+            Get current value of an attribute.
+
+            @param attrName string
+            @return any
+        --]]
+        get = function(self, attrName)
+            local state = getState(self)
+            if not state.attributeSet then
+                return nil
             end
+            return state.attributeSet:get(attrName)
         end,
 
         --[[
-            Set base value directly.
+            Get base value of an attribute.
 
-            @param data.attribute string - Attribute name
-            @param data.value number - New base value
+            @param attrName string
+            @return any
         --]]
-        onSetAttribute = function(self, data)
-            if not self._attributeSet then
-                System.Debug.warn("EntityStats", "Not configured, cannot set attribute")
-                return
+        getBase = function(self, attrName)
+            local state = getState(self)
+            if not state.attributeSet then
+                return nil
             end
-
-            self._attributeSet:setBase(data.attribute, data.value)
-            System.Debug.trace("EntityStats", "Set", data.attribute, "to", data.value)
+            return state.attributeSet:getBase(attrName)
         end,
 
         --[[
-            Query current attribute value.
+            Get all current values.
 
-            @param data.attribute string - Attribute name
-            @param data.queryId any - Correlation ID for response
+            @return table
         --]]
-        onQueryAttribute = function(self, data)
-            if not self._attributeSet then
-                System.Debug.warn("EntityStats", "Not configured, cannot query")
-                return
+        getAll = function(self)
+            local state = getState(self)
+            if not state.attributeSet then
+                return {}
             end
-
-            local value = self._attributeSet:get(data.attribute)
-
-            self.Out:Fire("attributeQueried", {
-                entityId = self._entityId,
-                attribute = data.attribute,
-                value = value,
-                queryId = data.queryId,
-            })
+            return state.attributeSet:getAll()
         end,
-    },
 
-    --------------------------------------------------------------------------------
-    -- OUTPUT SIGNALS
-    --------------------------------------------------------------------------------
+        --[[
+            Get entity ID.
 
-    Out = {
-        attributeChanged = {},   -- { entityId, attribute, value, oldValue }
-        attributeQueried = {},   -- { entityId, attribute, value, queryId }
-        died = {},               -- { entityId }
-        modifierApplied = {},    -- { entityId, attribute, modifierId, source }
-        modifierRemoved = {},    -- { entityId, modifierId?, source?, count? }
-    },
+            @return string
+        --]]
+        getEntityId = function(self)
+            local state = getState(self)
+            return state.entityId
+        end,
 
-    --------------------------------------------------------------------------------
-    -- PUBLIC METHODS
-    --------------------------------------------------------------------------------
+        --[[
+            Check if configured.
 
-    --[[
-        Get current value of an attribute.
+            @return boolean
+        --]]
+        isConfigured = function(self)
+            local state = getState(self)
+            return state.configured
+        end,
 
-        @param attrName string
-        @return any
-    --]]
-    get = function(self, attrName)
-        if not self._attributeSet then
-            return nil
-        end
-        return self._attributeSet:get(attrName)
-    end,
+        --[[
+            Get the underlying AttributeSet.
 
-    --[[
-        Get base value of an attribute.
-
-        @param attrName string
-        @return any
-    --]]
-    getBase = function(self, attrName)
-        if not self._attributeSet then
-            return nil
-        end
-        return self._attributeSet:getBase(attrName)
-    end,
-
-    --[[
-        Get all current values.
-
-        @return table
-    --]]
-    getAll = function(self)
-        if not self._attributeSet then
-            return {}
-        end
-        return self._attributeSet:getAll()
-    end,
-
-    --[[
-        Get entity ID.
-
-        @return string
-    --]]
-    getEntityId = function(self)
-        return self._entityId
-    end,
-
-    --[[
-        Check if configured.
-
-        @return boolean
-    --]]
-    isConfigured = function(self)
-        return self._configured
-    end,
-
-    --[[
-        Get the underlying AttributeSet.
-
-        @return AttributeSet|nil
-    --]]
-    getAttributeSet = function(self)
-        return self._attributeSet
-    end,
-})
+            @return AttributeSet|nil
+        --]]
+        getAttributeSet = function(self)
+            local state = getState(self)
+            return state.attributeSet
+        end,
+    }
+end)
 
 return EntityStats

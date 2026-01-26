@@ -234,6 +234,21 @@ local SwivelDemoOrchestrator = Orchestrator.extend(function(parent)
                 end
             end,
 
+            -- Direct angle control
+            onSetYawAngle = function(self, data)
+                local state = getState(self)
+                if state.yawSwivel then
+                    state.yawSwivel.In.onSetAngle(state.yawSwivel, data)
+                end
+            end,
+
+            onSetPitchAngle = function(self, data)
+                local state = getState(self)
+                if state.pitchSwivel then
+                    state.pitchSwivel.In.onSetAngle(state.pitchSwivel, data)
+                end
+            end,
+
             -- Keep old handlers for backwards compatibility with single-swivel
             onRotate = function(self, data)
                 local state = getState(self)

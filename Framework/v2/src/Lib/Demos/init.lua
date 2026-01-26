@@ -53,6 +53,13 @@
         Items spawn, travel along waypoints, and get collected.
         Controls: dispense(count), setInterval(), start(), stop()
 
+    SwivelLauncher (Composite):
+        Full turret weapon system with yaw/pitch swivels, launcher,
+        external magazine (Dropper), and external battery.
+        Supports auto, semi, and beam fire modes.
+        Controls: setMode(), fire(), rotateYaw(), rotatePitch(),
+                  setYaw(), setPitch(), reload(), stop()
+
 --]]
 
 local RunService = game:GetService("RunService")
@@ -113,6 +120,7 @@ local demoModules = {
     Conveyor = "Conveyor_Demo",
     Combat = "Combat_Demo",
     ShootingGallery = "ShootingGallery_Demo",
+    SwivelLauncher = "SwivelLauncher_Demo",
 }
 
 setmetatable(Demos, {

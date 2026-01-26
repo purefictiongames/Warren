@@ -50,6 +50,7 @@ Components.NodePool = require(script.NodePool)
 
 -- Composition
 Components.Orchestrator = require(script.Orchestrator)
+Components.SwivelDemoOrchestrator = require(script.SwivelDemoOrchestrator)
 
 -- Turret System
 Components.Swivel = require(script.Swivel)

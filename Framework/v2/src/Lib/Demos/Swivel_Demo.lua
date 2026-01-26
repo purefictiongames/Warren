@@ -1,122 +1,68 @@
 --[[
     LibPureFiction Framework v2
-    Swivel Component Demo - Physics-Based with Signal Architecture
+    Swivel_Demo.lua - Automated Dual-Swivel Turret Demonstration
 
-    Demonstrates physics-based Swivel using HingeConstraint servos.
-    Uses Out:Fire / In signal pattern, not direct handler calls.
+    Copyright (c) 2025 Adam Stearns / Pure Fiction Records LLC
+    All rights reserved.
+
+    ============================================================================
+    OVERVIEW
+    ============================================================================
+
+    Demonstrates a turret-style dual-swivel system:
+    - Yaw swivel: Rotates left/right (Y-axis) - blue part
+    - Pitch swivel: Rotates up/down (X-axis) - green part, mounted on yaw
+
+    Architecture:
+    - Uses SwivelDemoOrchestrator (extended Orchestrator)
+    - All control via In signals
+    - All state via Out signals
+    - Fully automated
 
     ============================================================================
     USAGE
     ============================================================================
 
-    In Studio Command Bar:
-
     ```lua
     local Demos = require(game.ReplicatedStorage.Lib.Demos)
-    local demo = Demos.Swivel.run()
-
-    -- Controls:
-    demo.rotateForward()   -- Start rotating forward
-    demo.rotateReverse()   -- Start rotating reverse
-    demo.stop()            -- Stop rotation
-    demo.setAngle(45)      -- Set to specific angle
-    demo.cleanup()         -- Remove demo objects
+    Demos.Swivel.run()
     ```
 
 --]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
 local Lib = require(ReplicatedStorage:WaitForChild("Lib"))
 
-local Node = require(ReplicatedStorage.Lib.Node)
-local Swivel = Lib.Components.Swivel
+local SwivelDemoOrchestrator = Lib.Components.SwivelDemoOrchestrator
 
 local Demo = {}
 
---------------------------------------------------------------------------------
--- SWIVEL CONTROLLER NODE
--- Fires signals to control swivel, receives signals back
---------------------------------------------------------------------------------
-
-local SwivelController = Node.extend({
-    name = "SwivelController",
-    domain = "server",
-
-    Sys = {
-        onInit = function(self)
-            self._currentAngle = 0
-        end,
-    },
-
-    In = {
-        -- Receive rotation updates from Swivel
-        onRotated = function(self, data)
-            self._currentAngle = data.angle
-        end,
-
-        onLimitReached = function(self, data)
-            -- Could trigger reverse, notification, etc.
-        end,
-
-        onStopped = function(self)
-            -- Rotation stopped
-        end,
-    },
-
-    Out = {
-        rotate = {},      -- -> Swivel.In.onRotate
-        stop = {},        -- -> Swivel.In.onStop
-        setAngle = {},    -- -> Swivel.In.onSetAngle
-        configure = {},   -- -> Swivel.In.onConfigure
-    },
-
-    -- Controller methods that fire signals
-    rotateForward = function(self)
-        self.Out:Fire("rotate", { direction = "forward" })
-    end,
-
-    rotateReverse = function(self)
-        self.Out:Fire("rotate", { direction = "reverse" })
-    end,
-
-    stopRotation = function(self)
-        self.Out:Fire("stop", {})
-    end,
-
-    setTargetAngle = function(self, degrees)
-        self.Out:Fire("setAngle", { degrees = degrees })
-    end,
-
-    setMode = function(self, mode)
-        self.Out:Fire("configure", { mode = mode })
-    end,
-
-    setSpeed = function(self, speed)
-        self.Out:Fire("configure", { speed = speed })
-    end,
-
-    setLimits = function(self, min, max)
-        self.Out:Fire("configure", { minAngle = min, maxAngle = max })
-    end,
-})
-
---------------------------------------------------------------------------------
--- DEMO
---------------------------------------------------------------------------------
-
 function Demo.run(config)
     config = config or {}
-    local position = config.position or Vector3.new(0, 10, 0)
+    local position = config.position or Vector3.new(0, 5, 0)
 
     ---------------------------------------------------------------------------
-    -- CLEANUP EXISTING DEMO (handles Studio persistence between runs)
+    -- CLEANUP ALL OLD DEMOS
     ---------------------------------------------------------------------------
 
-    local existingDemo = workspace:FindFirstChild("Swivel_Demo")
-    if existingDemo then
-        existingDemo:Destroy()
+    local demosToClean = {
+        "Swivel_Demo",
+        "Turret_Demo",
+        "Launcher_Demo",
+        "Targeter_Demo",
+        "ShootingGallery_Demo",
+        "Conveyor_Demo",
+        "Combat_Demo",
+    }
+
+    for _, demoName in ipairs(demosToClean) do
+        local existing = workspace:FindFirstChild(demoName)
+        if existing then
+            existing:Destroy()
+        end
     end
+
+    task.wait(0.1)
 
     ---------------------------------------------------------------------------
     -- CREATE VISUAL SETUP
@@ -126,281 +72,166 @@ function Demo.run(config)
     demoFolder.Name = "Swivel_Demo"
     demoFolder.Parent = workspace
 
-    -- Base platform (stationary)
-    local base = Instance.new("Part")
-    base.Name = "Base"
-    base.Size = Vector3.new(6, 1, 6)
-    base.Position = position - Vector3.new(0, 1, 0)
-    base.Anchored = true
-    base.BrickColor = BrickColor.new("Dark stone grey")
-    base.Material = Enum.Material.Metal
-    base.Parent = demoFolder
+    -- Yaw part (base rotating part) - rotates left/right
+    local yawPart = Instance.new("Part")
+    yawPart.Name = "YawPart"
+    yawPart.Size = Vector3.new(3, 1, 3)
+    yawPart.Position = position
+    yawPart.Anchored = false
+    yawPart.CanCollide = false
+    yawPart.BrickColor = BrickColor.new("Bright blue")
+    yawPart.Material = Enum.Material.SmoothPlastic
+    yawPart.Parent = demoFolder
 
-    -- Rotating turret head (will be unanchored by Swivel for physics)
-    local turretHead = Instance.new("Part")
-    turretHead.Name = "TurretHead"
-    turretHead.Size = Vector3.new(4, 2, 4)
-    turretHead.CFrame = CFrame.new(position)
-    turretHead.Anchored = false  -- Physics-driven
-    turretHead.CanCollide = false
-    turretHead.BrickColor = BrickColor.new("Bright blue")
-    turretHead.Material = Enum.Material.SmoothPlastic
-    turretHead.Parent = demoFolder
+    -- Pitch part (mounted on yaw) - rotates up/down
+    local pitchPart = Instance.new("Part")
+    pitchPart.Name = "PitchPart"
+    pitchPart.Size = Vector3.new(2, 1, 3)
+    pitchPart.Position = position + Vector3.new(0, 1, 0)
+    pitchPart.Anchored = false
+    pitchPart.CanCollide = false
+    pitchPart.BrickColor = BrickColor.new("Bright green")
+    pitchPart.Material = Enum.Material.SmoothPlastic
+    pitchPart.Parent = demoFolder
 
-    -- Direction indicator (barrel) - welded to turretHead
-    local barrel = Instance.new("Part")
-    barrel.Name = "Barrel"
-    barrel.Size = Vector3.new(0.8, 0.8, 4)
-    barrel.CFrame = turretHead.CFrame * CFrame.new(0, 0, -2)
-    barrel.Anchored = false  -- Physics-driven via weld
-    barrel.CanCollide = false
-    barrel.BrickColor = BrickColor.new("Really red")
-    barrel.Material = Enum.Material.Neon
-    barrel.Parent = demoFolder
-
-    -- Weld barrel to turret head (physics constraint keeps them together)
-    local weld = Instance.new("WeldConstraint")
-    weld.Part0 = turretHead
-    weld.Part1 = barrel
-    weld.Parent = turretHead
-
-    -- Angle display
+    -- Status display
     local billboardGui = Instance.new("BillboardGui")
-    billboardGui.Size = UDim2.new(0, 200, 0, 50)
+    billboardGui.Size = UDim2.new(0, 200, 0, 60)
     billboardGui.StudsOffset = Vector3.new(0, 4, 0)
     billboardGui.AlwaysOnTop = true
-    billboardGui.Parent = turretHead
+    billboardGui.Parent = pitchPart
 
-    local angleLabel = Instance.new("TextLabel")
-    angleLabel.Size = UDim2.new(1, 0, 1, 0)
-    angleLabel.BackgroundTransparency = 0.3
-    angleLabel.BackgroundColor3 = Color3.new(0, 0, 0)
-    angleLabel.TextColor3 = Color3.new(1, 1, 1)
-    angleLabel.TextScaled = true
-    angleLabel.Font = Enum.Font.Code
-    angleLabel.Text = "PHYSICS-BASED\nAngle: 0"
-    angleLabel.Parent = billboardGui
+    local statusLabel = Instance.new("TextLabel")
+    statusLabel.Size = UDim2.new(1, 0, 1, 0)
+    statusLabel.BackgroundTransparency = 0.3
+    statusLabel.BackgroundColor3 = Color3.new(0, 0, 0)
+    statusLabel.TextColor3 = Color3.new(1, 1, 1)
+    statusLabel.TextScaled = true
+    statusLabel.Font = Enum.Font.Code
+    statusLabel.Text = "INIT"
+    statusLabel.Parent = billboardGui
 
     ---------------------------------------------------------------------------
-    -- CREATE NODES
+    -- CREATE ORCHESTRATOR
     ---------------------------------------------------------------------------
 
-    -- Swivel with anchor (base) - creates HingeConstraint for smooth physics rotation
-    local swivel = Swivel:new({
-        id = "Demo_Swivel",
-        model = turretHead,
-        anchor = base,  -- Hinge attaches turretHead to base
+    local orchestrator = SwivelDemoOrchestrator:new({
+        id = "Demo_SwivelOrchestrator",
+        model = yawPart,
+        attributes = {
+            pitchModel = pitchPart,
+            yawConfig = {
+                speed = 45,
+                minAngle = -90,
+                maxAngle = 90,
+            },
+            pitchConfig = {
+                speed = 30,
+                minAngle = -30,
+                maxAngle = 60,
+            },
+        },
     })
-    swivel.Sys.onInit(swivel)
-    swivel.Sys.onStart(swivel)  -- Start monitoring for angle signals
-
-    -- Configure swivel (setup phase - direct call OK per ARCHITECTURE.md)
-    swivel.In.onConfigure(swivel, {
-        axis = "Y",
-        mode = "continuous",
-        speed = 60,  -- Degrees per second
-        minAngle = -90,
-        maxAngle = 90,
-    })
-
-    -- Controller
-    local controller = SwivelController:new({ id = "Demo_SwivelController" })
-    controller.Sys.onInit(controller)
 
     ---------------------------------------------------------------------------
-    -- WIRE SIGNALS (manual wiring for demo - in production IPC does this)
+    -- SUBSCRIBE TO SIGNALS
     ---------------------------------------------------------------------------
 
-    -- Controller.Out -> Swivel.In
-    controller.Out = {
-        Fire = function(self, signal, data)
-            if signal == "rotate" then
-                swivel.In.onRotate(swivel, data)
-            elseif signal == "stop" then
-                swivel.In.onStop(swivel)
-            elseif signal == "setAngle" then
-                swivel.In.onSetAngle(swivel, data)
-            elseif signal == "configure" then
-                swivel.In.onConfigure(swivel, data)
-            end
-        end,
-    }
+    local yawAngle = 0
+    local pitchAngle = 0
 
-    -- Swivel.Out -> Controller.In + UI updates
-    swivel.Out = {
-        Fire = function(self, signal, data)
-            if signal == "rotated" then
-                controller.In.onRotated(controller, data)
-                angleLabel.Text = string.format("PHYSICS-BASED\nAngle: %.1f", data.angle)
-            elseif signal == "limitReached" then
-                controller.In.onLimitReached(controller, data)
-                angleLabel.Text = string.format("LIMIT: %s", data.limit:upper())
-                -- Flash the barrel
-                local originalColor = barrel.BrickColor
-                barrel.BrickColor = BrickColor.new("Bright yellow")
-                task.delay(0.2, function()
-                    if barrel.Parent then
-                        barrel.BrickColor = originalColor
-                    end
-                end)
-            elseif signal == "stopped" then
-                angleLabel.Text = string.format("PHYSICS-BASED\nStopped: %.1f", swivel:getCurrentAngle())
-            end
-        end,
-    }
-
-    -- No manual CFrame updates needed - physics handles everything via:
-    -- - HingeConstraint servo rotates turretHead
-    -- - WeldConstraint keeps barrel attached to turretHead
-
-    ---------------------------------------------------------------------------
-    -- DEMO CONTROLS (fire signals through controller)
-    ---------------------------------------------------------------------------
-
-    local controls = {}
-
-    function controls.rotateForward()
-        controller:rotateForward()
-    end
-
-    function controls.rotateReverse()
-        controller:rotateReverse()
-    end
-
-    function controls.stop()
-        controller:stopRotation()
-    end
-
-    function controls.setAngle(degrees)
-        controller:setTargetAngle(degrees)
-    end
-
-    function controls.setMode(mode)
-        controller:setMode(mode)
-    end
-
-    function controls.setSpeed(speed)
-        controller:setSpeed(speed)
-    end
-
-    function controls.setLimits(min, max)
-        controller:setLimits(min, max)
-    end
-
-    function controls.cleanup()
-        swivel.Sys.onStop(swivel)  -- Cleans up HingeConstraint and attachments
-        demoFolder:Destroy()
-    end
-
-    function controls.getSwivel()
-        return swivel
-    end
-
-    function controls.getController()
-        return controller
+    local originalOutFire = orchestrator.Out.Fire
+    orchestrator.Out.Fire = function(outSelf, signal, data)
+        if signal == "yawRotated" and data and data.angle then
+            yawAngle = data.angle
+            statusLabel.Text = string.format("Y:%.0f P:%.0f", yawAngle, pitchAngle)
+        elseif signal == "pitchRotated" and data and data.angle then
+            pitchAngle = data.angle
+            statusLabel.Text = string.format("Y:%.0f P:%.0f", yawAngle, pitchAngle)
+        elseif signal == "yawLimitReached" or signal == "pitchLimitReached" then
+            statusLabel.Text = "LIMIT"
+        end
+        originalOutFire(outSelf, signal, data)
     end
 
     ---------------------------------------------------------------------------
-    -- AUTO-DEMO (runs by default)
+    -- INITIALIZE AND START
     ---------------------------------------------------------------------------
 
-    local autoDemo = config.autoDemo ~= false  -- Default to true
+    orchestrator.Sys.onInit(orchestrator)
+    orchestrator.Sys.onStart(orchestrator)
 
-    if autoDemo then
-        task.spawn(function()
-            print("============================================")
-            print("  PHYSICS-BASED SWIVEL DEMO")
-            print("============================================")
-            print("")
-            print("Architecture:")
-            print("  base       - Anchored (fixed)")
-            print("  turretHead - HingeConstraint servo (Y axis)")
-            print("  barrel     - WeldConstraint to turretHead")
-            print("")
-            print("All motion via physics - no CFrame manipulation!")
-            print("")
-            print("Starting automated showcase...")
-            print("")
+    ---------------------------------------------------------------------------
+    -- AUTOMATED DEMO SEQUENCE
+    ---------------------------------------------------------------------------
 
-            task.wait(1)
+    task.spawn(function()
+        print("=== DUAL SWIVEL DEMO ===")
+        print("Yaw (blue): left/right rotation")
+        print("Pitch (green): up/down rotation")
+        print("")
 
-            -- Phase 1: Continuous rotation forward
-            print("[Phase 1] Continuous rotation forward...")
-            controls.rotateForward()
+        task.wait(1)
+
+        while demoFolder.Parent do
+            -- Phase 1: Yaw left
+            print("Yaw: rotating left...")
+            statusLabel.Text = "YAW LEFT"
+            orchestrator.In.onRotateYaw(orchestrator, { direction = "forward" })
             task.wait(3)
+            if not demoFolder.Parent then break end
+            orchestrator.In.onStopYaw(orchestrator, {})
+            task.wait(0.5)
 
-            -- Phase 2: Stop and hold
-            print("[Phase 2] Stopping and holding position...")
-            controls.stop()
-            task.wait(1)
+            -- Phase 2: Pitch up
+            print("Pitch: rotating up...")
+            statusLabel.Text = "PITCH UP"
+            orchestrator.In.onRotatePitch(orchestrator, { direction = "forward" })
+            task.wait(2)
+            if not demoFolder.Parent then break end
+            orchestrator.In.onStopPitch(orchestrator, {})
+            task.wait(0.5)
 
-            -- Phase 3: Continuous rotation reverse
-            print("[Phase 3] Continuous rotation reverse...")
-            controls.rotateReverse()
+            -- Phase 3: Yaw right
+            print("Yaw: rotating right...")
+            statusLabel.Text = "YAW RIGHT"
+            orchestrator.In.onRotateYaw(orchestrator, { direction = "reverse" })
             task.wait(3)
+            if not demoFolder.Parent then break end
+            orchestrator.In.onStopYaw(orchestrator, {})
+            task.wait(0.5)
 
-            -- Phase 4: Stop at center
-            print("[Phase 4] Return to center (0 degrees)...")
-            controls.setAngle(0)
+            -- Phase 4: Pitch down
+            print("Pitch: rotating down...")
+            statusLabel.Text = "PITCH DOWN"
+            orchestrator.In.onRotatePitch(orchestrator, { direction = "reverse" })
             task.wait(2)
+            if not demoFolder.Parent then break end
+            orchestrator.In.onStopPitch(orchestrator, {})
+            task.wait(0.5)
 
-            -- Phase 5: Servo mode - specific angles
-            print("[Phase 5] Servo mode - moving to specific angles...")
-            for _, angle in ipairs({45, -45, 90, -90, 0}) do
-                if not demoFolder.Parent then return end
-                print("  -> Setting angle to " .. angle .. " degrees")
-                controls.setAngle(angle)
-                task.wait(2)
-            end
-
-            -- Phase 6: Speed change demo
-            print("[Phase 6] High speed rotation...")
-            controls.setSpeed(180)  -- Fast
-            controls.rotateForward()
+            -- Phase 5: Both at once
+            print("Both: rotating together...")
+            statusLabel.Text = "BOTH"
+            orchestrator.In.onRotateYaw(orchestrator, { direction = "forward" })
+            orchestrator.In.onRotatePitch(orchestrator, { direction = "forward" })
             task.wait(2)
-            controls.rotateReverse()
-            task.wait(2)
-            controls.stop()
-            controls.setSpeed(60)  -- Reset to normal
-
+            if not demoFolder.Parent then break end
+            orchestrator.In.onStop(orchestrator, {})
             task.wait(1)
+        end
+    end)
 
-            print("")
-            print("============================================")
-            print("  DEMO COMPLETE")
-            print("============================================")
-            print("")
-            print("Manual controls available:")
-            print("  demo.rotateForward()  - Motor mode, continuous")
-            print("  demo.rotateReverse()  - Motor mode, continuous")
-            print("  demo.stop()           - Stop and hold position")
-            print("  demo.setAngle(45)     - Servo mode, smooth move")
-            print("  demo.setSpeed(90)     - Change rotation speed")
-            print("  demo.cleanup()        - Remove demo")
-            print("")
-        end)
-    else
-        print("============================================")
-        print("  PHYSICS-BASED SWIVEL DEMO")
-        print("============================================")
-        print("")
-        print("Architecture:")
-        print("  base       - Anchored (fixed)")
-        print("  turretHead - HingeConstraint servo (Y axis)")
-        print("  barrel     - WeldConstraint to turretHead")
-        print("")
-        print("All motion via physics - no CFrame manipulation!")
-        print("")
-        print("Controls:")
-        print("  demo.rotateForward()  - Motor mode, continuous")
-        print("  demo.rotateReverse()  - Motor mode, continuous")
-        print("  demo.stop()           - Stop and hold position")
-        print("  demo.setAngle(45)     - Servo mode, smooth move")
-        print("  demo.cleanup()        - Remove demo")
-        print("")
-    end
+    ---------------------------------------------------------------------------
+    -- CLEANUP
+    ---------------------------------------------------------------------------
 
-    return controls
+    demoFolder.AncestryChanged:Connect(function(_, parent)
+        if not parent then
+            print("Demo cleanup...")
+            orchestrator.Sys.onStop(orchestrator)
+        end
+    end)
 end
 
 return Demo

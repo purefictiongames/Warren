@@ -579,45 +579,6 @@ local Swivel = Node.extend(function(parent)
             stopped = {},      -- {}
         },
 
-        ------------------------------------------------------------------------
-        -- PUBLIC QUERY METHODS (intentionally exposed)
-        ------------------------------------------------------------------------
-
-        --[[
-            Get current angle.
-        --]]
-        getCurrentAngle = function(self)
-            local state = getState(self)
-            if state.hinge then
-                return state.hinge.CurrentAngle
-            end
-            return state.currentAngle
-        end,
-
-        --[[
-            Check if currently rotating.
-        --]]
-        isRotating = function(self)
-            local state = getState(self)
-            return state.rotating
-        end,
-
-        --[[
-            Check if servo has reached target (within tolerance).
-        --]]
-        isAtTarget = function(self)
-            local state = getState(self)
-            if not state.hinge then return true end
-            return math.abs(state.hinge.CurrentAngle - state.targetAngle) < 1
-        end,
-
-        --[[
-            Get the HingeConstraint (for advanced usage).
-        --]]
-        getHinge = function(self)
-            local state = getState(self)
-            return state.hinge
-        end,
     }
 end)
 

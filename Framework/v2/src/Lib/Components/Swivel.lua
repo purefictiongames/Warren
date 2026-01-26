@@ -200,7 +200,10 @@ local Swivel = Node.extend(function(parent)
     --]]
     local function stopRotation(self)
         local state = getState(self)
-        if not state.hinge then return end
+        if not state.hinge then
+            warn("[Swivel] " .. self.id .. " - stopRotation: NO HINGE!")
+            return
+        end
 
         local wasRotating = state.rotating
         state.rotating = false
@@ -211,6 +214,7 @@ local Swivel = Node.extend(function(parent)
         state.targetAngle = state.hinge.CurrentAngle
 
         if wasRotating then
+            print("[Swivel] " .. self.id .. " - stopRotation: stopped at angle " .. state.hinge.CurrentAngle)
             self.Out:Fire("stopped", {})
         end
     end
@@ -253,7 +257,14 @@ local Swivel = Node.extend(function(parent)
     --]]
     local function startContinuousRotation(self)
         local state = getState(self)
-        if not state.hinge then return end
+        if not state.hinge then
+            warn("[Swivel] " .. self.id .. " - startContinuousRotation: NO HINGE!")
+            return
+        end
+        if not state.hinge.Parent then
+            warn("[Swivel] " .. self.id .. " - startContinuousRotation: HINGE HAS NO PARENT!")
+            return
+        end
 
         state.rotating = true
         local speed = self:getAttribute("Speed") or 90
@@ -261,6 +272,8 @@ local Swivel = Node.extend(function(parent)
         -- Switch to Motor mode for continuous rotation
         state.hinge.ActuatorType = Enum.ActuatorType.Motor
         state.hinge.AngularVelocity = math.rad(speed) * state.direction
+
+        print("[Swivel] " .. self.id .. " - startContinuousRotation: direction=" .. state.direction .. ", speed=" .. speed)
     end
 
     --[[
@@ -320,16 +333,22 @@ local Swivel = Node.extend(function(parent)
             end
 
             -- Check for limits during continuous rotation
+            -- Only stop if rotating TOWARD the limit, not away from it
             if state.rotating then
                 local minAngle = self:getAttribute("MinAngle") or -180
                 local maxAngle = self:getAttribute("MaxAngle") or 180
+                local direction = state.direction or 1
 
-                if currentAngle <= minAngle + 0.5 and lastLimitSignal ~= "min" then
+                -- Only trigger min limit if rotating toward min (direction < 0)
+                if currentAngle <= minAngle + 0.5 and direction < 0 and lastLimitSignal ~= "min" then
                     lastLimitSignal = "min"
+                    print("[Swivel] " .. self.id .. " - HIT MIN LIMIT at " .. currentAngle)
                     self.Out:Fire("limitReached", { limit = "min" })
                     stopRotation(self)
-                elseif currentAngle >= maxAngle - 0.5 and lastLimitSignal ~= "max" then
+                -- Only trigger max limit if rotating toward max (direction > 0)
+                elseif currentAngle >= maxAngle - 0.5 and direction > 0 and lastLimitSignal ~= "max" then
                     lastLimitSignal = "max"
+                    print("[Swivel] " .. self.id .. " - HIT MAX LIMIT at " .. currentAngle)
                     self.Out:Fire("limitReached", { limit = "max" })
                     stopRotation(self)
                 else

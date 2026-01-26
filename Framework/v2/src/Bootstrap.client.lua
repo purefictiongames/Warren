@@ -86,6 +86,31 @@ IPC.start()
 -- Lib.System.State.init()
 -- Lib.System.View.init()
 
+--------------------------------------------------------------------------------
+-- CLEANUP ON SHUTDOWN
+--------------------------------------------------------------------------------
+-- Ensure all nodes are properly stopped when the client disconnects.
+-- This disconnects all RunService connections and cleans up state.
+
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+
+-- Cleanup when local player is removed (game closing or leaving)
+if LocalPlayer then
+    LocalPlayer.AncestryChanged:Connect(function(_, parent)
+        if not parent then
+            Debug.info("Bootstrap", "Client shutting down...")
+            Lib.System.stopAll()
+            Debug.info("Bootstrap", "Client shutdown complete")
+        end
+    end)
+end
+
+-- Note: game:BindToClose is server-only. For client cleanup, rely on:
+-- 1. LocalPlayer.AncestryChanged (fires when player leaves)
+-- 2. Node's auto-cleanup when model is destroyed
+-- 3. Manual Tests.stopAll() or System.stopAll() before running tests
+
 Debug.info("Bootstrap", "Client ready")
 
 --------------------------------------------------------------------------------

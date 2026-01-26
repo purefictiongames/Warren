@@ -148,4 +148,17 @@ IPC.start()
 -- Lib.System.State.init()
 -- Lib.System.Store.init()
 
+--------------------------------------------------------------------------------
+-- CLEANUP ON SHUTDOWN
+--------------------------------------------------------------------------------
+-- Ensure all nodes are properly stopped when the game closes.
+-- This disconnects all RunService connections and cleans up state.
+
+game:BindToClose(function()
+    Debug.info("Bootstrap", "Server shutting down...")
+    Lib.System.stopAll()
+    Log.shutdown()
+    Debug.info("Bootstrap", "Server shutdown complete")
+end)
+
 Debug.info("Bootstrap", "Server ready")

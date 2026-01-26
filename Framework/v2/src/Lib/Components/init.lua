@@ -62,6 +62,9 @@ Components.Launcher = require(script.Launcher)
 Components.Tracer = require(script.Tracer)
 Components.PlasmaBeam = require(script.PlasmaBeam)
 
+-- Power
+Components.Battery = require(script.Battery)
+
 -- Attribute System
 Components.EntityStats = require(script.EntityStats)
 Components.DamageCalculator = require(script.DamageCalculator)

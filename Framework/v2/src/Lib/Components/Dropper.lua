@@ -111,6 +111,21 @@
     SpawnOffset: Vector3 (default 0,0,0)
         Offset from dropper position for spawn location
 
+    Visible: boolean (default true)
+        Whether the dropper visual part is visible
+
+    Size: Vector3 (default 1, 1.5, 1)
+        Size of default dropper part (if no model provided)
+
+    WeldTo: BasePart (default nil)
+        If provided, welds the default dropper part to this part
+
+    WeldOffset: CFrame (default CFrame.new(-2, 0, 0))
+        Offset from WeldTo part (only used if WeldTo is set)
+
+    Position: Vector3 (default 0, 5, 0)
+        Absolute position for default part (only used if WeldTo is nil)
+
     ============================================================================
     CONFIGURATION
     ============================================================================
@@ -199,13 +214,120 @@ local Dropper = Node.extend(function(parent)
                 remaining = nil,           -- Remaining spawns (nil = unlimited)
                 spawnPosition = nil,       -- Override spawn position
                 componentMode = false,     -- If true, spawn Components instead of templates
+                -- Visual
+                part = nil,
+                partIsDefault = false,
+                weld = nil,
             }
         end
         return instanceStates[self.id]
     end
 
     local function cleanupState(self)
+        local state = instanceStates[self.id]
+        if state then
+            -- Destroy weld if we created it
+            if state.weld then
+                state.weld:Destroy()
+            end
+            -- Destroy default part if we created it
+            if state.partIsDefault and state.part then
+                state.part:Destroy()
+            end
+        end
         instanceStates[self.id] = nil
+    end
+
+    --[[
+        Private: Update part color based on ammo level.
+        Green (full) → Yellow (mid) → Red (empty)
+    --]]
+    local function updatePartColor(self)
+        local state = getState(self)
+        if not state.part then return end
+
+        -- If no capacity (unlimited), stay green
+        if state.capacity == nil or state.capacity <= 0 then
+            state.part.Color = Color3.new(0, 1, 0)  -- Green
+            return
+        end
+
+        local percent = (state.remaining or 0) / state.capacity
+
+        -- Color gradient: Red (0%) → Yellow (50%) → Green (100%)
+        local color
+        if percent > 0.5 then
+            -- Green to Yellow (100% to 50%)
+            local t = (percent - 0.5) * 2  -- 0 to 1
+            color = Color3.new(1 - t, 1, 0)  -- Yellow to Green
+        else
+            -- Yellow to Red (50% to 0%)
+            local t = percent * 2  -- 0 to 1
+            color = Color3.new(1, t, 0)  -- Red to Yellow
+        end
+
+        state.part.Color = color
+    end
+
+    --[[
+        Private: Update part visibility based on attribute.
+    --]]
+    local function updateVisibility(self)
+        local state = getState(self)
+        local visible = self:getAttribute("Visible")
+        if visible == nil then visible = true end
+
+        if state.part then
+            state.part.Transparency = visible and 0 or 1
+        end
+    end
+
+    --[[
+        Private: Create a default dropper/magazine part.
+        If weldTo is provided, welds the part to that reference with an offset.
+    --]]
+    local function createDefaultPart(self, weldTo)
+        local state = getState(self)
+
+        local size = self:getAttribute("Size") or Vector3.new(1, 1.5, 1)
+        local visible = self:getAttribute("Visible")
+        if visible == nil then visible = true end
+
+        local part = Instance.new("Part")
+        part.Name = self.id .. "_Magazine"
+        part.Size = size
+        part.CanCollide = false
+        part.Color = Color3.new(0, 1, 0)  -- Start green (full)
+        part.Material = Enum.Material.Neon
+        part.Transparency = visible and 0 or 1
+
+        -- Position and weld to reference part if provided
+        if weldTo and weldTo:IsA("BasePart") then
+            -- Get offset from config or use default (to the left side)
+            local offset = self:getAttribute("WeldOffset") or CFrame.new(-2, 0, 0)
+
+            part.CFrame = weldTo.CFrame * offset
+            part.Anchored = false
+            part.Parent = weldTo.Parent or workspace
+
+            -- Create weld
+            local weld = Instance.new("WeldConstraint")
+            weld.Part0 = weldTo
+            weld.Part1 = part
+            weld.Parent = part
+            state.weld = weld
+        else
+            -- No reference, use absolute position
+            local position = self:getAttribute("Position") or Vector3.new(0, 5, 0)
+            part.Position = position
+            part.Anchored = true
+            part.Parent = workspace
+        end
+
+        state.part = part
+        state.partIsDefault = true
+
+        return part
     end
 
     --[[
@@ -446,6 +568,9 @@ local Dropper = Node.extend(function(parent)
                 dropperId = self.id,
             })
 
+            -- Update visual color
+            updatePartColor(self)
+
             -- Fire depleted if capacity exhausted
             if state.remaining <= 0 then
                 self.Out:Fire("depleted", { dropperId = self.id })
@@ -565,6 +690,28 @@ local Dropper = Node.extend(function(parent)
                 if self:getAttribute("AutoStart") == nil then
                     self:setAttribute("AutoStart", false)
                 end
+                if self:getAttribute("Visible") == nil then
+                    self:setAttribute("Visible", true)
+                end
+
+                -- Set up visual part
+                if self.model then
+                    -- Use provided model
+                    if self.model:IsA("BasePart") then
+                        state.part = self.model
+                    elseif self.model:IsA("Model") and self.model.PrimaryPart then
+                        state.part = self.model.PrimaryPart
+                    end
+                    state.partIsDefault = false
+                else
+                    -- Create default part, optionally welded to a reference part
+                    local weldTo = self:getAttribute("WeldTo")
+                    createDefaultPart(self, weldTo)
+                end
+
+                -- Apply initial visibility and color
+                updateVisibility(self)
+                updatePartColor(self)
 
                 -- Auto-start if configured
                 if self:getAttribute("AutoStart") then
@@ -624,6 +771,9 @@ local Dropper = Node.extend(function(parent)
                         max = state.capacity,
                         dropperId = self.id,
                     })
+
+                    -- Update visual color
+                    updatePartColor(self)
 
                     self.Out:Fire("refilled", {
                         current = state.remaining,
@@ -693,6 +843,9 @@ local Dropper = Node.extend(function(parent)
                         max = state.capacity,
                         dropperId = self.id,
                     })
+
+                    -- Update visual color
+                    updatePartColor(self)
                 end
 
                 -- Reload time (for magazine use case)
@@ -823,6 +976,9 @@ local Dropper = Node.extend(function(parent)
                 end
 
                 self:setAttribute("Remaining", state.remaining)
+
+                -- Update visual color
+                updatePartColor(self)
 
                 -- Fire refilled signal
                 self.Out:Fire("refilled", {

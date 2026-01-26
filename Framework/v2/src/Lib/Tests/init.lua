@@ -5,9 +5,12 @@
     Usage in Studio Command Bar:
 
     ```lua
-    -- Run all tests
+    -- Stop all running nodes first (stops demos, cleans up connections)
     local Tests = require(game.ReplicatedStorage.Lib.Tests)
-    Tests.IPC.runAll()
+    Tests.stopAll()
+
+    -- Run all tests
+    Tests.Battery.runAll()
 
     -- Run specific group
     Tests.IPC.runGroup("Node")
@@ -19,7 +22,42 @@
     ```
 --]]
 
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
 local Tests = {}
+
+--[[
+    Stop all running nodes and clean up connections.
+    Call this before running tests to ensure a clean state.
+
+    This stops:
+    - All IPC-managed instances
+    - All nodes in Node.Registry (including demos)
+    - All Heartbeat/RunService connections owned by nodes
+--]]
+function Tests.stopAll()
+    local Lib = require(ReplicatedStorage:WaitForChild("Lib"))
+
+    -- Just call System.stopAll() - nodes now auto-cleanup when their models are destroyed
+    -- The Registry disconnects model connections first to prevent double-stop
+    local result = Lib.System.stopAll()
+    print("[Tests] Stopped all nodes - IPC:", result.ipcStopped, "Registry:", result.registryStopped)
+
+    -- Clean up any orphaned demo folders (in case models weren't parented to them)
+    local demosToClean = {
+        "Swivel_Demo", "Turret_Demo", "Launcher_Demo", "Targeter_Demo",
+        "ShootingGallery_Demo", "Conveyor_Demo", "Combat_Demo",
+    }
+
+    for _, demoName in ipairs(demosToClean) do
+        local existing = workspace:FindFirstChild(demoName)
+        if existing then
+            existing:Destroy()
+        end
+    end
+
+    return result
+end
 
 -- Safe require wrapper that reports errors instead of failing silently
 local function safeRequire(name, module)
@@ -54,6 +92,9 @@ Tests.Orchestrator = safeRequire("Orchestrator_Tests", script:WaitForChild("Orch
 Tests.Swivel = safeRequire("Swivel_Tests", script:WaitForChild("Swivel_Tests"))
 Tests.Targeter = safeRequire("Targeter_Tests", script:WaitForChild("Targeter_Tests"))
 Tests.Launcher = safeRequire("Launcher_Tests", script:WaitForChild("Launcher_Tests"))
+
+-- Power
+Tests.Battery = safeRequire("Battery_Tests", script:WaitForChild("Battery_Tests"))
 
 -- Attribute System
 Tests.AttributeSet = safeRequire("AttributeSet_Tests", script:WaitForChild("AttributeSet_Tests"))

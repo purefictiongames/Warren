@@ -498,6 +498,30 @@ function Node:new(config)
         end
     end
 
+    -- Auto-register with Node.Registry for global lifecycle management
+    -- This ensures all nodes can be stopped via Registry.stopAll()
+    Node.Registry.register(instance)
+
+    -- Auto-cleanup when model is destroyed
+    -- This ensures nodes stop gracefully when their model is removed from workspace
+    if instance.model and typeof(instance.model) == "Instance" then
+        instance._modelConnection = instance.model.AncestryChanged:Connect(function(_, parent)
+            if not parent then
+                -- Model was destroyed - stop the node
+                if instance.Sys and instance.Sys.onStop then
+                    instance.Sys.onStop(instance)
+                end
+                -- Disconnect this connection
+                if instance._modelConnection then
+                    instance._modelConnection:Disconnect()
+                    instance._modelConnection = nil
+                end
+                -- Unregister from Registry
+                Node.Registry.unregister(instance.id)
+            end
+        end)
+    end
+
     return instance
 end
 
@@ -921,10 +945,19 @@ Node.Registry = (function()
             id = generateId(className)
         end
 
+        -- Build inheritance chain as names (not class objects)
+        local inheritanceNames = {}
+        if node.getInheritanceChain then
+            for _, ancestorClass in ipairs(node:getInheritanceChain()) do
+                local name = ancestorClass.name or "Node"
+                table.insert(inheritanceNames, name)
+            end
+        end
+
         -- Build metadata
         local meta = {
             class = className,
-            inheritanceChain = node.getInheritanceChain and node:getInheritanceChain() or {},
+            inheritanceChain = inheritanceNames,
             spawnSource = options.spawnSource,
             status = options.status,
             tags = options.tags or {},
@@ -1293,6 +1326,52 @@ Node.Registry = (function()
         nodes = {}
         metadata = {}
         classCounters = {}
+    end
+
+    --[[
+        Stop all registered nodes.
+
+        Calls Sys.onStop on every registered node, then clears the registry.
+        Use this to cleanly shut down all nodes (e.g., before running tests).
+
+        @return number - Count of nodes stopped
+    --]]
+    function Registry.stopAll()
+        local count = 0
+        local idsToStop = {}
+
+        -- Collect IDs first (avoid modifying during iteration)
+        for id in pairs(nodes) do
+            table.insert(idsToStop, id)
+        end
+
+        -- Stop each node
+        for _, id in ipairs(idsToStop) do
+            local node = nodes[id]
+            if node then
+                -- Disconnect model connection first (prevents double-stop from AncestryChanged)
+                if node._modelConnection then
+                    node._modelConnection:Disconnect()
+                    node._modelConnection = nil
+                end
+
+                -- Call onStop
+                if node.Sys and node.Sys.onStop then
+                    local success, err = pcall(function()
+                        node.Sys.onStop(node)
+                    end)
+                    if not success then
+                        warn("[Node.Registry.stopAll] Error stopping " .. id .. ": " .. tostring(err))
+                    end
+                end
+                count = count + 1
+            end
+        end
+
+        -- Clear registry
+        Registry.reset()
+
+        return count
     end
 
     ---------------------------------------------------------------------------

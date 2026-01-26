@@ -3582,4 +3582,55 @@ System.State = {}    -- Shared state management
 System.Store = {}    -- Persistent storage
 System.View = {}     -- Presentation layer
 
+--------------------------------------------------------------------------------
+-- GLOBAL LIFECYCLE
+--------------------------------------------------------------------------------
+
+--[[
+    Stop all running nodes across the entire framework.
+
+    This is a convenience function that:
+    1. Stops all IPC-managed instances (calls IPC.stop())
+    2. Stops all nodes in Node.Registry (calls Registry.stopAll())
+
+    Use this to cleanly shut down everything before running tests,
+    switching game modes, or cleaning up demos.
+
+    @return table - { ipcStopped: boolean, registryStopped: number }
+--]]
+function System.stopAll()
+    local result = {
+        ipcStopped = false,
+        registryStopped = 0,
+    }
+
+    -- Stop IPC-managed instances
+    if System.IPC then
+        local success, err = pcall(function()
+            System.IPC.stop()
+        end)
+        result.ipcStopped = success
+        if not success then
+            System.Debug.warn("System", "IPC.stop() error:", tostring(err))
+        end
+    end
+
+    -- Stop all nodes in Registry
+    local Node = require(script.Parent.Node)
+    if Node and Node.Registry then
+        local success, count = pcall(function()
+            return Node.Registry.stopAll()
+        end)
+        if success then
+            result.registryStopped = count
+        else
+            System.Debug.warn("System", "Registry.stopAll() error:", tostring(count))
+        end
+    end
+
+    System.Debug.info("System", "stopAll complete - IPC:", result.ipcStopped, "Registry:", result.registryStopped)
+
+    return result
+end
+
 return System

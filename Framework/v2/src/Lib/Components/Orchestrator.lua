@@ -161,6 +161,7 @@ local Orchestrator = Node.extend(function(parent)
                 -- State
                 enabled = false,
                 currentMode = "",
+                isStopped = false,     -- Guard against double-stop
             }
         end
         return instanceStates[self.id]
@@ -634,6 +635,14 @@ local Orchestrator = Node.extend(function(parent)
             end,
 
             onStop = function(self)
+                local state = getState(self)
+
+                -- Guard against double-stop
+                if state.isStopped then
+                    return
+                end
+                state.isStopped = true
+
                 disableRouting(self)
                 despawnAllNodes(self)
                 cleanupState(self)  -- CRITICAL: prevents memory leak

@@ -12,23 +12,35 @@
     LauncherDemoOrchestrator manages a projectile launcher with all fire modes:
     - manual, semi, auto, beam
     - External Magazine (Dropper) for ammo via IPC
-    - Beam heat/power management
+    - External Battery for beam power via IPC
+    - Beam heat management (internal to Launcher)
 
     Uses parent Orchestrator's declarative wiring system for Launcher ↔ Magazine
-    communication. The handshake pattern auto-discovers the external magazine.
+    and Launcher ↔ Battery communication. The handshake pattern auto-discovers
+    external components.
 
     ============================================================================
     WIRING (declarative, handled by parent Orchestrator)
     ============================================================================
 
-    Handshake:
+    Magazine Handshake:
         Launcher.discoverMagazine → Magazine.onDiscoverMagazine
         Magazine.magazinePresent  → Launcher.onMagazinePresent
 
-    Runtime:
+    Magazine Runtime:
         Launcher.requestAmmo   → Magazine.onDispense
         Launcher.requestReload → Magazine.onRequestReload
         Magazine.spawned       → Launcher.onAmmoReceived
+
+    Battery Handshake:
+        Launcher.discoverBattery → Battery.onDiscoverBattery
+        Battery.batteryPresent   → Launcher.onBatteryPresent
+
+    Battery Runtime:
+        Launcher.drawPower      → Battery.onDraw
+        Battery.powerDrawn      → Launcher.onPowerDrawn
+        Battery.powerDepleted   → Launcher.onBatteryDepleted
+        Battery.powerRestored   → Launcher.onBatteryRestored
 
     ============================================================================
     SIGNALS
@@ -84,6 +96,19 @@ local LauncherDemoOrchestrator = Orchestrator.extend(function(parent)
                                 componentName = config.projectileComponent or "Tracer",
                                 capacity = config.magazineCapacity or 30,
                                 reloadTime = config.reloadTime or 1.5,
+                                -- Weld to the launcher's muzzle, offset to the left
+                                WeldTo = self.model,
+                                WeldOffset = CFrame.new(-1.5, 0, 0),  -- Left side of muzzle
+                            },
+                        },
+                        Battery = {
+                            class = "Battery",
+                            config = {
+                                capacity = config.batteryCapacity or 100,
+                                rechargeRate = config.batteryRechargeRate or 15,
+                                -- Weld to the launcher's muzzle, offset to the right
+                                WeldTo = self.model,
+                                WeldOffset = CFrame.new(1.5, 0, 0),  -- Right side of muzzle
                             },
                         },
                     },
@@ -101,6 +126,18 @@ local LauncherDemoOrchestrator = Orchestrator.extend(function(parent)
                         -- Runtime: Magazine → Launcher
                         { from = "Magazine", signal = "spawned", to = "Launcher", handler = "onAmmoReceived" },
 
+                        -- Battery handshake
+                        { from = "Launcher", signal = "discoverBattery", to = "Battery", handler = "onDiscoverBattery" },
+                        { from = "Battery", signal = "batteryPresent", to = "Launcher", handler = "onBatteryPresent" },
+
+                        -- Runtime: Launcher → Battery
+                        { from = "Launcher", signal = "drawPower", to = "Battery", handler = "onDraw" },
+
+                        -- Runtime: Battery → Launcher
+                        { from = "Battery", signal = "powerDrawn", to = "Launcher", handler = "onPowerDrawn" },
+                        { from = "Battery", signal = "powerDepleted", to = "Launcher", handler = "onBatteryDepleted" },
+                        { from = "Battery", signal = "powerRestored", to = "Launcher", handler = "onBatteryRestored" },
+
                         -- Forward to orchestrator's Out (for HUD / external consumers)
                         { from = "Launcher", signal = "fired", to = "Out" },
                         { from = "Launcher", signal = "ready", to = "Out" },
@@ -111,6 +148,7 @@ local LauncherDemoOrchestrator = Orchestrator.extend(function(parent)
                         { from = "Launcher", signal = "cooledDown", to = "Out" },
                         { from = "Launcher", signal = "powerChanged", to = "Out" },
                         { from = "Launcher", signal = "powerDepleted", to = "Out" },
+                        { from = "Launcher", signal = "powerRestored", to = "Out" },
 
                         { from = "Magazine", signal = "ammoChanged", to = "Out" },
                         { from = "Magazine", signal = "reloadStarted", to = "Out" },
@@ -183,6 +221,7 @@ local LauncherDemoOrchestrator = Orchestrator.extend(function(parent)
             cooledDown = {},
             powerChanged = {},
             powerDepleted = {},
+            powerRestored = {},
 
             -- Error
             error = {},

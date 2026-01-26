@@ -79,6 +79,25 @@
         cooledDown({})
         powerChanged({ current, max, percent })
         powerDepleted({})
+        powerRestored({})
+
+        -- External battery (IPC) - discovery + runtime
+        discoverBattery({ launcherId })
+            - Handshake: sent at onStart to discover external battery
+        drawPower({ amount, launcherId })
+            - Request power from external battery each frame while beam active
+            - Wire to: Battery.In.onDraw
+
+    IN (receives) - Battery:
+        onBatteryPresent({ batteryId, capacity, current })
+            - Handshake response from Battery
+            - Sets hasExternalBattery = true, bypasses internal power
+        onPowerDrawn({ granted, remaining, capacity })
+            - Response from Battery after draw request
+        onBatteryDepleted({})
+            - Battery has no power remaining
+        onBatteryRestored({})
+            - Battery has power again after depletion
 
     ============================================================================
     ATTRIBUTES
@@ -149,6 +168,10 @@ local Launcher = Node.extend(function(parent)
                 beamPower = 100,
                 isOverheated = false,
                 beamUpdateConnection = nil,
+
+                -- External battery state (auto-discovered via handshake)
+                hasExternalBattery = false,
+                externalBatteryDepleted = false,
             }
         end
         return instanceStates[self.id]
@@ -162,6 +185,9 @@ local Launcher = Node.extend(function(parent)
             end
             if state.beamUpdateConnection then
                 state.beamUpdateConnection:Disconnect()
+            end
+            if state.idleCoolConnection then
+                state.idleCoolConnection:Disconnect()
             end
             if state.activeBeam then
                 state.activeBeam:Destroy()
@@ -270,33 +296,50 @@ local Launcher = Node.extend(function(parent)
 
             local maxHeat = self:getAttribute("BeamMaxHeat") or 100
             local heatRate = self:getAttribute("BeamHeatRate") or 25
-            local powerCapacity = self:getAttribute("BeamPowerCapacity") or 100
             local drainRate = self:getAttribute("BeamPowerDrainRate") or 20
 
-            -- Drain power
-            state.beamPower = math.max(0, state.beamPower - drainRate * dt)
-            self.Out:Fire("powerChanged", {
-                current = state.beamPower,
-                max = powerCapacity,
-                percent = state.beamPower / powerCapacity,
-            })
+            -- Handle power drain (external battery or internal)
+            if state.hasExternalBattery then
+                -- External battery: fire draw request
+                -- Battery responds via onPowerDrawn signal
+                if state.externalBatteryDepleted then
+                    -- Battery is depleted, stop beam
+                    destroyBeam(self)
+                    self.Out:Fire("beamEnd", {})
+                    state.triggerHeld = false
+                    return
+                end
+                self.Out:Fire("drawPower", {
+                    amount = drainRate * dt,
+                    launcherId = self.id,
+                })
+            else
+                -- Internal power: drain directly
+                local powerCapacity = self:getAttribute("BeamPowerCapacity") or 100
+                state.beamPower = math.max(0, state.beamPower - drainRate * dt)
+                self.Out:Fire("powerChanged", {
+                    current = state.beamPower,
+                    max = powerCapacity,
+                    percent = state.beamPower / powerCapacity,
+                })
 
-            -- Build heat
+                -- Check power depleted (internal)
+                if state.beamPower <= 0 then
+                    self.Out:Fire("powerDepleted", {})
+                    destroyBeam(self)
+                    self.Out:Fire("beamEnd", {})
+                    state.triggerHeld = false
+                    return
+                end
+            end
+
+            -- Build heat (always internal, heat is separate from power)
             state.beamHeat = math.min(maxHeat, state.beamHeat + heatRate * dt)
             self.Out:Fire("heatChanged", {
                 current = state.beamHeat,
                 max = maxHeat,
                 percent = state.beamHeat / maxHeat,
             })
-
-            -- Check power depleted
-            if state.beamPower <= 0 then
-                self.Out:Fire("powerDepleted", {})
-                destroyBeam(self)
-                self.Out:Fire("beamEnd", {})
-                state.triggerHeld = false
-                return
-            end
 
             -- Check overheat
             if state.beamHeat >= maxHeat then
@@ -334,23 +377,35 @@ local Launcher = Node.extend(function(parent)
         state.idleCoolConnection = RunService.Heartbeat:Connect(function(dt)
             local maxHeat = self:getAttribute("BeamMaxHeat") or 100
             local coolRate = self:getAttribute("BeamCoolRate") or 15
-            local powerCapacity = self:getAttribute("BeamPowerCapacity") or 100
-            local rechargeRate = self:getAttribute("BeamPowerRechargeRate") or 10
 
             local wasOverheated = state.isOverheated
             local heatChanged = false
             local powerChanged = false
 
-            -- Cool down
+            -- Cool down heat (always internal)
             if state.beamHeat > 0 then
                 state.beamHeat = math.max(0, state.beamHeat - coolRate * dt)
                 heatChanged = true
             end
 
-            -- Recharge power
-            if state.beamPower < powerCapacity then
-                state.beamPower = math.min(powerCapacity, state.beamPower + rechargeRate * dt)
-                powerChanged = true
+            -- Recharge power (only if using internal power)
+            -- External battery handles its own recharge
+            if not state.hasExternalBattery then
+                local powerCapacity = self:getAttribute("BeamPowerCapacity") or 100
+                local rechargeRate = self:getAttribute("BeamPowerRechargeRate") or 10
+
+                if state.beamPower < powerCapacity then
+                    state.beamPower = math.min(powerCapacity, state.beamPower + rechargeRate * dt)
+                    powerChanged = true
+                end
+
+                if powerChanged then
+                    self.Out:Fire("powerChanged", {
+                        current = state.beamPower,
+                        max = powerCapacity,
+                        percent = state.beamPower / powerCapacity,
+                    })
+                end
             end
 
             -- Check if cooled down from overheat
@@ -367,16 +422,14 @@ local Launcher = Node.extend(function(parent)
                 })
             end
 
-            if powerChanged then
-                self.Out:Fire("powerChanged", {
-                    current = state.beamPower,
-                    max = powerCapacity,
-                    percent = state.beamPower / powerCapacity,
-                })
-            end
-
             -- Stop if fully recovered
-            if state.beamHeat <= 0 and state.beamPower >= powerCapacity then
+            -- External battery: only wait for heat cooldown
+            -- Internal power: wait for both heat and power
+            local heatRecovered = state.beamHeat <= 0
+            local powerRecovered = state.hasExternalBattery or
+                (state.beamPower >= (self:getAttribute("BeamPowerCapacity") or 100))
+
+            if heatRecovered and powerRecovered then
                 state.idleCoolConnection:Disconnect()
                 state.idleCoolConnection = nil
             end
@@ -695,6 +748,12 @@ local Launcher = Node.extend(function(parent)
                 -- If nothing wired, flag stays false and we use internal ammo
                 state.hasExternalMagazine = false
                 self.Out:Fire("discoverMagazine", { launcherId = self.id })
+
+                -- Discovery handshake: check if external battery is wired
+                -- If Battery responds (sync), onBatteryPresent sets hasExternalBattery = true
+                -- If nothing wired, flag stays false and we use internal power
+                state.hasExternalBattery = false
+                self.Out:Fire("discoverBattery", { launcherId = self.id })
             end,
 
             onStop = function(self)
@@ -791,6 +850,72 @@ local Launcher = Node.extend(function(parent)
             end,
 
             --[[
+                Battery handshake response - external battery is present.
+                Called synchronously during discoverBattery if battery is wired.
+            --]]
+            onBatteryPresent = function(self, data)
+                local state = getState(self)
+                state.hasExternalBattery = true
+                state.externalBatteryDepleted = false
+                -- External battery owns power, internal power unused
+                -- Emit initial power state from battery data
+                if data then
+                    self.Out:Fire("powerChanged", {
+                        current = data.current or 0,
+                        max = data.capacity or 100,
+                        percent = (data.current or 0) / (data.capacity or 100),
+                    })
+                end
+            end,
+
+            --[[
+                Response from external battery after draw request.
+                Forwards power state to Launcher's Out.powerChanged.
+            --]]
+            onPowerDrawn = function(self, data)
+                if not data then return end
+                local state = getState(self)
+
+                -- Forward power state
+                self.Out:Fire("powerChanged", {
+                    current = data.remaining,
+                    max = data.capacity,
+                    percent = data.remaining / data.capacity,
+                })
+
+                -- Check if battery is now depleted
+                if data.remaining <= 0 and not state.externalBatteryDepleted then
+                    state.externalBatteryDepleted = true
+                    self.Out:Fire("powerDepleted", {})
+                end
+            end,
+
+            --[[
+                External battery has no power remaining.
+            --]]
+            onBatteryDepleted = function(self, data)
+                local state = getState(self)
+                state.externalBatteryDepleted = true
+                self.Out:Fire("powerDepleted", {})
+
+                -- Stop beam if active
+                if state.triggerHeld and self:getAttribute("FireMode") == "beam" then
+                    destroyBeam(self)
+                    self.Out:Fire("beamEnd", {})
+                    state.triggerHeld = false
+                end
+            end,
+
+            --[[
+                External battery has power again after depletion.
+            --]]
+            onBatteryRestored = function(self, data)
+                local state = getState(self)
+                state.externalBatteryDepleted = false
+                self.Out:Fire("powerRestored", {})
+            end,
+
+            --[[
                 Receive ammo from external magazine via IPC.
                 Wired from: Magazine.Out.spawned → Launcher.In.onAmmoReceived
             --]]
@@ -842,9 +967,17 @@ local Launcher = Node.extend(function(parent)
                         self.Err:Fire({ reason = "overheated" })
                         return
                     end
-                    if state.beamPower <= 0 then
-                        self.Err:Fire({ reason = "no_power" })
-                        return
+                    -- Check power availability (external battery or internal)
+                    if state.hasExternalBattery then
+                        if state.externalBatteryDepleted then
+                            self.Err:Fire({ reason = "no_power" })
+                            return
+                        end
+                    else
+                        if state.beamPower <= 0 then
+                            self.Err:Fire({ reason = "no_power" })
+                            return
+                        end
                     end
 
                     local muzzlePosition, muzzleDirection = getMuzzleInfo(self)
@@ -936,6 +1069,11 @@ local Launcher = Node.extend(function(parent)
             cooledDown = {},     -- {}
             powerChanged = {},   -- { current, max, percent }
             powerDepleted = {},  -- {}
+            powerRestored = {},  -- {}
+
+            -- External battery (IPC)
+            discoverBattery = {},  -- { launcherId } - handshake discovery
+            drawPower = {},        -- { amount, launcherId } - request power each frame
         },
     }
 end)

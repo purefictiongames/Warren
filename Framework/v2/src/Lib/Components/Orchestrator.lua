@@ -50,6 +50,13 @@
                 schema = "SpawnedPayload",  -- Named or inline schema
                 validate = true,            -- Block invalid payloads
             },
+            -- Special target "Out" - forward to orchestrator's own Out
+            {
+                from = "EndZone",
+                signal = "entityEntered",
+                to = "Out",                 -- Fire on orchestrator's Out
+                handler = "entityReached",  -- Optional: rename signal (default: same name)
+            },
         },
 
         -- Optional: Mode-specific wiring
@@ -225,7 +232,8 @@ local Orchestrator = Node.extend(function(parent)
                 return false, string.format("Wire %d missing 'to'", i)
             end
 
-            if not wire.handler then
+            -- Handler is optional for "Out" target (defaults to signal name)
+            if wire.to ~= "Out" and not wire.handler then
                 return false, string.format("Wire %d missing 'handler'", i)
             end
 
@@ -269,9 +277,20 @@ local Orchestrator = Node.extend(function(parent)
 
     --[[
         Private: Execute a single wire (validate and deliver).
+
+        Special targets:
+        - "Out": Fire to orchestrator's own Out (for external consumers)
+        - "Client": Reserved for client replication (no error if missing)
     --]]
     executeWire = function(self, wire, data, fromNodeId, signal)
         local state = getState(self)
+
+        -- Special target: "Out" - fire to orchestrator's own Out
+        if wire.to == "Out" then
+            local outSignal = wire.handler or signal  -- handler = signal name to emit
+            self.Out:Fire(outSignal, data)
+            return
+        end
 
         -- Get target node
         local targetNode = state.nodes[wire.to]
@@ -389,6 +408,7 @@ local Orchestrator = Node.extend(function(parent)
 
     --[[
         Private: Wire a single node (intercept its Out:Fire).
+        Does NOT start the node - that's done separately after all nodes are wired.
     --]]
     wireNode = function(self, nodeId)
         local state = getState(self)
@@ -415,8 +435,18 @@ local Orchestrator = Node.extend(function(parent)
             -- Also call original for IPC routing
             originalFire(outSelf, signal, data)
         end
+    end
 
-        -- Start the node if not started
+    --[[
+        Private: Start a single node.
+    --]]
+    local startNode = function(self, nodeId)
+        local state = getState(self)
+        local instance = state.nodes[nodeId]
+        if not instance then
+            return
+        end
+
         if instance.Sys and instance.Sys.onStart then
             instance.Sys.onStart(instance)
         end
@@ -441,6 +471,10 @@ local Orchestrator = Node.extend(function(parent)
 
     --[[
         Private: Enable routing by intercepting Out:Fire on all managed nodes.
+
+        IMPORTANT: We wire ALL nodes first, THEN start them all.
+        This ensures that when a node fires discovery signals during onStart,
+        all other nodes are already wired and can respond.
     --]]
     enableRouting = function(self)
         local state = getState(self)
@@ -451,8 +485,14 @@ local Orchestrator = Node.extend(function(parent)
 
         state.enabled = true
 
-        for nodeId, instance in pairs(state.nodes) do
+        -- Phase 1: Wire all nodes (intercept Out.Fire)
+        for nodeId in pairs(state.nodes) do
             wireNode(self, nodeId)
+        end
+
+        -- Phase 2: Start all nodes (now all wiring is in place)
+        for nodeId in pairs(state.nodes) do
+            startNode(self, nodeId)
         end
     end
 
@@ -716,6 +756,7 @@ local Orchestrator = Node.extend(function(parent)
 
                 if success and wasEnabled then
                     wireNode(self, data.id)
+                    startNode(self, data.id)
                 end
 
                 if success then

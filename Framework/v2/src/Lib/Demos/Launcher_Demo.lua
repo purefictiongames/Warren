@@ -120,7 +120,7 @@ function Demo.run(config)
             -- Use Tracer component for projectiles (straight-flying with trail)
             -- Tracer owns its own velocity (default 200 studs/sec)
             projectileComponent = "Tracer",
-            magazineCapacity = 5,
+            magazineCapacity = 30,
             reloadTime = 1.5,
             -- Use PlasmaBeam component for beam mode (pulsing cyan beam)
             -- PlasmaBeam owns its own width/color/pulse settings
@@ -139,8 +139,8 @@ function Demo.run(config)
     ---------------------------------------------------------------------------
 
     local currentMode = "MANUAL"
-    local currentAmmo = 5
-    local maxAmmo = 5
+    local currentAmmo = 30
+    local maxAmmo = 30
     local heatPercent = 0
     local powerPercent = 100
 
@@ -242,7 +242,7 @@ function Demo.run(config)
             currentMode = "MANUAL"
             orchestrator.In.onConfigure(orchestrator, {
                 fireMode = "manual",
-                magazineCapacity = 5,
+                magazineCapacity = 30,
                 cooldown = 0.3,
             })
             updateStatus()

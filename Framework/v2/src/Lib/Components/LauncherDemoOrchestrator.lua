@@ -11,8 +11,24 @@
 
     LauncherDemoOrchestrator manages a projectile launcher with all fire modes:
     - manual, semi, auto, beam
-    - Magazine system with reload
+    - External Magazine (Dropper) for ammo via IPC
     - Beam heat/power management
+
+    Uses parent Orchestrator's declarative wiring system for Launcher ↔ Magazine
+    communication. The handshake pattern auto-discovers the external magazine.
+
+    ============================================================================
+    WIRING (declarative, handled by parent Orchestrator)
+    ============================================================================
+
+    Handshake:
+        Launcher.discoverMagazine → Magazine.onDiscoverMagazine
+        Magazine.magazinePresent  → Launcher.onMagazinePresent
+
+    Runtime:
+        Launcher.requestAmmo   → Magazine.onDispense
+        Launcher.requestReload → Magazine.onRequestReload
+        Magazine.spawned       → Launcher.onAmmoReceived
 
     ============================================================================
     SIGNALS
@@ -31,34 +47,6 @@
 local Orchestrator = require(script.Parent.Orchestrator)
 
 local LauncherDemoOrchestrator = Orchestrator.extend(function(parent)
-    local instanceStates = {}
-
-    local function getState(self)
-        if not instanceStates[self.id] then
-            instanceStates[self.id] = { launcher = nil }
-        end
-        return instanceStates[self.id]
-    end
-
-    local function cleanupState(self)
-        instanceStates[self.id] = nil
-    end
-
-    local function setupSignalForwarding(self, launcher)
-        local originalOutFire = launcher.Out.Fire
-        launcher.Out.Fire = function(outSelf, signal, data)
-            -- Forward all signals
-            self.Out:Fire(signal, data)
-            originalOutFire(outSelf, signal, data)
-        end
-
-        local originalErrFire = launcher.Err.Fire
-        launcher.Err.Fire = function(errSelf, data)
-            self.Out:Fire("error", data)
-            originalErrFire(errSelf, data)
-        end
-    end
-
     return {
         name = "LauncherDemoOrchestrator",
         domain = "server",
@@ -68,91 +56,112 @@ local LauncherDemoOrchestrator = Orchestrator.extend(function(parent)
                 parent.Sys.onInit(self)
 
                 local config = self._attributes or {}
-                local Launcher = require(script.Parent.Launcher)
-                local state = getState(self)
 
-                state.launcher = Launcher:new({
-                    id = self.id .. "_Launcher",
-                    model = self.model,
+                -- Configure via parent Orchestrator's declarative system
+                parent.In.onConfigure(self, {
+                    -- Node instances
+                    nodes = {
+                        Launcher = {
+                            class = "Launcher",
+                            model = self.model,
+                            config = {
+                                fireMode = config.fireMode or "auto",
+                                cooldown = config.cooldown or 0.1,
+                                -- Beam settings
+                                beamComponent = config.beamComponent or "",
+                                beamIntensity = config.beamIntensity or 1.0,
+                                beamMaxHeat = config.beamMaxHeat or 100,
+                                beamHeatRate = config.beamHeatRate or 25,
+                                beamCoolRate = config.beamCoolRate or 15,
+                                beamPowerCapacity = config.beamPowerCapacity or 100,
+                                beamPowerDrainRate = config.beamPowerDrainRate or 20,
+                                beamPowerRechargeRate = config.beamPowerRechargeRate or 10,
+                            },
+                        },
+                        Magazine = {
+                            class = "Dropper",
+                            config = {
+                                componentName = config.projectileComponent or "Tracer",
+                                capacity = config.magazineCapacity or 30,
+                                reloadTime = config.reloadTime or 1.5,
+                            },
+                        },
+                    },
+
+                    -- Declarative wiring: Launcher ↔ Magazine
+                    wiring = {
+                        -- Handshake
+                        { from = "Launcher", signal = "discoverMagazine", to = "Magazine", handler = "onDiscoverMagazine" },
+                        { from = "Magazine", signal = "magazinePresent", to = "Launcher", handler = "onMagazinePresent" },
+
+                        -- Runtime: Launcher → Magazine
+                        { from = "Launcher", signal = "requestAmmo", to = "Magazine", handler = "onDispense" },
+                        { from = "Launcher", signal = "requestReload", to = "Magazine", handler = "onRequestReload" },
+
+                        -- Runtime: Magazine → Launcher
+                        { from = "Magazine", signal = "spawned", to = "Launcher", handler = "onAmmoReceived" },
+
+                        -- Forward to orchestrator's Out (for HUD / external consumers)
+                        { from = "Launcher", signal = "fired", to = "Out" },
+                        { from = "Launcher", signal = "ready", to = "Out" },
+                        { from = "Launcher", signal = "beamStart", to = "Out" },
+                        { from = "Launcher", signal = "beamEnd", to = "Out" },
+                        { from = "Launcher", signal = "heatChanged", to = "Out" },
+                        { from = "Launcher", signal = "overheated", to = "Out" },
+                        { from = "Launcher", signal = "cooledDown", to = "Out" },
+                        { from = "Launcher", signal = "powerChanged", to = "Out" },
+                        { from = "Launcher", signal = "powerDepleted", to = "Out" },
+
+                        { from = "Magazine", signal = "ammoChanged", to = "Out" },
+                        { from = "Magazine", signal = "reloadStarted", to = "Out" },
+                        { from = "Magazine", signal = "depleted", to = "Out", handler = "magazineEmpty" },
+                        { from = "Magazine", signal = "refilled", to = "Out", handler = "reloadComplete" },
+                    },
                 })
-                state.launcher.Sys.onInit(state.launcher)
-
-                -- Configure from attributes
-                state.launcher.In.onConfigure(state.launcher, {
-                    -- General
-                    fireMode = config.fireMode or "manual",
-                    cooldown = config.cooldown or 0.5,
-
-                    -- Projectile
-                    projectileComponent = config.projectileComponent or "",
-                    projectileTemplate = config.projectileTemplate or "",
-                    projectileVelocity = config.projectileVelocity or 100,
-                    magazineCapacity = config.magazineCapacity or -1,
-                    reloadTime = config.reloadTime or 1.5,
-
-                    -- Beam
-                    beamComponent = config.beamComponent or "",
-                    beamIntensity = config.beamIntensity or 1.0,
-                    beamMaxHeat = config.beamMaxHeat or 100,
-                    beamHeatRate = config.beamHeatRate or 25,
-                    beamCoolRate = config.beamCoolRate or 15,
-                    beamPowerCapacity = config.beamPowerCapacity or 100,
-                    beamPowerDrainRate = config.beamPowerDrainRate or 20,
-                    beamPowerRechargeRate = config.beamPowerRechargeRate or 10,
-                })
-
-                setupSignalForwarding(self, state.launcher)
             end,
 
             onStart = function(self)
-                local state = getState(self)
-                if state.launcher then
-                    state.launcher.Sys.onStart(state.launcher)
-                end
+                parent.Sys.onStart(self)
             end,
 
             onStop = function(self)
-                local state = getState(self)
-                if state.launcher then
-                    state.launcher.Sys.onStop(state.launcher)
-                end
-                cleanupState(self)
+                parent.Sys.onStop(self)
             end,
         },
 
         In = {
             onFire = function(self, data)
-                local state = getState(self)
-                if state.launcher then
-                    state.launcher.In.onFire(state.launcher, data)
+                local launcher = self:getNode("Launcher")
+                if launcher then
+                    launcher.In.onFire(launcher, data)
                 end
             end,
 
             onTriggerDown = function(self, data)
-                local state = getState(self)
-                if state.launcher then
-                    state.launcher.In.onTriggerDown(state.launcher, data)
+                local launcher = self:getNode("Launcher")
+                if launcher then
+                    launcher.In.onTriggerDown(launcher, data)
                 end
             end,
 
             onTriggerUp = function(self, data)
-                local state = getState(self)
-                if state.launcher then
-                    state.launcher.In.onTriggerUp(state.launcher, data)
+                local launcher = self:getNode("Launcher")
+                if launcher then
+                    launcher.In.onTriggerUp(launcher, data)
                 end
             end,
 
             onReload = function(self, data)
-                local state = getState(self)
-                if state.launcher then
-                    state.launcher.In.onReload(state.launcher, data)
+                local launcher = self:getNode("Launcher")
+                if launcher then
+                    launcher.In.onReload(launcher, data)
                 end
             end,
 
             onConfigure = function(self, data)
-                local state = getState(self)
-                if state.launcher then
-                    state.launcher.In.onConfigure(state.launcher, data)
+                local launcher = self:getNode("Launcher")
+                if launcher then
+                    launcher.In.onConfigure(launcher, data)
                 end
             end,
         },

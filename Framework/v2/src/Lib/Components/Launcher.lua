@@ -45,14 +45,31 @@
         onReload({})
         onConfigure({ ... })
 
+        -- External magazine (auto-discovered via handshake)
+        onMagazinePresent({ magazineId, capacity, current })
+            - Handshake response from Magazine
+            - Sets hasExternalMagazine = true, bypasses internal ammo
+        onAmmoReceived({ component, _passthrough })
+            - Receive ammo from external magazine (IPC)
+            - Wire from: Magazine.Out.spawned → Launcher.In.onAmmoReceived
+
     OUT (emits):
         -- Projectile signals
         fired({ projectile, direction, ammo, maxAmmo })
         ready({})
-        ammoChanged({ current, max })
-        reloadStarted({ time })
+        ammoChanged({ current, max }) - only fired in internal mode
+        reloadStarted({ time }) - only fired in internal mode
         reloadComplete({})
         magazineEmpty({})
+
+        -- External magazine (IPC) - discovery + runtime
+        discoverMagazine({ launcherId })
+            - Handshake: sent at onStart to discover external magazine
+        requestAmmo({ launcherId, _passthrough })
+            - Request ammo from external magazine
+            - Wire to: Magazine.In.onDispense
+        requestReload({ launcherId })
+            - Request magazine reload
 
         -- Beam signals
         beamStart({ beam, intensity })
@@ -71,7 +88,7 @@
     FireMode: string (default "manual")
     Cooldown: number (default 0.5) - seconds between shots
 
-    -- Projectile
+    -- Projectile (internal mode, bypassed if external magazine discovered)
     ProjectileComponent: string (optional) - component name (e.g., "Tracer")
     ProjectileTemplate: string (optional) - SpawnerCore template fallback
     ProjectileVelocity: number (default 100) - studs/second
@@ -116,9 +133,14 @@ local Launcher = Node.extend(function(parent)
                 triggerHeld = false,
                 autoFireConnection = nil,
 
-                -- Magazine state
+                -- Internal magazine state (when not using external)
                 currentAmmo = -1,  -- -1 = infinite
                 isReloading = false,
+
+                -- External magazine state (auto-discovered via handshake)
+                hasExternalMagazine = false,  -- set by discoverMagazine handshake
+                pendingLaunches = {},  -- { [correlationId] = { position, direction, time } }
+                correlationCounter = 0,
 
                 -- Beam state
                 activeBeam = nil,
@@ -361,12 +383,79 @@ local Launcher = Node.extend(function(parent)
         end)
     end
 
+    --[[
+        Private: Generate correlation ID for pending launches.
+    --]]
+    local function generateCorrelationId(self)
+        local state = getState(self)
+        state.correlationCounter = state.correlationCounter + 1
+        return self.id .. "_launch_" .. state.correlationCounter
+    end
+
+    --[[
+        Private: Request ammo from external magazine via IPC.
+        Stores launch params for when ammo arrives.
+    --]]
+    local function requestAmmoFromMagazine(self, position, direction)
+        local state = getState(self)
+        local correlationId = generateCorrelationId(self)
+
+        -- Store pending launch params
+        state.pendingLaunches[correlationId] = {
+            position = position,
+            direction = direction,
+            time = os.clock(),
+        }
+
+        -- Request ammo via IPC (wired to Magazine.In.onDispense)
+        self.Out:Fire("requestAmmo", {
+            launcherId = self.id,
+            _passthrough = {
+                correlationId = correlationId,
+                position = position,
+                direction = direction,
+            },
+        })
+
+        state.lastFireTime = os.clock()
+        return true
+    end
+
+    --[[
+        Private: Launch a component that was received from magazine.
+    --]]
+    local function launchReceivedComponent(self, component, position, direction)
+        -- Launch the component
+        component.In.onLaunch(component, {
+            position = position,
+            direction = direction,
+        })
+
+        -- Fire the fired signal
+        self.Out:Fire("fired", {
+            projectile = component.model,
+            direction = direction,
+            ammo = -1,  -- External magazine manages ammo
+            maxAmmo = -1,
+        })
+
+        -- Schedule ready signal
+        local cooldown = self:getAttribute("Cooldown") or 0.5
+        local launchTime = os.clock()
+        task.delay(cooldown, function()
+            local state = getState(self)
+            if state.lastFireTime == launchTime then
+                self.Out:Fire("ready", {})
+            end
+        end)
+    end
+
     local function fireProjectile(self, data)
         data = data or {}
         local state = getState(self)
 
-        -- Check if reloading
-        if state.isReloading then
+        -- Check if reloading (internal magazine only)
+        if not state.hasExternalMagazine and state.isReloading then
             self.Err:Fire({ reason = "reloading" })
             return false
         end
@@ -381,18 +470,23 @@ local Launcher = Node.extend(function(parent)
             return false
         end
 
-        -- Check ammo
+        -- Get muzzle info
+        local muzzlePosition, muzzleDirection = getMuzzleInfo(self)
+        local direction = data.targetPosition and (data.targetPosition - muzzlePosition).Unit or muzzleDirection
+
+        -- External magazine mode: request ammo via IPC
+        if state.hasExternalMagazine then
+            return requestAmmoFromMagazine(self, muzzlePosition, direction)
+        end
+
+        -- Internal mode: check ammo
         local maxAmmo = self:getAttribute("MagazineCapacity") or -1
         if maxAmmo > 0 and state.currentAmmo <= 0 then
             self.Out:Fire("magazineEmpty", {})
             return false
         end
 
-        -- Get muzzle info
-        local muzzlePosition, muzzleDirection = getMuzzleInfo(self)
-        local direction = data.targetPosition and (data.targetPosition - muzzlePosition).Unit or muzzleDirection
-
-        -- Create projectile
+        -- Create projectile (internal mode)
         local projectile
         local projectileComponent = self:getAttribute("ProjectileComponent")
         local templateName = self:getAttribute("ProjectileTemplate")
@@ -473,7 +567,7 @@ local Launcher = Node.extend(function(parent)
             return false
         end
 
-        -- Consume ammo
+        -- Consume ammo (internal magazine)
         if maxAmmo > 0 then
             state.currentAmmo = state.currentAmmo - 1
             self.Out:Fire("ammoChanged", { current = state.currentAmmo, max = maxAmmo })
@@ -594,6 +688,13 @@ local Launcher = Node.extend(function(parent)
             end,
 
             onStart = function(self)
+                local state = getState(self)
+
+                -- Discovery handshake: check if external magazine is wired
+                -- If Magazine responds (sync), onMagazinePresent sets hasExternalMagazine = true
+                -- If nothing wired, flag stays false and we use internal ammo
+                state.hasExternalMagazine = false
+                self.Out:Fire("discoverMagazine", { launcherId = self.id })
             end,
 
             onStop = function(self)
@@ -668,7 +769,62 @@ local Launcher = Node.extend(function(parent)
             end,
 
             onReload = function(self, data)
-                doReload(self)
+                local state = getState(self)
+                if state.hasExternalMagazine then
+                    -- Signal external magazine to reload
+                    self.Out:Fire("requestReload", { launcherId = self.id })
+                else
+                    -- Use internal reload
+                    doReload(self)
+                end
+            end,
+
+            --[[
+                Magazine handshake response - external magazine is present.
+                Called synchronously during discoverMagazine if magazine is wired.
+            --]]
+            onMagazinePresent = function(self, data)
+                local state = getState(self)
+                state.hasExternalMagazine = true
+                -- Magazine owns ammo, so set internal to infinite (unused)
+                state.currentAmmo = -1
+            end,
+
+            --[[
+                Receive ammo from external magazine via IPC.
+                Wired from: Magazine.Out.spawned → Launcher.In.onAmmoReceived
+            --]]
+            onAmmoReceived = function(self, data)
+                if not data or not data.component then
+                    self.Err:Fire({ reason = "invalid_ammo_data" })
+                    return
+                end
+
+                local state = getState(self)
+                local passthrough = data._passthrough
+
+                if not passthrough or not passthrough.correlationId then
+                    -- No correlation - launch with current muzzle direction
+                    local muzzlePosition, muzzleDirection = getMuzzleInfo(self)
+                    launchReceivedComponent(self, data.component, muzzlePosition, muzzleDirection)
+                    return
+                end
+
+                -- Look up pending launch params
+                local pending = state.pendingLaunches[passthrough.correlationId]
+                if pending then
+                    state.pendingLaunches[passthrough.correlationId] = nil
+                    launchReceivedComponent(self, data.component, pending.position, pending.direction)
+                else
+                    -- Pending expired or not found - use passthrough params
+                    local position = passthrough.position
+                    local direction = passthrough.direction
+                    if position and direction then
+                        launchReceivedComponent(self, data.component, position, direction)
+                    else
+                        self.Err:Fire({ reason = "pending_launch_not_found", correlationId = passthrough.correlationId })
+                    end
+                end
             end,
 
             onTriggerDown = function(self, data)
@@ -766,6 +922,11 @@ local Launcher = Node.extend(function(parent)
             reloadStarted = {},  -- { time }
             reloadComplete = {}, -- {}
             magazineEmpty = {},  -- {}
+
+            -- External magazine (IPC)
+            discoverMagazine = {},  -- { launcherId } - handshake discovery
+            requestAmmo = {},       -- { launcherId, _passthrough: { correlationId, position, direction } }
+            requestReload = {},     -- { launcherId } - request magazine reload
 
             -- Beam
             beamStart = {},      -- { beam, intensity }

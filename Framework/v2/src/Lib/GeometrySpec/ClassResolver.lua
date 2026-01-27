@@ -1,6 +1,6 @@
 --[[
     LibPureFiction Framework v2
-    MapLayout/StyleResolver.lua - CSS-like Cascade Resolution for 3D Elements
+    GeometrySpec/ClassResolver.lua - 3-Level Cascade Resolution
 
     Copyright (c) 2025 Adam Stearns / Pure Fiction Records LLC
     All rights reserved.
@@ -9,89 +9,64 @@
     OVERVIEW
     ============================================================================
 
-    Resolves properties for map elements using CSS-like cascade order:
-        1. Base defaults (applied to all elements)
-        2. Type defaults (by element type: wall, platform, etc.)
-        3. Class styles (in order of class attribute string)
-        4. ID styles
-        5. Inline properties (highest priority)
+    Resolves properties for parts using a simple 3-level cascade:
 
-    Later styles override earlier ones (cascade).
+        1. defaults - Applied to all parts
+        2. classes - Applied by class (space-separated, in order)
+        3. inline - Direct properties on the definition (highest priority)
 
     ============================================================================
     USAGE
     ============================================================================
 
     ```lua
-    local styles = {
+    local spec = {
         defaults = {
             Anchored = true,
-            CanCollide = true,
             Material = "SmoothPlastic",
         },
-        types = {
-            wall = { thickness = 1 },
-            platform = { thickness = 2 },
-        },
         classes = {
-            ["exterior"] = { Material = "Concrete" },
-            ["brick"] = { Material = "Brick", Color = {180, 120, 100} },
-            ["metal"] = { Material = "DiamondPlate" },
-            ["trigger"] = { CanCollide = false, Transparency = 1 },
+            frame = { Material = "DiamondPlate", Color = {80, 80, 85} },
+            accent = { Material = "Metal", Color = {40, 40, 40} },
         },
-        ids = {
-            ["mainEntrance"] = { Color = {200, 50, 50} },
+        parts = {
+            { id = "base", class = "frame", ... },
+            { id = "trim", class = "frame accent", ... },  -- multiple classes
         },
     }
 
-    local resolved = StyleResolver.resolve(elementDef, styles)
+    local resolved = ClassResolver.resolve(partDef, spec)
     ```
 
 --]]
 
-local StyleResolver = {}
+local ClassResolver = {}
 
 -- Reserved keys that should not be treated as style properties
 local RESERVED_KEYS = {
     -- Structural
-    type = true,
     id = true,
     class = true,
+    shape = true,
 
     -- Geometry definition
-    from = true,
-    to = true,
     position = true,
     size = true,
     height = true,
-    length = true,
-    direction = true,
-    angle = true,
     radius = true,
+    rotation = true,
 
-    -- Reference/positioning
-    along = true,
-    at = true,
-    surface = true,
-    anchor = true,
-    target = true,
-    offset = true,
-    weld = true,
-
-    -- Openings
-    openings = true,
-
-    -- Children/nesting
-    children = true,
+    -- Mount points
+    facing = true,
 }
 
 --[[
-    Deep merge source table into target table.
+    Merge source table into target table (shallow).
     Later values override earlier ones.
 
     @param target: Table to merge into
     @param source: Table to merge from
-    @return: The target table (modified in place)
+    @return: The target table
 --]]
 local function merge(target, source)
     if not source then
@@ -107,7 +82,7 @@ end
 
 --[[
     Parse class string into array of class names.
-    "exterior brick metal" → {"exterior", "brick", "metal"}
+    "frame accent metal" -> {"frame", "accent", "metal"}
 
     @param classString: Space-separated class names
     @return: Array of class name strings
@@ -127,7 +102,7 @@ end
 --[[
     Extract inline styles from definition (non-reserved keys).
 
-    @param definition: Element definition table
+    @param definition: Part definition table
     @return: Table of inline style properties
 --]]
 local function extractInlineStyles(definition)
@@ -143,54 +118,41 @@ local function extractInlineStyles(definition)
 end
 
 --[[
-    Resolve all styles for an element definition.
+    Resolve all styles for a part definition.
 
     Cascade order (lowest to highest priority):
-        1. defaults - Applied to all elements
-        2. types[elementType] - Applied by element type
-        3. classes[className] - Applied by class (in order)
-        4. ids[elementId] - Applied by ID
-        5. inline - Direct properties on the definition
+        1. defaults - Applied to all parts
+        2. classes[className] - Applied by class (in order)
+        3. inline - Direct properties on the definition
 
-    @param definition: The element definition table
-    @param styles: The stylesheet { defaults, types, classes, ids }
+    @param definition: The part definition table
+    @param spec: The full spec { defaults, classes, ... }
     @return: Merged properties table
 --]]
-function StyleResolver.resolve(definition, styles)
+function ClassResolver.resolve(definition, spec)
     local resolved = {}
 
     -- Safety check
-    if not styles then
+    if not spec then
         return extractInlineStyles(definition)
     end
 
-    -- 1. Apply base defaults
-    if styles.defaults then
-        merge(resolved, styles.defaults)
+    -- 1. Apply defaults
+    if spec.defaults then
+        merge(resolved, spec.defaults)
     end
 
-    -- 2. Apply type-specific defaults
-    local elementType = definition.type
-    if elementType and styles.types and styles.types[elementType] then
-        merge(resolved, styles.types[elementType])
-    end
-
-    -- 3. Apply class styles (in order from class attribute)
-    if definition.class and styles.classes then
+    -- 2. Apply class styles (in order from class attribute)
+    if definition.class and spec.classes then
         local classList = parseClasses(definition.class)
         for _, className in ipairs(classList) do
-            if styles.classes[className] then
-                merge(resolved, styles.classes[className])
+            if spec.classes[className] then
+                merge(resolved, spec.classes[className])
             end
         end
     end
 
-    -- 4. Apply ID styles
-    if definition.id and styles.ids and styles.ids[definition.id] then
-        merge(resolved, styles.ids[definition.id])
-    end
-
-    -- 5. Apply inline styles (highest priority)
+    -- 3. Apply inline styles (highest priority)
     local inlineStyles = extractInlineStyles(definition)
     merge(resolved, inlineStyles)
 
@@ -200,11 +162,11 @@ end
 --[[
     Check if a definition has a specific class.
 
-    @param definition: Element definition table
+    @param definition: Part definition table
     @param className: Class name to check for
     @return: boolean
 --]]
-function StyleResolver.hasClass(definition, className)
+function ClassResolver.hasClass(definition, className)
     if not definition.class then
         return false
     end
@@ -221,21 +183,21 @@ end
 --[[
     Get all classes from a definition as an array.
 
-    @param definition: Element definition table
+    @param definition: Part definition table
     @return: Array of class name strings
 --]]
-function StyleResolver.getClasses(definition)
+function ClassResolver.getClasses(definition)
     return parseClasses(definition.class)
 end
 
 --[[
     Add a class to a definition's class string.
 
-    @param definition: Element definition table
+    @param definition: Part definition table
     @param className: Class name to add
 --]]
-function StyleResolver.addClass(definition, className)
-    if StyleResolver.hasClass(definition, className) then
+function ClassResolver.addClass(definition, className)
+    if ClassResolver.hasClass(definition, className) then
         return
     end
 
@@ -249,10 +211,10 @@ end
 --[[
     Remove a class from a definition's class string.
 
-    @param definition: Element definition table
+    @param definition: Part definition table
     @param className: Class name to remove
 --]]
-function StyleResolver.removeClass(definition, className)
+function ClassResolver.removeClass(definition, className)
     if not definition.class then
         return
     end
@@ -269,4 +231,4 @@ function StyleResolver.removeClass(definition, className)
     definition.class = table.concat(newClasses, " ")
 end
 
-return StyleResolver
+return ClassResolver

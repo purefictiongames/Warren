@@ -111,6 +111,22 @@ local LauncherDemoOrchestrator = Orchestrator.extend(function(parent)
                                 WeldOffset = CFrame.new(1.5, 0, 0),  -- Right side of muzzle
                             },
                         },
+                        Targeter = {
+                            class = "Targeter",
+                            config = {
+                                -- Weld to the launcher's muzzle, offset on top
+                                WeldTo = self.model,
+                                WeldOffset = CFrame.new(0, 1, 0),  -- Top of muzzle
+                                -- Targeter config
+                                BeamMode = config.targeterBeamMode or "pinpoint",
+                                Range = config.targeterRange or 100,
+                                ScanMode = "continuous",
+                                TrackingMode = "lock",
+                                AutoStart = true,
+                                BeamVisible = config.targeterBeamVisible ~= false,
+                                BeamColor = config.targeterBeamColor or Color3.new(0, 1, 0),
+                            },
+                        },
                     },
 
                     -- Declarative wiring: Launcher ↔ Magazine
@@ -138,6 +154,17 @@ local LauncherDemoOrchestrator = Orchestrator.extend(function(parent)
                         { from = "Battery", signal = "powerDepleted", to = "Launcher", handler = "onBatteryDepleted" },
                         { from = "Battery", signal = "powerRestored", to = "Launcher", handler = "onBatteryRestored" },
 
+                        -- Targeter handshake
+                        { from = "Launcher", signal = "discoverTargeter", to = "Targeter", handler = "onDiscoverTargeter" },
+                        { from = "Targeter", signal = "targeterPresent", to = "Launcher", handler = "onTargeterPresent" },
+                        { from = "Targeter", signal = "discoverLauncher", to = "Launcher", handler = "onDiscoverLauncher" },
+                        { from = "Launcher", signal = "launcherPresent", to = "Targeter", handler = "onLauncherPresent" },
+
+                        -- Runtime: Targeter → Launcher
+                        { from = "Targeter", signal = "acquired", to = "Launcher", handler = "onTargetAcquired" },
+                        { from = "Targeter", signal = "tracking", to = "Launcher", handler = "onTargetTracking" },
+                        { from = "Targeter", signal = "lost", to = "Launcher", handler = "onTargetLost" },
+
                         -- Forward to orchestrator's Out (for HUD / external consumers)
                         { from = "Launcher", signal = "fired", to = "Out" },
                         { from = "Launcher", signal = "ready", to = "Out" },
@@ -154,6 +181,11 @@ local LauncherDemoOrchestrator = Orchestrator.extend(function(parent)
                         { from = "Magazine", signal = "reloadStarted", to = "Out" },
                         { from = "Magazine", signal = "depleted", to = "Out", handler = "magazineEmpty" },
                         { from = "Magazine", signal = "refilled", to = "Out", handler = "reloadComplete" },
+
+                        -- Forward Targeter signals to Out
+                        { from = "Launcher", signal = "targetAcquired", to = "Out" },
+                        { from = "Launcher", signal = "targetTracking", to = "Out" },
+                        { from = "Launcher", signal = "targetLost", to = "Out" },
                     },
                 })
             end,
@@ -222,6 +254,11 @@ local LauncherDemoOrchestrator = Orchestrator.extend(function(parent)
             powerChanged = {},
             powerDepleted = {},
             powerRestored = {},
+
+            -- Targeter
+            targetAcquired = {},
+            targetTracking = {},
+            targetLost = {},
 
             -- Error
             error = {},

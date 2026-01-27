@@ -224,16 +224,34 @@ Orchestrators present a simple external interface while managing internal comple
 orchestrator.In.onFire(orchestrator, { target = pos })
 -- Internally: routes to Launcher, which requests from Magazine, etc.
 
--- Declarative wiring with "Out" forwarding
+-- Declarative wiring with special targets
 wiring = {
-    -- Internal routing
+    -- Internal routing between managed nodes
     { from = "Launcher", signal = "requestAmmo", to = "Magazine", handler = "onDispense" },
 
-    -- Forward to orchestrator's own Out (for external consumers)
+    -- "Out": Forward to orchestrator's own Out (for external consumers)
     { from = "Launcher", signal = "fired", to = "Out" },
     { from = "Magazine", signal = "ammoChanged", to = "Out" },
+
+    -- "Self": Route to orchestrator's own In handlers (for internal handling)
+    { from = "Spawner", signal = "spawned", to = "Self", handler = "onTargetSpawned" },
 }
 ```
+
+### Orchestrator Wiring Targets
+
+| Target | Purpose | Handler |
+|--------|---------|---------|
+| `"NodeId"` | Route to managed node's In | Required - e.g., `"onConfigure"` |
+| `"Out"` | Forward to orchestrator's Out | Optional - defaults to signal name |
+| `"Self"` | Route to orchestrator's own In | Required - e.g., `"onTargetSpawned"` |
+| `"Client"` | Reserved for client replication | N/A |
+
+**When to use "Self":**
+- Orchestrator needs to handle signals from its managed nodes internally
+- Processing spawned entities (configure, track, wire their signals)
+- Aggregating data before forwarding to Out
+- Implementing orchestrator-level business logic
 
 ## Signal Naming Conventions
 

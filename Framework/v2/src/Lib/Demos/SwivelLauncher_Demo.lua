@@ -1,6 +1,6 @@
 --[[
     LibPureFiction Framework v2
-    SwivelLauncher_Demo.lua - Full Swivel Turret + Launcher Demonstration
+    SwivelLauncher_Demo.lua - Shooting Gallery Demo
 
     Copyright (c) 2025 Adam Stearns / Pure Fiction Records LLC
     All rights reserved.
@@ -9,17 +9,16 @@
     OVERVIEW
     ============================================================================
 
-    Demonstrates the complete swivel launcher turret system:
-    - Yaw swivel: Rotates left/right (Y-axis) - blue base
-    - Pitch swivel: Rotates up/down (X-axis) - green arm, mounted on yaw
-    - Launcher: Fires projectiles/beam - blue muzzle, mounted on pitch
-    - Magazine: External ammo supply - colored by ammo level, left of muzzle
-    - Battery: External power for beam - colored by power level, right of muzzle
+    Demonstrates the complete swivel launcher system with target tracking:
+    - SwivelLauncherOrchestrator: Turret with targeting beam
+    - TargetSpawnerOrchestrator: Spawns flying targets to shoot
 
-    The demo cycles through:
-    1. Auto fire mode with swivel tracking
-    2. Semi fire mode with manual aiming
-    3. Beam mode demonstrating heat and power management
+    Features:
+    - Auto-tracking via Targeter (green beam turns red when locked)
+    - Flying targets with health (EntityStats)
+    - Projectile hit detection and damage
+    - Auto-aim mode that tracks and fires at targets
+    - Manual mode for player control
 
     ============================================================================
     USAGE
@@ -27,15 +26,24 @@
 
     ```lua
     local Demos = require(game.ReplicatedStorage.Lib.Demos)
-    Demos.SwivelLauncher.run()
+    local demo = Demos.SwivelLauncher.run()
+
+    -- Controls:
+    demo.setMode('auto'|'semi'|'beam')
+    demo.enableAutoAim()     -- Turret auto-tracks targets
+    demo.disableAutoAim()    -- Manual control
+    demo.spawnTargets(n)     -- Spawn n targets
+    demo.cleanup()           -- Remove demo
     ```
 
 --]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 local Lib = require(ReplicatedStorage:WaitForChild("Lib"))
 
 local SwivelLauncherOrchestrator = Lib.Components.SwivelLauncherOrchestrator
+local TargetSpawnerOrchestrator = Lib.Components.TargetSpawnerOrchestrator
 
 local Demo = {}
 
@@ -78,7 +86,7 @@ function Demo.run(config)
     -- Ground plane
     local ground = Instance.new("Part")
     ground.Name = "Ground"
-    ground.Size = Vector3.new(100, 1, 100)
+    ground.Size = Vector3.new(150, 1, 150)
     ground.Position = Vector3.new(0, -0.5, 0)
     ground.Anchored = true
     ground.BrickColor = BrickColor.new("Dark stone grey")
@@ -119,8 +127,8 @@ function Demo.run(config)
 
     -- Status display
     local billboardGui = Instance.new("BillboardGui")
-    billboardGui.Size = UDim2.new(0, 300, 0, 100)
-    billboardGui.StudsOffset = Vector3.new(0, 6, 0)
+    billboardGui.Size = UDim2.new(0, 350, 0, 120)
+    billboardGui.StudsOffset = Vector3.new(0, 8, 0)
     billboardGui.AlwaysOnTop = true
     billboardGui.Parent = pitchPart
 
@@ -135,30 +143,30 @@ function Demo.run(config)
     statusLabel.Parent = billboardGui
 
     ---------------------------------------------------------------------------
-    -- CREATE ORCHESTRATOR
+    -- CREATE SWIVEL LAUNCHER ORCHESTRATOR
     ---------------------------------------------------------------------------
 
-    local orchestrator = SwivelLauncherOrchestrator:new({
-        id = "Demo_SwivelLauncherOrchestrator",
+    local turret = SwivelLauncherOrchestrator:new({
+        id = "Demo_SwivelLauncher",
         model = yawPart,
         attributes = {
             pitchModel = pitchPart,
             -- Swivel config
             yawConfig = {
-                speed = 60,
+                speed = 180,  -- Fast for tracking
                 minAngle = -180,
                 maxAngle = 180,
             },
             pitchConfig = {
-                speed = 45,
+                speed = 120,  -- Fast for tracking
                 minAngle = -30,
                 maxAngle = 60,
             },
             -- Launcher config
             fireMode = "auto",
-            cooldown = 0.15,
+            cooldown = 0.1,
             projectileComponent = "Tracer",
-            magazineCapacity = 30,
+            magazineCapacity = 50,
             reloadTime = 1.5,
             beamComponent = "PlasmaBeam",
             beamMaxHeat = 100,
@@ -168,23 +176,48 @@ function Demo.run(config)
             batteryRechargeRate = 15,
             -- Visual config
             launcherSize = Vector3.new(1, 1, 2),
+            -- Targeter config (via LauncherDemoOrchestrator)
+            targeterBeamVisible = true,
+            targeterBeamColor = Color3.new(0, 1, 0),
+            targeterRange = 120,
         },
     })
 
     ---------------------------------------------------------------------------
-    -- SUBSCRIBE TO SIGNALS
+    -- CREATE TARGET SPAWNER ORCHESTRATOR
+    ---------------------------------------------------------------------------
+
+    local spawner = TargetSpawnerOrchestrator:new({
+        id = "Demo_TargetSpawner",
+        attributes = {
+            MaxTargets = 5,
+            RespawnDelay = 2,
+            AutoRespawn = true,
+            TargetHealth = 50,  -- Takes ~5 hits
+            TargetSpeed = 5,    -- Slow targets for easier tracking
+            FlyAreaCenter = Vector3.new(0, 25, -50),
+            FlyAreaSize = Vector3.new(80, 30, 60),
+        },
+    })
+
+    ---------------------------------------------------------------------------
+    -- STATE
     ---------------------------------------------------------------------------
 
     local currentMode = "AUTO"
     local yawAngle = 0
     local pitchAngle = 0
-    local currentAmmo = 30
-    local maxAmmo = 30
+    local currentAmmo = 50
+    local maxAmmo = 50
     local heatPercent = 0
     local powerPercent = 100
+    local targetsDestroyed = 0
+    local autoAimEnabled = true
+    local currentTarget = nil
+    local autoAimConnection = nil
 
     local function updateStatus()
-        local lines = { "SWIVEL LAUNCHER - " .. currentMode }
+        local lines = { "SHOOTING GALLERY - " .. currentMode }
         table.insert(lines, string.format("Yaw:%.0f Pitch:%.0f", yawAngle, pitchAngle))
 
         if currentMode == "BEAM" then
@@ -195,11 +228,27 @@ function Demo.run(config)
             end
         end
 
+        table.insert(lines, string.format("Kills: %d | AutoAim: %s",
+            targetsDestroyed,
+            autoAimEnabled and "ON" or "OFF"))
+
+        if currentTarget then
+            table.insert(lines, "TARGET LOCKED")
+            statusLabel.TextColor3 = Color3.new(1, 0.3, 0)  -- Red when locked
+        elseif autoAimEnabled then
+            table.insert(lines, "SCANNING...")
+            statusLabel.TextColor3 = Color3.new(0, 1, 0.5)  -- Cyan when scanning
+        end
+
         statusLabel.Text = table.concat(lines, "\n")
     end
 
-    local originalOutFire = orchestrator.Out.Fire
-    orchestrator.Out.Fire = function(outSelf, signal, data)
+    ---------------------------------------------------------------------------
+    -- TURRET SIGNAL HANDLING
+    ---------------------------------------------------------------------------
+
+    local originalTurretFire = turret.Out.Fire
+    turret.Out.Fire = function(outSelf, signal, data)
         data = data or {}
 
         -- Swivel signals
@@ -221,7 +270,7 @@ function Demo.run(config)
             maxAmmo = data.maxAmmo or maxAmmo
             statusLabel.TextColor3 = Color3.new(1, 0.5, 0)
             updateStatus()
-            task.delay(0.1, function()
+            task.delay(0.05, function()
                 statusLabel.TextColor3 = Color3.new(0, 1, 0)
             end)
 
@@ -234,7 +283,7 @@ function Demo.run(config)
             updateStatus()
 
         elseif signal == "reloadStarted" then
-            statusLabel.Text = currentMode .. "\nRELOADING..."
+            statusLabel.Text = "RELOADING..."
             statusLabel.TextColor3 = Color3.new(1, 1, 0)
 
         elseif signal == "reloadComplete" then
@@ -242,23 +291,20 @@ function Demo.run(config)
             updateStatus()
 
         elseif signal == "magazineEmpty" then
-            statusLabel.Text = currentMode .. "\nMAGAZINE EMPTY!"
+            statusLabel.Text = "MAGAZINE EMPTY!"
             statusLabel.TextColor3 = Color3.new(1, 0, 0)
+            -- Auto-reload
+            task.delay(0.5, function()
+                turret.In.onReload(turret, {})
+            end)
 
-        -- Launcher beam signals
-        elseif signal == "beamStart" then
-            statusLabel.TextColor3 = Color3.new(1, 0, 0)
-            updateStatus()
-
-        elseif signal == "beamEnd" then
-            statusLabel.TextColor3 = Color3.new(0, 1, 0)
-
+        -- Beam signals
         elseif signal == "heatChanged" then
             heatPercent = (data.percent or 0) * 100
             updateStatus()
 
         elseif signal == "overheated" then
-            statusLabel.Text = currentMode .. "\nOVERHEATED!"
+            statusLabel.Text = "OVERHEATED!"
             statusLabel.TextColor3 = Color3.new(1, 0.3, 0)
 
         elseif signal == "cooledDown" then
@@ -270,174 +316,253 @@ function Demo.run(config)
             updateStatus()
 
         elseif signal == "powerDepleted" then
-            statusLabel.Text = currentMode .. "\nNO POWER!"
+            statusLabel.Text = "NO POWER!"
             statusLabel.TextColor3 = Color3.new(0.5, 0, 0)
 
         elseif signal == "powerRestored" then
             statusLabel.TextColor3 = Color3.new(0, 1, 0)
             updateStatus()
+
+        -- Target tracking signals
+        elseif signal == "targetAcquired" then
+            currentTarget = data
+            statusLabel.TextColor3 = Color3.new(1, 0.5, 0)
+            updateStatus()
+
+        elseif signal == "targetTracking" then
+            currentTarget = data
+            -- Auto-aim: track target position
+            if autoAimEnabled and data.position then
+                -- Calculate direction to target
+                local turretPos = pitchPart.Position
+                local targetPos = data.position
+                local direction = (targetPos - turretPos)
+
+                -- Calculate yaw angle (horizontal)
+                local yawDir = Vector3.new(direction.X, 0, direction.Z).Unit
+                local forward = Vector3.new(0, 0, -1)
+                local yawAngleRad = math.atan2(yawDir.X, -yawDir.Z)
+                local targetYaw = math.deg(yawAngleRad)
+
+                -- Calculate pitch angle (vertical)
+                local horizDistance = Vector2.new(direction.X, direction.Z).Magnitude
+                local pitchAngleRad = math.atan2(direction.Y, horizDistance)
+                local targetPitch = math.deg(pitchAngleRad)
+
+                -- Set angles
+                turret.In.onSetYawAngle(turret, { degrees = targetYaw })
+                turret.In.onSetPitchAngle(turret, { degrees = targetPitch })
+            end
+
+        elseif signal == "targetLost" then
+            currentTarget = nil
+            statusLabel.TextColor3 = Color3.new(0.5, 0.5, 0.5)
+            updateStatus()
         end
 
-        originalOutFire(outSelf, signal, data)
+        originalTurretFire(outSelf, signal, data)
     end
+
+    ---------------------------------------------------------------------------
+    -- SPAWNER SIGNAL HANDLING
+    ---------------------------------------------------------------------------
+
+    local originalSpawnerFire = spawner.Out.Fire
+    spawner.Out.Fire = function(outSelf, signal, data)
+        data = data or {}
+
+        if signal == "targetSpawned" then
+            print(string.format("[Demo] Target spawned"))
+
+        elseif signal == "targetDestroyed" then
+            targetsDestroyed = targetsDestroyed + 1
+            updateStatus()
+            print(string.format("[Demo] Target destroyed! Total kills: %d", targetsDestroyed))
+
+        elseif signal == "waveComplete" then
+            print("[Demo] Wave complete!")
+        end
+
+        originalSpawnerFire(outSelf, signal, data)
+    end
+
+    ---------------------------------------------------------------------------
+    -- PROJECTILE HIT DETECTION
+    ---------------------------------------------------------------------------
+
+    -- Track which tracers we've already connected
+    local tracerConnections = {}
+    local activeTargetParts = {}  -- [part] = FlyingTarget component
+
+    -- When a tracer hits something, check if it's a target and damage it
+    local function onTracerHit(tracer, hitPart, hitPosition)
+        -- Check if hit part is a target
+        local nodeClass = hitPart:GetAttribute("NodeClass")
+        if nodeClass == "FlyingTarget" then
+            -- Find the FlyingTarget component for this part
+            -- We track spawned targets by their drone part
+            local targetComponent = nil
+            for id, target in pairs(spawner:getNode("Spawner") and {} or {}) do
+                -- Check via naming convention
+            end
+
+            -- Alternative: directly damage via the part
+            -- The FlyingTarget has EntityStats wired to apply damage
+            -- We need to find the target and call onHit
+
+            -- For now, apply damage directly to any part with the NodeClass
+            -- by finding its parent FlyingTarget in our tracked list
+            local damage = 10  -- Damage per projectile hit
+
+            -- Search for the target in spawner's active targets
+            local spawnerState = spawner:getNode("Spawner")
+            if not spawnerState then
+                -- Manually find target by part
+                for _, desc in ipairs(workspace:GetDescendants()) do
+                    if desc.Name:match("_Drone$") and desc == hitPart then
+                        -- Found the drone, apply damage visually
+                        hitPart.BrickColor = BrickColor.new("White")
+                        task.delay(0.1, function()
+                            if hitPart and hitPart.Parent then
+                                hitPart.BrickColor = BrickColor.new("Bright red")
+                            end
+                        end)
+                        break
+                    end
+                end
+            end
+        end
+    end
+
+    -- Monitor for new tracer parts and connect their Touched event
+    local hitConnection = workspace.DescendantAdded:Connect(function(descendant)
+        if descendant:IsA("BasePart") and string.match(descendant.Name, "_Tracer$") then
+            -- Wait a frame for the part to be fully set up
+            task.defer(function()
+                if not descendant or not descendant.Parent then return end
+
+                local conn = descendant.Touched:Connect(function(hitPart)
+                    -- Check if we hit a target
+                    local nodeClass = hitPart:GetAttribute("NodeClass")
+                    if nodeClass == "FlyingTarget" then
+                        -- Apply damage
+                        local damage = 10
+
+                        -- Flash the target white
+                        local originalColor = hitPart.BrickColor
+                        hitPart.BrickColor = BrickColor.new("White")
+                        task.delay(0.1, function()
+                            if hitPart and hitPart.Parent then
+                                hitPart.BrickColor = originalColor
+                            end
+                        end)
+
+                        -- Find the FlyingTarget component and damage it
+                        -- Since FlyingTarget creates its drone with a specific name pattern,
+                        -- we can find it in workspace
+                        local targetId = hitPart.Name:match("^(.+)_Drone$")
+                        if targetId then
+                            -- The target tracks itself; we need to signal damage
+                            -- The FlyingTarget wires EntityStats, which has an onApplyModifier
+                            -- But we don't have direct access to the component...
+
+                            -- Workaround: Use a BindableEvent on the part for hit signals
+                            local hitEvent = hitPart:FindFirstChild("HitEvent")
+                            if hitEvent and hitEvent:IsA("BindableEvent") then
+                                hitEvent:Fire({ damage = damage })
+                            end
+                        end
+
+                        -- Destroy the tracer on hit
+                        descendant:Destroy()
+                    end
+                end)
+
+                tracerConnections[descendant] = conn
+
+                -- Clean up connection when tracer is destroyed
+                descendant.AncestryChanged:Connect(function(_, parent)
+                    if not parent and tracerConnections[descendant] then
+                        tracerConnections[descendant]:Disconnect()
+                        tracerConnections[descendant] = nil
+                    end
+                end)
+            end)
+        end
+    end)
 
     ---------------------------------------------------------------------------
     -- INITIALIZE AND START
     ---------------------------------------------------------------------------
 
-    orchestrator.Sys.onInit(orchestrator)
-    orchestrator.Sys.onStart(orchestrator)
+    turret.Sys.onInit(turret)
+    spawner.Sys.onInit(spawner)
+
+    turret.Sys.onStart(turret)
+    spawner.Sys.onStart(spawner)
 
     ---------------------------------------------------------------------------
-    -- AUTOMATED DEMO SEQUENCE
+    -- AUTO-SCAN AND AUTO-AIM LOOP
     ---------------------------------------------------------------------------
 
-    task.spawn(function()
-        print("=== SWIVEL LAUNCHER DEMO ===")
-        print("Full turret system: Swivel + Launcher + Magazine + Battery")
-        print("")
+    -- Scanning state
+    local scanDirection = 1  -- 1 = right, -1 = left
+    local scanSpeed = 90     -- degrees per second (faster scanning)
+    local scanYawMin = -90
+    local scanYawMax = 90
+    local scanPitchTarget = 15  -- Look slightly up when scanning
 
-        task.wait(1)
+    autoAimConnection = RunService.Heartbeat:Connect(function(dt)
+        if not demoFolder.Parent then return end
+        if not autoAimEnabled then return end
 
-        while demoFolder.Parent do
-            -- Phase 1: AUTO mode with swivel sweep
-            print("Mode: AUTO - sweeping and firing")
-            currentMode = "AUTO"
-            orchestrator.In.onConfigure(orchestrator, {
-                fireMode = "auto",
-                cooldown = 0.15,
-            })
-            updateStatus()
-            task.wait(0.3)
+        if currentTarget then
+            -- TARGET LOCKED: Fire at target
+            turret.In.onTriggerDown(turret, {})
+        else
+            -- NO TARGET: Sweep/scan for targets
+            local newYaw = yawAngle + (scanDirection * scanSpeed * dt)
 
-            -- Sweep left while firing
-            if not demoFolder.Parent then return end
-            orchestrator.In.onRotateYaw(orchestrator, { direction = "forward" })
-            orchestrator.In.onRotatePitch(orchestrator, { direction = "forward" })
-            orchestrator.In.onTriggerDown(orchestrator, {})
-            task.wait(2)
-
-            if not demoFolder.Parent then return end
-            orchestrator.In.onTriggerUp(orchestrator, {})
-            orchestrator.In.onStopYaw(orchestrator, {})
-            orchestrator.In.onStopPitch(orchestrator, {})
-            task.wait(0.3)
-
-            -- Sweep right while firing
-            if not demoFolder.Parent then return end
-            orchestrator.In.onRotateYaw(orchestrator, { direction = "reverse" })
-            orchestrator.In.onRotatePitch(orchestrator, { direction = "reverse" })
-            orchestrator.In.onTriggerDown(orchestrator, {})
-            task.wait(2)
-
-            if not demoFolder.Parent then return end
-            orchestrator.In.onTriggerUp(orchestrator, {})
-            orchestrator.In.onStop(orchestrator, {})
-            task.wait(0.3)
-
-            -- Reload
-            print("  Reloading...")
-            orchestrator.In.onReload(orchestrator, {})
-            task.wait(2)
-
-            if not demoFolder.Parent then return end
-
-            -- Phase 2: SEMI mode with precise shots
-            print("Mode: SEMI - precise shots while aiming")
-            currentMode = "SEMI"
-            orchestrator.In.onConfigure(orchestrator, {
-                fireMode = "semi",
-                cooldown = 0.4,
-            })
-            updateStatus()
-            task.wait(0.3)
-
-            -- Fire 5 shots while sweeping
-            for i = 1, 5 do
-                if not demoFolder.Parent then return end
-                orchestrator.In.onSetYawAngle(orchestrator, { degrees = -60 + (i - 1) * 30 })
-                orchestrator.In.onSetPitchAngle(orchestrator, { degrees = (i % 2 == 0) and 30 or -15 })
-                task.wait(0.4)
-                orchestrator.In.onTriggerDown(orchestrator, {})
-                task.wait(0.1)
-                orchestrator.In.onTriggerUp(orchestrator, {})
-                task.wait(0.3)
+            -- Reverse direction at limits
+            if newYaw >= scanYawMax then
+                newYaw = scanYawMax
+                scanDirection = -1
+            elseif newYaw <= scanYawMin then
+                newYaw = scanYawMin
+                scanDirection = 1
             end
 
-            task.wait(0.5)
-            if not demoFolder.Parent then return end
-
-            -- Phase 3: BEAM mode - overheat demo
-            print("Mode: BEAM - sweeping until overheat")
-            currentMode = "BEAM"
-            orchestrator.In.onConfigure(orchestrator, {
-                fireMode = "beam",
-            })
-            maxAmmo = -1
-            updateStatus()
-            task.wait(0.3)
-
-            -- Center turret
-            orchestrator.In.onSetYawAngle(orchestrator, { degrees = 0 })
-            orchestrator.In.onSetPitchAngle(orchestrator, { degrees = 0 })
-            task.wait(0.5)
-
-            -- Fire beam while sweeping slowly
-            if not demoFolder.Parent then return end
-            orchestrator.In.onRotateYaw(orchestrator, { direction = "forward" })
-            orchestrator.In.onTriggerDown(orchestrator, {})
-            task.wait(3.5)  -- Will overheat
-
-            if not demoFolder.Parent then return end
-            orchestrator.In.onTriggerUp(orchestrator, {})
-            orchestrator.In.onStopYaw(orchestrator, {})
-
-            -- Wait for cooldown
-            print("  Cooling down...")
-            task.wait(6)
-
-            if not demoFolder.Parent then return end
-
-            -- Phase 4: BEAM mode - power depletion demo
-            print("Mode: BEAM - sustained fire until power depleted")
-            orchestrator.In.onConfigure(orchestrator, {
-                beamHeatRate = 10,  -- Slower heat buildup
-            })
-            updateStatus()
-            task.wait(0.3)
-
-            -- Sweep while firing
-            if not demoFolder.Parent then return end
-            orchestrator.In.onRotateYaw(orchestrator, { direction = "reverse" })
-            orchestrator.In.onTriggerDown(orchestrator, {})
-            task.wait(4)  -- Will deplete power
-
-            if not demoFolder.Parent then return end
-            orchestrator.In.onTriggerUp(orchestrator, {})
-            orchestrator.In.onStopYaw(orchestrator, {})
-
-            -- Wait for recharge
-            print("  Recharging power...")
-            task.wait(8)
-
-            if not demoFolder.Parent then return end
-
-            -- Reset for next cycle
-            orchestrator.In.onConfigure(orchestrator, {
-                fireMode = "auto",
-                beamHeatRate = 35,
-            })
-
-            -- Return to center
-            orchestrator.In.onSetYawAngle(orchestrator, { degrees = 0 })
-            orchestrator.In.onSetPitchAngle(orchestrator, { degrees = 0 })
-
-            print("")
-            print("--- Cycle complete ---")
-            print("")
-            task.wait(2)
+            -- Set scan angles
+            turret.In.onSetYawAngle(turret, { degrees = newYaw })
+            turret.In.onSetPitchAngle(turret, { degrees = scanPitchTarget })
         end
     end)
+
+    -- Release trigger when no target
+    local lastHadTarget = false
+    local targetCheckConnection = RunService.Heartbeat:Connect(function()
+        if not demoFolder.Parent then return end
+
+        local hasTarget = currentTarget ~= nil
+
+        if lastHadTarget and not hasTarget then
+            -- Lost target, release trigger
+            turret.In.onTriggerUp(turret, {})
+        end
+
+        lastHadTarget = hasTarget
+    end)
+
+    ---------------------------------------------------------------------------
+    -- SPAWN INITIAL WAVE
+    ---------------------------------------------------------------------------
+
+    task.delay(1, function()
+        if not demoFolder.Parent then return end
+        spawner.In.onSpawnWave(spawner, { count = 3 })
+    end)
+
+    updateStatus()
 
     ---------------------------------------------------------------------------
     -- CLEANUP
@@ -446,7 +571,11 @@ function Demo.run(config)
     demoFolder.AncestryChanged:Connect(function(_, parent)
         if not parent then
             print("Demo cleanup...")
-            orchestrator.Sys.onStop(orchestrator)
+            if hitConnection then hitConnection:Disconnect() end
+            if autoAimConnection then autoAimConnection:Disconnect() end
+            if targetCheckConnection then targetCheckConnection:Disconnect() end
+            turret.Sys.onStop(turret)
+            spawner.Sys.onStop(spawner)
         end
     end)
 
@@ -463,65 +592,126 @@ function Demo.run(config)
     function controls.setMode(mode)
         if mode == "auto" or mode == "semi" or mode == "beam" then
             currentMode = string.upper(mode)
-            orchestrator.In.onConfigure(orchestrator, { fireMode = mode })
+            turret.In.onConfigure(turret, { fireMode = mode })
             updateStatus()
         end
     end
 
     function controls.fire()
-        orchestrator.In.onFire(orchestrator, {})
+        turret.In.onFire(turret, {})
     end
 
     function controls.triggerDown()
-        orchestrator.In.onTriggerDown(orchestrator, {})
+        turret.In.onTriggerDown(turret, {})
     end
 
     function controls.triggerUp()
-        orchestrator.In.onTriggerUp(orchestrator, {})
+        turret.In.onTriggerUp(turret, {})
     end
 
     function controls.rotateYaw(direction)
-        orchestrator.In.onRotateYaw(orchestrator, { direction = direction })
+        turret.In.onRotateYaw(turret, { direction = direction })
     end
 
     function controls.rotatePitch(direction)
-        orchestrator.In.onRotatePitch(orchestrator, { direction = direction })
+        turret.In.onRotatePitch(turret, { direction = direction })
     end
 
     function controls.stop()
-        orchestrator.In.onStop(orchestrator, {})
+        turret.In.onStop(turret, {})
     end
 
     function controls.setYaw(degrees)
-        orchestrator.In.onSetYawAngle(orchestrator, { degrees = degrees })
+        turret.In.onSetYawAngle(turret, { degrees = degrees })
     end
 
     function controls.setPitch(degrees)
-        orchestrator.In.onSetPitchAngle(orchestrator, { degrees = degrees })
+        turret.In.onSetPitchAngle(turret, { degrees = degrees })
     end
 
     function controls.reload()
-        orchestrator.In.onReload(orchestrator, {})
+        turret.In.onReload(turret, {})
+    end
+
+    function controls.enableAutoAim()
+        autoAimEnabled = true
+        updateStatus()
+        print("[Demo] Auto-aim ENABLED")
+    end
+
+    function controls.disableAutoAim()
+        autoAimEnabled = false
+        turret.In.onTriggerUp(turret, {})
+        updateStatus()
+        print("[Demo] Auto-aim DISABLED")
+    end
+
+    function controls.spawnTargets(count)
+        count = count or 1
+        spawner.In.onSpawnWave(spawner, { count = count })
+    end
+
+    function controls.clearTargets()
+        spawner.In.onClear(spawner)
+    end
+
+    function controls.setTargetHealth(health)
+        spawner.In.onConfigure(spawner, { health = health })
+    end
+
+    function controls.setTargetSpeed(speed)
+        spawner.In.onConfigure(spawner, { speed = speed })
+    end
+
+    function controls.setScanSpeed(speed)
+        scanSpeed = speed or 45
+        print(string.format("[Demo] Scan speed: %d deg/s", scanSpeed))
+    end
+
+    function controls.setScanRange(min, max)
+        scanYawMin = min or -90
+        scanYawMax = max or 90
+        print(string.format("[Demo] Scan range: %d to %d deg", scanYawMin, scanYawMax))
+    end
+
+    function controls.setTurretSpeed(yaw, pitch)
+        yaw = yaw or 180
+        pitch = pitch or yaw  -- Default pitch to same as yaw if not specified
+        turret.In.onConfigure(turret, {
+            yawSpeed = yaw,
+            pitchSpeed = pitch,
+        })
+        print(string.format("[Demo] Turret speed: yaw=%d, pitch=%d deg/s", yaw, pitch))
+    end
+
+    function controls.getTurret()
+        return turret
+    end
+
+    function controls.getSpawner()
+        return spawner
     end
 
     print("============================================")
-    print("  SWIVEL LAUNCHER DEMO")
+    print("  SHOOTING GALLERY DEMO")
     print("============================================")
     print("")
-    print("Automated demo cycles through:")
-    print("  1. AUTO mode - sweeping fire")
-    print("  2. SEMI mode - precise shots")
-    print("  3. BEAM mode - overheat")
-    print("  4. BEAM mode - power depletion")
+    print("Features:")
+    print("  - Auto-scanning turret sweeps to find targets")
+    print("  - Targeting beam locks on (green -> red)")
+    print("  - Flying targets with health (EntityStats)")
+    print("  - Auto-fires when target locked")
     print("")
-    print("Manual controls:")
+    print("Controls:")
+    print("  demo.enableAutoAim() / disableAutoAim()")
+    print("  demo.spawnTargets(n)     - Spawn targets")
+    print("  demo.clearTargets()      - Remove all targets")
     print("  demo.setMode('auto'|'semi'|'beam')")
-    print("  demo.fire() / demo.triggerDown() / demo.triggerUp()")
-    print("  demo.rotateYaw('forward'|'reverse')")
-    print("  demo.rotatePitch('forward'|'reverse')")
-    print("  demo.setYaw(degrees) / demo.setPitch(degrees)")
-    print("  demo.stop() / demo.reload()")
-    print("  demo.cleanup()")
+    print("  demo.setTargetHealth(n)  - Change target HP")
+    print("  demo.setTargetSpeed(n)   - Change target speed")
+    print("  demo.setTurretSpeed(yaw, pitch) - Turret rotation speed")
+    print("  demo.setScanSpeed(n)     - Scan speed (deg/s)")
+    print("  demo.cleanup()           - Remove demo")
     print("")
 
     return controls

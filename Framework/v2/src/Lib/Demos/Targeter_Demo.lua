@@ -1,8 +1,12 @@
 --[[
     LibPureFiction Framework v2
-    Targeter Component Demo - Signal-Based Architecture
+    Targeter Component Demo - Visual Targeting Beam
 
-    Uses Out:Fire / In signal pattern, not direct handler calls.
+    Demonstrates the refactored Targeter component with:
+    - Built-in visual targeting beam (auto-creates)
+    - Auto-start scanning in onStart (batteries included)
+    - Bi-directional discovery handshake
+    - Target lock behavior (acquired/tracking/lost signals)
 
     ============================================================================
     USAGE
@@ -15,13 +19,15 @@
     local demo = Demos.Targeter.run()
 
     -- Controls:
-    demo.enable()              -- Start scanning
-    demo.disable()             -- Stop scanning
-    demo.scan()                -- Manual scan (pulse mode)
-    demo.addTarget(position)   -- Add target at position
-    demo.removeTargets()       -- Remove all targets
-    demo.setBeamMode("cone")   -- Change beam mode
-    demo.cleanup()             -- Remove demo objects
+    demo.enable()                   -- Enable scanning
+    demo.disable()                  -- Disable scanning
+    demo.scan()                     -- Manual scan (pulse mode)
+    demo.addTarget(position)        -- Add target at position
+    demo.removeTargets()            -- Remove all targets
+    demo.setBeamMode("cone")        -- Change beam mode
+    demo.setBeamColor(Color3.new()) -- Change beam color
+    demo.setBeamVisible(false)      -- Hide visual beam
+    demo.cleanup()                  -- Remove demo objects
     ```
 
 --]]
@@ -30,80 +36,9 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local Lib = require(ReplicatedStorage:WaitForChild("Lib"))
 
-local Node = require(ReplicatedStorage.Lib.Node)
 local Targeter = Lib.Components.Targeter
 
 local Demo = {}
-
---------------------------------------------------------------------------------
--- TARGETER CONTROLLER NODE
--- Fires signals to control targeter, receives signals back
---------------------------------------------------------------------------------
-
-local TargeterController = Node.extend({
-    name = "TargeterController",
-    domain = "server",
-
-    Sys = {
-        onInit = function(self)
-            self._targets = {}
-            self._isEnabled = false
-        end,
-    },
-
-    In = {
-        -- Receive target updates from Targeter
-        onAcquired = function(self, data)
-            self._targets = data.targets
-        end,
-
-        onTracking = function(self, data)
-            self._targets = data.targets
-        end,
-
-        onLost = function(self)
-            self._targets = {}
-        end,
-    },
-
-    Out = {
-        enable = {},      -- -> Targeter.In.onEnable
-        disable = {},     -- -> Targeter.In.onDisable
-        scan = {},        -- -> Targeter.In.onScan
-        configure = {},   -- -> Targeter.In.onConfigure
-    },
-
-    -- Controller methods that fire signals
-    enableScanning = function(self)
-        self._isEnabled = true
-        self.Out:Fire("enable", {})
-    end,
-
-    disableScanning = function(self)
-        self._isEnabled = false
-        self.Out:Fire("disable", {})
-    end,
-
-    triggerScan = function(self)
-        self.Out:Fire("scan", {})
-    end,
-
-    setBeamMode = function(self, mode)
-        self.Out:Fire("configure", { beamMode = mode })
-    end,
-
-    setTrackingMode = function(self, mode)
-        self.Out:Fire("configure", { trackingMode = mode })
-    end,
-
-    setScanMode = function(self, mode)
-        self.Out:Fire("configure", { scanMode = mode })
-    end,
-
-    setRange = function(self, range)
-        self.Out:Fire("configure", { range = range })
-    end,
-})
 
 --------------------------------------------------------------------------------
 -- DEMO
@@ -114,13 +49,14 @@ function Demo.run(config)
     local position = config.position or Vector3.new(0, 10, 0)
 
     ---------------------------------------------------------------------------
-    -- CLEANUP EXISTING DEMO (handles Studio persistence between runs)
+    -- CLEANUP EXISTING DEMO
     ---------------------------------------------------------------------------
 
     local existingDemo = workspace:FindFirstChild("Targeter_Demo")
     if existingDemo then
         existingDemo:Destroy()
     end
+    task.wait(0.1)
 
     ---------------------------------------------------------------------------
     -- CREATE VISUAL SETUP
@@ -130,35 +66,58 @@ function Demo.run(config)
     demoFolder.Name = "Targeter_Demo"
     demoFolder.Parent = workspace
 
-    -- Scanner mount
+    -- Ground plane
+    local ground = Instance.new("Part")
+    ground.Name = "Ground"
+    ground.Size = Vector3.new(100, 1, 100)
+    ground.Position = Vector3.new(0, -0.5, 0)
+    ground.Anchored = true
+    ground.BrickColor = BrickColor.new("Dark stone grey")
+    ground.Material = Enum.Material.Slate
+    ground.Parent = demoFolder
+
+    -- Scanner mount (base)
     local mount = Instance.new("Part")
     mount.Name = "Mount"
-    mount.Size = Vector3.new(3, 3, 3)
-    mount.Position = position
+    mount.Size = Vector3.new(4, 2, 4)
+    mount.Position = position - Vector3.new(0, 1, 0)
     mount.Anchored = true
-    mount.BrickColor = BrickColor.new("Dark stone grey")
-    mount.Material = Enum.Material.Metal
-    mount.Shape = Enum.PartType.Ball
+    mount.BrickColor = BrickColor.new("Really black")
+    mount.Material = Enum.Material.DiamondPlate
     mount.Parent = demoFolder
 
-    -- Scanner emitter (the actual scanning part)
+    -- Scanner head (the part that rotates and scans)
     local scanner = Instance.new("Part")
     scanner.Name = "Scanner"
-    scanner.Size = Vector3.new(1, 1, 2)
-    scanner.CFrame = CFrame.new(position) * CFrame.Angles(0, 0, 0)
+    scanner.Size = Vector3.new(2, 2, 3)
+    scanner.CFrame = CFrame.new(position)
     scanner.Anchored = true
     scanner.BrickColor = BrickColor.new("Bright green")
-    scanner.Material = Enum.Material.Neon
+    scanner.Material = Enum.Material.SmoothPlastic
     scanner.Parent = demoFolder
 
-    -- Beam visualization parts
-    local beamFolder = Instance.new("Folder")
-    beamFolder.Name = "BeamVisualization"
-    beamFolder.Parent = demoFolder
+    -- Add a lens detail to show direction
+    local lens = Instance.new("Part")
+    lens.Name = "Lens"
+    lens.Size = Vector3.new(1, 1, 0.2)
+    lens.Shape = Enum.PartType.Cylinder
+    lens.Anchored = false
+    lens.CanCollide = false
+    lens.BrickColor = BrickColor.new("Cyan")
+    lens.Material = Enum.Material.Glass
+    lens.Transparency = 0.3
+    lens.Parent = scanner
+
+    local lensWeld = Instance.new("WeldConstraint")
+    lensWeld.Part0 = scanner
+    lensWeld.Part1 = lens
+    lensWeld.Parent = lens
+
+    lens.CFrame = scanner.CFrame * CFrame.new(0, 0, -1.6) * CFrame.Angles(0, 0, math.rad(90))
 
     -- Status display
     local billboardGui = Instance.new("BillboardGui")
-    billboardGui.Size = UDim2.new(0, 250, 0, 80)
+    billboardGui.Size = UDim2.new(0, 280, 0, 100)
     billboardGui.StudsOffset = Vector3.new(0, 5, 0)
     billboardGui.AlwaysOnTop = true
     billboardGui.Parent = mount
@@ -170,7 +129,7 @@ function Demo.run(config)
     statusLabel.TextColor3 = Color3.new(0, 1, 0)
     statusLabel.TextScaled = true
     statusLabel.Font = Enum.Font.Code
-    statusLabel.Text = "SIGNAL-BASED\nTARGETER: OFFLINE"
+    statusLabel.Text = "TARGETER DEMO\nInitializing..."
     statusLabel.Parent = billboardGui
 
     -- Target folder
@@ -179,180 +138,173 @@ function Demo.run(config)
     targetFolder.Parent = demoFolder
 
     ---------------------------------------------------------------------------
-    -- BEAM VISUALIZATION
+    -- STATE TRACKING
     ---------------------------------------------------------------------------
 
-    local beamParts = {}
     local currentTargets = {}
-
-    local function clearBeams()
-        for _, beam in ipairs(beamParts) do
-            if beam.Parent then
-                beam:Destroy()
-            end
-        end
-        beamParts = {}
-    end
-
-    local function drawBeam(origin, direction, hit, isHit)
-        local endPoint = hit and hit.position or (origin + direction)
-        local distance = (endPoint - origin).Magnitude
-        local midpoint = origin + (endPoint - origin) / 2
-
-        local beam = Instance.new("Part")
-        beam.Name = "Beam"
-        beam.Size = Vector3.new(0.1, 0.1, distance)
-        beam.CFrame = CFrame.new(midpoint, endPoint)
-        beam.Anchored = true
-        beam.CanCollide = false
-        beam.Material = Enum.Material.Neon
-        beam.BrickColor = isHit and BrickColor.new("Bright red") or BrickColor.new("Lime green")
-        beam.Transparency = 0.3
-        beam.Parent = beamFolder
-
-        table.insert(beamParts, beam)
-        return beam
-    end
+    local targetCounter = 0
+    local enabled = true  -- Targeter auto-starts
 
     ---------------------------------------------------------------------------
-    -- CREATE NODES
+    -- CREATE TARGETER
     ---------------------------------------------------------------------------
 
     local targeter = Targeter:new({
         id = "Demo_Targeter",
         model = scanner,
+        attributes = {
+            -- Raycast config
+            BeamMode = "pinpoint",
+            BeamRadius = 3,
+            RayCount = 8,
+            Range = 80,
+            ScanMode = "continuous",
+            Interval = 0.1,
+            TrackingMode = "lock",
+            AutoStart = true,
+            -- Visual beam config
+            BeamVisible = true,
+            BeamColor = Color3.new(0, 1, 0),  -- Green
+            BeamWidth = 0.15,
+            BeamTransparency = 0.3,
+        },
     })
+
+    ---------------------------------------------------------------------------
+    -- WIRE SIGNALS
+    ---------------------------------------------------------------------------
+
+    -- Subscribe to Targeter output signals
+    local originalOutFire = targeter.Out.Fire
+    targeter.Out.Fire = function(outSelf, signal, data)
+        data = data or {}
+
+        if signal == "acquired" then
+            currentTargets = data.targets or {}
+            statusLabel.TextColor3 = Color3.new(1, 0.5, 0)
+            statusLabel.Text = string.format(
+                "TARGETER DEMO\nACQUIRED!\nTargets: %d",
+                #currentTargets
+            )
+
+            -- Highlight targets
+            for _, targetData in ipairs(currentTargets) do
+                if targetData.target and targetData.target:IsA("BasePart") then
+                    targetData.target.BrickColor = BrickColor.new("Bright orange")
+                end
+            end
+
+        elseif signal == "tracking" then
+            currentTargets = data.targets or {}
+            local closest = currentTargets[1]
+            statusLabel.TextColor3 = Color3.new(1, 0, 0)
+            statusLabel.Text = string.format(
+                "TARGETER DEMO\nLOCKED: %d targets\nClosest: %.1f studs",
+                #currentTargets,
+                closest and closest.distance or 0
+            )
+
+        elseif signal == "lost" then
+            currentTargets = {}
+            statusLabel.TextColor3 = Color3.new(0.5, 0.5, 0.5)
+            statusLabel.Text = "TARGETER DEMO\nTARGET LOST"
+
+            -- Reset target colors
+            for _, target in ipairs(targetFolder:GetChildren()) do
+                if target:IsA("BasePart") then
+                    target.BrickColor = BrickColor.new("Bright red")
+                end
+            end
+
+        elseif signal == "discoverLauncher" then
+            -- Targeter is looking for a Launcher
+            -- In this demo we're standalone, so no response
+            print("[Demo] Targeter fired discoverLauncher - no Launcher wired")
+
+        elseif signal == "targeterPresent" then
+            -- Response to a Launcher's discovery (if wired)
+            print("[Demo] Targeter responded with targeterPresent:", data)
+        end
+
+        -- Call original if it exists
+        if originalOutFire then
+            originalOutFire(outSelf, signal, data)
+        end
+    end
+
+    ---------------------------------------------------------------------------
+    -- INITIALIZE AND START
+    ---------------------------------------------------------------------------
+
     targeter.Sys.onInit(targeter)
 
-    -- Configure targeter (setup phase - direct call OK per ARCHITECTURE.md)
+    -- Configure filter for our demo targets
     targeter.In.onConfigure(targeter, {
-        beamMode = "pinpoint",
-        beamRadius = 3,
-        rayCount = 8,
-        range = 50,
-        scanMode = "interval",
-        interval = 0.1,
-        trackingMode = "lock",
         filter = { class = "DemoTarget" },
     })
 
-    -- Controller
-    local controller = TargeterController:new({ id = "Demo_TargeterController" })
-    controller.Sys.onInit(controller)
+    targeter.Sys.onStart(targeter)
+
+    statusLabel.Text = "TARGETER DEMO\nSCANNING...\nAdd targets to detect"
 
     ---------------------------------------------------------------------------
-    -- WIRE SIGNALS (manual wiring for demo - in production IPC does this)
+    -- SCANNER ROTATION ANIMATION
     ---------------------------------------------------------------------------
 
-    -- Controller.Out -> Targeter.In
-    controller.Out = {
-        Fire = function(self, signal, data)
-            if signal == "enable" then
-                targeter.In.onEnable(targeter)
-            elseif signal == "disable" then
-                targeter.In.onDisable(targeter)
-            elseif signal == "scan" then
-                targeter.In.onScan(targeter)
-            elseif signal == "configure" then
-                targeter.In.onConfigure(targeter, data)
-            end
-        end,
-    }
+    local rotationSpeed = 20  -- degrees per second
+    local currentAngle = 0
+    local rotationDirection = 1  -- 1 = right, -1 = left
+    local maxAngle = 60
 
-    -- Targeter.Out -> Controller.In + UI updates
-    targeter.Out = {
-        Fire = function(self, signal, data)
-            if signal == "acquired" then
-                controller.In.onAcquired(controller, data)
-                currentTargets = data.targets
-                statusLabel.TextColor3 = Color3.new(1, 0.5, 0)
-                statusLabel.Text = string.format("SIGNAL-BASED\nACQUIRED! Targets: %d", #data.targets)
-
-                -- Highlight targets
-                for _, targetData in ipairs(data.targets) do
-                    if targetData.target:IsA("BasePart") then
-                        targetData.target.BrickColor = BrickColor.new("Bright orange")
-                    end
-                end
-
-            elseif signal == "tracking" then
-                controller.In.onTracking(controller, data)
-                currentTargets = data.targets
-                statusLabel.TextColor3 = Color3.new(1, 0, 0)
-                statusLabel.Text = string.format(
-                    "SIGNAL-BASED\nTRACKING: %d\nClosest: %.1f studs",
-                    #data.targets,
-                    data.targets[1] and data.targets[1].distance or 0
-                )
-
-            elseif signal == "lost" then
-                controller.In.onLost(controller)
-                currentTargets = {}
-                statusLabel.TextColor3 = Color3.new(0.5, 0.5, 0.5)
-                statusLabel.Text = "SIGNAL-BASED\nTARGET LOST"
-
-                -- Reset target colors
-                for _, target in ipairs(targetFolder:GetChildren()) do
-                    if target:IsA("BasePart") then
-                        target.BrickColor = BrickColor.new("Bright red")
-                    end
-                end
-            end
-        end,
-    }
-
-    -- Track enabled state via signals (not direct method calls)
-    local targeterEnabled = false
-
-    -- Beam visualization update (uses tracked state, not direct method calls)
-    local visualConnection = RunService.Heartbeat:Connect(function()
+    local rotationConnection = RunService.Heartbeat:Connect(function(dt)
         if not demoFolder.Parent then return end
+        if not enabled then return end
 
-        clearBeams()
+        -- Sweep left and right
+        currentAngle = currentAngle + rotationSpeed * rotationDirection * dt
 
-        if not targeterEnabled then return end
-
-        -- Draw beams to tracked targets (state from signals, not direct calls)
-        local origin = scanner.Position
-        for _, targetData in ipairs(currentTargets) do
-            local direction = targetData.position - origin
-            drawBeam(origin, direction, targetData, true)
+        if currentAngle >= maxAngle then
+            currentAngle = maxAngle
+            rotationDirection = -1
+        elseif currentAngle <= -maxAngle then
+            currentAngle = -maxAngle
+            rotationDirection = 1
         end
+
+        scanner.CFrame = CFrame.new(position) * CFrame.Angles(0, math.rad(currentAngle), 0)
     end)
 
     ---------------------------------------------------------------------------
-    -- DEMO CONTROLS (fire signals through controller)
+    -- DEMO CONTROLS
     ---------------------------------------------------------------------------
 
     local controls = {}
-    local targetCounter = 0
 
     function controls.enable()
-        controller:enableScanning()
-        targeterEnabled = true
-        statusLabel.Text = "SIGNAL-BASED\nSCANNING..."
+        targeter.In.onEnable(targeter)
+        enabled = true
+        statusLabel.Text = "TARGETER DEMO\nSCANNING..."
         statusLabel.TextColor3 = Color3.new(0, 1, 0)
         scanner.BrickColor = BrickColor.new("Bright green")
     end
 
     function controls.disable()
-        controller:disableScanning()
-        targeterEnabled = false
-        statusLabel.Text = "SIGNAL-BASED\nTARGETER: OFFLINE"
+        targeter.In.onDisable(targeter)
+        enabled = false
+        statusLabel.Text = "TARGETER DEMO\nOFFLINE"
         statusLabel.TextColor3 = Color3.new(0.5, 0.5, 0.5)
         scanner.BrickColor = BrickColor.new("Medium stone grey")
-        clearBeams()
     end
 
     function controls.scan()
-        controller:triggerScan()
+        targeter.In.onScan(targeter)
     end
 
     function controls.addTarget(targetPosition)
         targetPosition = targetPosition or (position + Vector3.new(
-            math.random(-20, 20),
+            math.random(-30, 30),
             math.random(-5, 5),
-            -math.random(10, 40)
+            -math.random(15, 50)
         ))
 
         targetCounter = targetCounter + 1
@@ -366,82 +318,137 @@ function Demo.run(config)
         target:SetAttribute("NodeClass", "DemoTarget")
         target.Parent = targetFolder
 
+        print(string.format("[Demo] Added target at %.0f, %.0f, %.0f",
+            targetPosition.X, targetPosition.Y, targetPosition.Z))
+
         return target
     end
 
     function controls.removeTargets()
         targetFolder:ClearAllChildren()
         currentTargets = {}
+        print("[Demo] Removed all targets")
     end
 
     function controls.setBeamMode(mode)
-        controller:setBeamMode(mode)
-        print("Beam mode set to:", mode)
+        targeter.In.onConfigure(targeter, { beamMode = mode })
+        print("[Demo] Beam mode set to:", mode)
     end
 
     function controls.setTrackingMode(mode)
-        controller:setTrackingMode(mode)
-        print("Tracking mode set to:", mode)
+        targeter.In.onConfigure(targeter, { trackingMode = mode })
+        print("[Demo] Tracking mode set to:", mode)
     end
 
     function controls.setScanMode(mode)
-        local wasEnabled = targeterEnabled
-        if wasEnabled then controls.disable() end
-        controller:setScanMode(mode)
-        if wasEnabled then controls.enable() end
-        print("Scan mode set to:", mode)
+        targeter.In.onConfigure(targeter, { scanMode = mode })
+        print("[Demo] Scan mode set to:", mode)
     end
 
     function controls.setRange(range)
-        controller:setRange(range)
+        targeter.In.onConfigure(targeter, { range = range })
+        print("[Demo] Range set to:", range)
+    end
+
+    function controls.setBeamColor(color)
+        targeter.In.onConfigure(targeter, { beamColor = color })
+        print("[Demo] Beam color changed")
+    end
+
+    function controls.setBeamVisible(visible)
+        targeter.In.onConfigure(targeter, { beamVisible = visible })
+        print("[Demo] Beam visible:", visible)
+    end
+
+    function controls.setBeamWidth(width)
+        targeter.In.onConfigure(targeter, { beamWidth = width })
+        print("[Demo] Beam width:", width)
     end
 
     function controls.pointAt(direction)
-        scanner.CFrame = CFrame.new(scanner.Position, scanner.Position + direction)
+        local pos = scanner.Position
+        scanner.CFrame = CFrame.new(pos, pos + direction)
+        currentAngle = 0
+        rotationDirection = 1
+    end
+
+    function controls.stopRotation()
+        rotationSpeed = 0
+    end
+
+    function controls.startRotation(speed)
+        rotationSpeed = speed or 20
     end
 
     function controls.cleanup()
-        visualConnection:Disconnect()
+        print("[Demo] Cleaning up...")
+        rotationConnection:Disconnect()
         targeter.Sys.onStop(targeter)
         demoFolder:Destroy()
+        print("[Demo] Cleanup complete")
     end
 
     function controls.getTargeter()
         return targeter
     end
 
-    function controls.getController()
-        return controller
+    ---------------------------------------------------------------------------
+    -- AUTO-DEMO
+    ---------------------------------------------------------------------------
+
+    if config.autoDemo ~= false then
+        -- Add some targets automatically
+        task.spawn(function()
+            task.wait(1)
+            if not demoFolder.Parent then return end
+
+            controls.addTarget(position + Vector3.new(0, 0, -25))
+            task.wait(0.5)
+            if not demoFolder.Parent then return end
+
+            controls.addTarget(position + Vector3.new(15, 3, -30))
+            task.wait(0.5)
+            if not demoFolder.Parent then return end
+
+            controls.addTarget(position + Vector3.new(-20, -2, -20))
+        end)
     end
 
     ---------------------------------------------------------------------------
-    -- AUTO-DEMO (optional)
+    -- CLEANUP ON DESTROY
     ---------------------------------------------------------------------------
 
-    if config.autoDemo then
-        -- Add some targets
-        controls.addTarget(position + Vector3.new(0, 0, -20))
-        controls.addTarget(position + Vector3.new(10, 2, -25))
-        controls.addTarget(position + Vector3.new(-8, -1, -15))
+    demoFolder.AncestryChanged:Connect(function(_, parent)
+        if not parent then
+            rotationConnection:Disconnect()
+            targeter.Sys.onStop(targeter)
+        end
+    end)
 
-        -- Start scanning
-        controls.enable()
-    end
+    ---------------------------------------------------------------------------
+    -- PRINT INSTRUCTIONS
+    ---------------------------------------------------------------------------
 
     print("============================================")
-    print("  SIGNAL-BASED TARGETER DEMO")
+    print("  TARGETER DEMO")
     print("============================================")
     print("")
-    print("Controller fires signals -> Targeter receives and scans")
-    print("Proper Out:Fire / In pattern")
+    print("Features:")
+    print("  - Built-in visual targeting beam")
+    print("  - Auto-starts scanning (batteries included)")
+    print("  - Target lock: acquired → tracking → lost")
+    print("  - Beam changes color when locked (green → red)")
     print("")
     print("Controls:")
-    print("  demo.enable()            - Fire enable signal")
-    print("  demo.disable()           - Fire disable signal")
-    print("  demo.addTarget(pos)      - Add target at position")
-    print("  demo.removeTargets()     - Remove all targets")
-    print("  demo.setBeamMode('cone') - Fire configure signal")
-    print("  demo.cleanup()           - Remove demo")
+    print("  demo.addTarget(pos)         - Add target")
+    print("  demo.removeTargets()        - Clear all targets")
+    print("  demo.enable() / disable()   - Toggle scanning")
+    print("  demo.setBeamMode('cone')    - pinpoint/cylinder/cone")
+    print("  demo.setBeamColor(Color3)   - Change beam color")
+    print("  demo.setBeamVisible(false)  - Hide beam")
+    print("  demo.setRange(100)          - Change range")
+    print("  demo.stopRotation()         - Stop scanner rotation")
+    print("  demo.cleanup()              - Remove demo")
     print("")
 
     return controls

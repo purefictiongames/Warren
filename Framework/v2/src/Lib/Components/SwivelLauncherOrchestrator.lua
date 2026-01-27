@@ -43,7 +43,9 @@
         onTriggerDown({ targetPosition? })
         onTriggerUp({})
         onReload({})
-        onConfigure({ fireMode?, cooldown?, ... })
+        onConfigure({ fireMode?, cooldown?, yawSpeed?, pitchSpeed?, ... })
+            - Swivel params forwarded to SwivelDemoOrchestrator
+            - Launcher params forwarded to LauncherDemoOrchestrator
 
     OUT (emits):
         -- Swivel signals (from SwivelDemoOrchestrator)
@@ -243,6 +245,8 @@ local SwivelLauncherOrchestrator = Orchestrator.extend(function(parent)
                         "fired", "ready", "ammoChanged", "reloadStarted", "reloadComplete",
                         "magazineEmpty", "beamStart", "beamEnd", "heatChanged", "overheated",
                         "cooledDown", "powerChanged", "powerDepleted", "powerRestored",
+                        -- Targeter signals
+                        "targetAcquired", "targetTracking", "targetLost",
                     }
                     for _, fwd in ipairs(forwardSignals) do
                         if signal == fwd then
@@ -370,7 +374,24 @@ local SwivelLauncherOrchestrator = Orchestrator.extend(function(parent)
             end,
 
             onConfigure = function(self, data)
+                if not data then return end
                 local state = getState(self)
+
+                -- Forward swivel config (yawSpeed, pitchSpeed, angles)
+                if state.swivelOrchestrator then
+                    local swivelConfig = {}
+                    if data.yawSpeed then swivelConfig.yawSpeed = data.yawSpeed end
+                    if data.pitchSpeed then swivelConfig.pitchSpeed = data.pitchSpeed end
+                    if data.yawMinAngle then swivelConfig.yawMinAngle = data.yawMinAngle end
+                    if data.yawMaxAngle then swivelConfig.yawMaxAngle = data.yawMaxAngle end
+                    if data.pitchMinAngle then swivelConfig.pitchMinAngle = data.pitchMinAngle end
+                    if data.pitchMaxAngle then swivelConfig.pitchMaxAngle = data.pitchMaxAngle end
+                    if next(swivelConfig) then
+                        state.swivelOrchestrator.In.onConfigure(state.swivelOrchestrator, swivelConfig)
+                    end
+                end
+
+                -- Forward launcher config (fireMode, cooldown, etc.)
                 if state.launcherOrchestrator then
                     state.launcherOrchestrator.In.onConfigure(state.launcherOrchestrator, data)
                 end
@@ -403,6 +424,11 @@ local SwivelLauncherOrchestrator = Orchestrator.extend(function(parent)
             powerChanged = {},
             powerDepleted = {},
             powerRestored = {},
+
+            -- Targeter signals (from LauncherDemoOrchestrator)
+            targetAcquired = {},
+            targetTracking = {},
+            targetLost = {},
 
             -- Error
             error = {},

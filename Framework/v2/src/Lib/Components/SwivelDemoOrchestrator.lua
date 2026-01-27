@@ -42,6 +42,9 @@
         onStop({})
             - Stop both rotations
 
+        onConfigure({ yawSpeed?, pitchSpeed?, yawMinAngle?, yawMaxAngle?, pitchMinAngle?, pitchMaxAngle? })
+            - Update swivel speeds and angle limits at runtime
+
     OUT (emits):
         yawRotated({ angle: number })
         pitchRotated({ angle: number })
@@ -261,6 +264,37 @@ local SwivelDemoOrchestrator = Orchestrator.extend(function(parent)
                 local state = getState(self)
                 if state.yawSwivel then
                     state.yawSwivel.In.onSetAngle(state.yawSwivel, data)
+                end
+            end,
+
+            --[[
+                Configure swivel settings at runtime.
+                Supports: yawSpeed, pitchSpeed, yawMinAngle, yawMaxAngle, pitchMinAngle, pitchMaxAngle
+            --]]
+            onConfigure = function(self, data)
+                if not data then return end
+                local state = getState(self)
+
+                -- Forward yaw config
+                if state.yawSwivel then
+                    local yawConfig = {}
+                    if data.yawSpeed then yawConfig.speed = data.yawSpeed end
+                    if data.yawMinAngle then yawConfig.minAngle = data.yawMinAngle end
+                    if data.yawMaxAngle then yawConfig.maxAngle = data.yawMaxAngle end
+                    if next(yawConfig) then
+                        state.yawSwivel.In.onConfigure(state.yawSwivel, yawConfig)
+                    end
+                end
+
+                -- Forward pitch config
+                if state.pitchSwivel then
+                    local pitchConfig = {}
+                    if data.pitchSpeed then pitchConfig.speed = data.pitchSpeed end
+                    if data.pitchMinAngle then pitchConfig.minAngle = data.pitchMinAngle end
+                    if data.pitchMaxAngle then pitchConfig.maxAngle = data.pitchMaxAngle end
+                    if next(pitchConfig) then
+                        state.pitchSwivel.In.onConfigure(state.pitchSwivel, pitchConfig)
+                    end
                 end
             end,
         },

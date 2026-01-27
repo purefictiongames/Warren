@@ -53,6 +53,7 @@ Components.Orchestrator = require(script.Orchestrator)
 Components.SwivelDemoOrchestrator = require(script.SwivelDemoOrchestrator)
 Components.LauncherDemoOrchestrator = require(script.LauncherDemoOrchestrator)
 Components.SwivelLauncherOrchestrator = require(script.SwivelLauncherOrchestrator)
+Components.TargetSpawnerOrchestrator = require(script.TargetSpawnerOrchestrator)
 
 -- Turret System
 Components.Swivel = require(script.Swivel)
@@ -70,5 +71,8 @@ Components.Battery = require(script.Battery)
 Components.EntityStats = require(script.EntityStats)
 Components.DamageCalculator = require(script.DamageCalculator)
 Components.StatusEffect = require(script.StatusEffect)
+
+-- Targets
+Components.FlyingTarget = require(script.FlyingTarget)
 
 return Components

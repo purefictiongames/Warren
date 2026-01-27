@@ -281,6 +281,7 @@ local Orchestrator = Node.extend(function(parent)
 
         Special targets:
         - "Out": Fire to orchestrator's own Out (for external consumers)
+        - "Self": Route to orchestrator's own In handlers (for internal handling)
         - "Client": Reserved for client replication (no error if missing)
     --]]
     executeWire = function(self, wire, data, fromNodeId, signal)
@@ -290,6 +291,34 @@ local Orchestrator = Node.extend(function(parent)
         if wire.to == "Out" then
             local outSignal = wire.handler or signal  -- handler = signal name to emit
             self.Out:Fire(outSignal, data)
+            return
+        end
+
+        -- Special target: "Self" - route to orchestrator's own In handlers
+        if wire.to == "Self" then
+            local handler = self.In and self.In[wire.handler]
+            if not handler then
+                self.Err:Fire({
+                    reason = "nodeError",
+                    id = "Self",
+                    message = string.format("Handler '%s' not found on orchestrator", wire.handler),
+                })
+                return
+            end
+
+            -- Execute handler on self
+            local success, err = pcall(function()
+                handler(self, data)
+            end)
+
+            if not success then
+                self.Err:Fire({
+                    reason = "nodeError",
+                    id = "Self",
+                    handler = wire.handler,
+                    message = tostring(err),
+                })
+            end
             return
         end
 

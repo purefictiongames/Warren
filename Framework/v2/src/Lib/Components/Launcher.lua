@@ -172,6 +172,10 @@ local Launcher = Node.extend(function(parent)
                 -- External battery state (auto-discovered via handshake)
                 hasExternalBattery = false,
                 externalBatteryDepleted = false,
+
+                -- External targeter state (auto-discovered via handshake)
+                hasExternalTargeter = false,
+                currentTarget = nil,  -- Current locked target { target, position, distance }
             }
         end
         return instanceStates[self.id]
@@ -754,6 +758,11 @@ local Launcher = Node.extend(function(parent)
                 -- If nothing wired, flag stays false and we use internal power
                 state.hasExternalBattery = false
                 self.Out:Fire("discoverBattery", { launcherId = self.id })
+
+                -- Discovery handshake: check if external targeter is wired
+                -- If Targeter responds (sync), onTargeterPresent sets hasExternalTargeter = true
+                state.hasExternalTargeter = false
+                self.Out:Fire("discoverTargeter", { launcherId = self.id })
             end,
 
             onStop = function(self)
@@ -916,6 +925,62 @@ local Launcher = Node.extend(function(parent)
             end,
 
             --[[
+                Targeter handshake response - external targeter is present.
+                Called synchronously during discoverTargeter if targeter is wired.
+            --]]
+            onTargeterPresent = function(self, data)
+                local state = getState(self)
+                state.hasExternalTargeter = true
+            end,
+
+            --[[
+                Targeter acquired targets.
+            --]]
+            onTargetAcquired = function(self, data)
+                local state = getState(self)
+                if data and data.targets and #data.targets > 0 then
+                    state.currentTarget = data.targets[1]  -- Use closest target
+                    self.Out:Fire("targetAcquired", {
+                        target = state.currentTarget.target,
+                        position = state.currentTarget.position,
+                        distance = state.currentTarget.distance,
+                    })
+                end
+            end,
+
+            --[[
+                Targeter tracking targets.
+            --]]
+            onTargetTracking = function(self, data)
+                local state = getState(self)
+                if data and data.targets and #data.targets > 0 then
+                    state.currentTarget = data.targets[1]  -- Use closest target
+                    self.Out:Fire("targetTracking", {
+                        target = state.currentTarget.target,
+                        position = state.currentTarget.position,
+                        distance = state.currentTarget.distance,
+                    })
+                end
+            end,
+
+            --[[
+                Targeter lost all targets.
+            --]]
+            onTargetLost = function(self, data)
+                local state = getState(self)
+                state.currentTarget = nil
+                self.Out:Fire("targetLost", {})
+            end,
+
+            --[[
+                Targeter discovery handshake - Targeter is checking if we're wired.
+                Respond with launcherPresent.
+            --]]
+            onDiscoverLauncher = function(self, data)
+                self.Out:Fire("launcherPresent", { launcherId = self.id })
+            end,
+
+            --[[
                 Receive ammo from external magazine via IPC.
                 Wired from: Magazine.Out.spawned → Launcher.In.onAmmoReceived
             --]]
@@ -1074,6 +1139,13 @@ local Launcher = Node.extend(function(parent)
             -- External battery (IPC)
             discoverBattery = {},  -- { launcherId } - handshake discovery
             drawPower = {},        -- { amount, launcherId } - request power each frame
+
+            -- External targeter (IPC)
+            discoverTargeter = {},    -- { launcherId } - handshake discovery
+            launcherPresent = {},     -- Response to Targeter's discoverLauncher
+            targetAcquired = {},      -- { target, position, distance } - from Targeter
+            targetTracking = {},      -- { target, position, distance } - from Targeter
+            targetLost = {},          -- {} - from Targeter
         },
     }
 end)

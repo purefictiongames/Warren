@@ -121,6 +121,8 @@ local demoModules = {
     Combat = "Combat_Demo",
     ShootingGallery = "ShootingGallery_Demo",
     SwivelLauncher = "SwivelLauncher_Demo",
+    MapLayout = "MapLayout_Demo",
+    MapLayoutScanner = "MapLayoutScanner_Demo",
 }
 
 setmetatable(Demos, {

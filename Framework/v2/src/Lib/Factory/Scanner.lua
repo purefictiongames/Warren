@@ -157,6 +157,35 @@ local function snapEdges(position, size, bounds, threshold)
 end
 
 --------------------------------------------------------------------------------
+-- ROTATION EXTRACTION
+--------------------------------------------------------------------------------
+
+--[[
+    Extract rotation from a part's Orientation property.
+    Returns nil if rotation is essentially zero (within threshold).
+
+    @param part: BasePart to extract rotation from
+    @param threshold: Angle threshold in degrees to consider "zero" (default: 0.5)
+    @return: {rx, ry, rz} in degrees, or nil if no significant rotation
+--]]
+local function extractRotation(part, threshold)
+    threshold = threshold or 0.5
+
+    -- Use Orientation property directly (already in degrees)
+    local orientation = part.Orientation
+    local rx = round(orientation.X)
+    local ry = round(orientation.Y)
+    local rz = round(orientation.Z)
+
+    -- Check if rotation is significant
+    if math.abs(rx) < threshold and math.abs(ry) < threshold and math.abs(rz) < threshold then
+        return nil
+    end
+
+    return {rx, ry, rz}
+end
+
+--------------------------------------------------------------------------------
 -- TYPE INFERENCE
 --------------------------------------------------------------------------------
 
@@ -320,6 +349,51 @@ function Scanner.scan(container, options)
         parts = {},
     }
 
+    -- Read spec-level attributes if present (set by Factory.build)
+    local specScale = container:GetAttribute("GeometrySpecScale")
+    local specOrigin = container:GetAttribute("GeometrySpecOrigin")
+    local specBoundsStr = container:GetAttribute("GeometrySpecBounds")
+
+    local scale = 1
+    if specScale then
+        config.scale = specScale
+        -- Parse scale (e.g., "5:1" means multiply by 5)
+        local left, right = specScale:match("(%d+):(%d+)")
+        if left and right then
+            scale = tonumber(left) / tonumber(right)
+        end
+    end
+
+    if specOrigin then
+        config.origin = specOrigin
+    end
+
+    local bounds
+    if specBoundsStr then
+        local parts = {}
+        for num in specBoundsStr:gmatch("([^,]+)") do
+            table.insert(parts, tonumber(num))
+        end
+        if #parts == 3 then
+            bounds = parts
+            config.bounds = bounds
+        end
+    end
+
+    -- Calculate origin offset to transform world coords back to spec coords
+    local scaledBounds = bounds and {bounds[1] * scale, bounds[2] * scale, bounds[3] * scale} or {0, 0, 0}
+    local containerCorner = container.Position - container.Size / 2
+    local originOffset = Vector3.new(0, 0, 0)
+
+    if specOrigin == "center" then
+        originOffset = Vector3.new(-scaledBounds[1]/2, -scaledBounds[2]/2, -scaledBounds[3]/2)
+    elseif specOrigin == "floor-center" then
+        originOffset = Vector3.new(-scaledBounds[1]/2, 0, -scaledBounds[3]/2)
+    end
+    -- "corner" has no offset
+
+    local worldToSpec = containerCorner + originOffset
+
     -- Collect all parts
     local parts = {}
     if includeChildren then
@@ -354,28 +428,43 @@ function Scanner.scan(container, options)
 
         if shape == "block" then
             local geo = extractBlockGeometry(part)
-            element.position = geo.position
-            element.size = geo.size
+            -- Transform world coords back to spec coords
+            local worldPos = Vector3.new(geo.position[1], geo.position[2], geo.position[3])
+            local specPos = (worldPos - worldToSpec) / scale
+            element.position = {round(specPos.X), round(specPos.Y), round(specPos.Z)}
+            element.size = {round(geo.size[1] / scale), round(geo.size[2] / scale), round(geo.size[3] / scale)}
             -- shape = "block" is default, don't include
 
         elseif shape == "cylinder" then
             local geo = extractCylinderGeometry(part)
-            element.position = geo.position
-            element.height = geo.height
-            element.radius = geo.radius
+            local worldPos = Vector3.new(geo.position[1], geo.position[2], geo.position[3])
+            local specPos = (worldPos - worldToSpec) / scale
+            element.position = {round(specPos.X), round(specPos.Y), round(specPos.Z)}
+            element.height = round(geo.height / scale)
+            element.radius = round(geo.radius / scale)
             element.shape = "cylinder"
 
         elseif shape == "sphere" then
             local geo = extractSphereGeometry(part)
-            element.position = geo.position
-            element.radius = geo.radius
+            local worldPos = Vector3.new(geo.position[1], geo.position[2], geo.position[3])
+            local specPos = (worldPos - worldToSpec) / scale
+            element.position = {round(specPos.X), round(specPos.Y), round(specPos.Z)}
+            element.radius = round(geo.radius / scale)
             element.shape = "sphere"
 
         elseif shape == "wedge" then
             local geo = extractBlockGeometry(part)
-            element.position = geo.position
-            element.size = geo.size
+            local worldPos = Vector3.new(geo.position[1], geo.position[2], geo.position[3])
+            local specPos = (worldPos - worldToSpec) / scale
+            element.position = {round(specPos.X), round(specPos.Y), round(specPos.Z)}
+            element.size = {round(geo.size[1] / scale), round(geo.size[2] / scale), round(geo.size[3] / scale)}
             element.shape = "wedge"
+        end
+
+        -- Extract rotation (only if significant)
+        local rotation = extractRotation(part)
+        if rotation then
+            element.rotation = rotation
         end
 
         table.insert(config.parts, element)
@@ -466,17 +555,19 @@ local function serializeValue(value, indent)
                 local priority = {
                     name = 1,      -- Layout name first
                     spec = 2,      -- Then spec block
-                    id = 3,        -- Part identity
-                    class = 4,
-                    shape = 5,
-                    position = 6,  -- Geometry
-                    size = 7,
-                    bounds = 8,
-                    origin = 9,
-                    defaults = 10, -- Spec structure
-                    classes = 11,
-                    parts = 12,
-                    mounts = 13,
+                    scale = 3,     -- Spec-level settings
+                    origin = 4,
+                    bounds = 5,
+                    defaults = 6,  -- Style definitions
+                    classes = 7,
+                    id = 8,        -- Part identity
+                    class = 9,
+                    shape = 10,
+                    position = 11, -- Geometry
+                    size = 12,
+                    rotation = 13, -- Orientation
+                    parts = 14,
+                    mounts = 15,
                 }
                 local pa = priority[a] or 100
                 local pb = priority[b] or 100
@@ -620,11 +711,16 @@ function Scanner.cleanup(config, options)
         for _, part in ipairs(config.parts) do
             local cleanPart = {}
 
-            -- Copy non-geometry properties
+            -- Copy non-geometry properties (including rotation)
             for k, v in pairs(part) do
                 if k ~= "position" and k ~= "size" and k ~= "height" and k ~= "radius" then
                     cleanPart[k] = v
                 end
+            end
+
+            -- Keep rotation as-is (already in degrees, already rounded)
+            if part.rotation then
+                cleanPart.rotation = part.rotation
             end
 
             -- Clean geometry based on shape
@@ -787,6 +883,12 @@ function Scanner.scanArea(areaName, container, options)
             element.shape = "sphere"
         end
 
+        -- Extract rotation (only if significant)
+        local rotation = extractRotation(child)
+        if rotation then
+            element.rotation = rotation
+        end
+
         table.insert(config.parts, element)
     end
 
@@ -934,6 +1036,12 @@ function Scanner.mirrorArea(areaName, container, options)
             if part then
                 part.Name = element.id or shape
                 part.Anchored = true
+
+                -- Apply rotation if present (using Orientation property)
+                if element.rotation then
+                    local rot = element.rotation
+                    part.Orientation = Vector3.new(rot[1] or 0, rot[2] or 0, rot[3] or 0)
+                end
 
                 -- Apply properties
                 if element.Material then

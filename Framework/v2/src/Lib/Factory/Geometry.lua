@@ -221,6 +221,12 @@ local function createBlock(definition, properties, originOffset)
     part.Position = pos
     part.Anchored = true
 
+    -- Apply rotation if specified
+    if definition.rotation then
+        local rot = definition.rotation
+        part.Orientation = Vector3.new(rot[1] or 0, rot[2] or 0, rot[3] or 0)
+    end
+
     applyProperties(part, properties)
 
     if definition.id then
@@ -228,6 +234,9 @@ local function createBlock(definition, properties, originOffset)
     end
     if definition.class then
         part:SetAttribute("FactoryClass", definition.class)
+    end
+    if definition.rotation then
+        part:SetAttribute("FactoryRotation", table.concat(definition.rotation, ","))
     end
 
     return part, {
@@ -256,6 +265,16 @@ local function createCylinder(definition, properties, originOffset)
     part.Position = pos
     part.CFrame = CFrame.new(pos) * CFrame.Angles(0, 0, math.rad(90))
     part.Anchored = true
+
+    -- Apply additional rotation if specified (on top of default cylinder orientation)
+    if definition.rotation then
+        local rot = definition.rotation
+        part.CFrame = part.CFrame * CFrame.Angles(
+            math.rad(rot[1] or 0),
+            math.rad(rot[2] or 0),
+            math.rad(rot[3] or 0)
+        )
+    end
 
     applyProperties(part, properties)
 
@@ -324,13 +343,10 @@ local function createWedge(definition, properties, originOffset)
     part.Position = pos
     part.Anchored = true
 
+    -- Apply rotation if specified
     if definition.rotation then
         local rot = definition.rotation
-        part.CFrame = CFrame.new(pos) * CFrame.Angles(
-            math.rad(rot[1] or 0),
-            math.rad(rot[2] or 0),
-            math.rad(rot[3] or 0)
-        )
+        part.Orientation = Vector3.new(rot[1] or 0, rot[2] or 0, rot[3] or 0)
     end
 
     applyProperties(part, properties)
@@ -439,6 +455,14 @@ function Geometry.build(layout, parent)
     container.CanQuery = false
     container.Transparency = 1
     container.Position = Vector3.new(0, scaledBounds[2] / 2, 0)
+
+    -- Store spec-level properties as attributes for Scanner to read back
+    container:SetAttribute("GeometrySpecTag", "area")
+    if spec.scale then
+        container:SetAttribute("GeometrySpecScale", spec.scale)
+    end
+    container:SetAttribute("GeometrySpecOrigin", origin)
+    container:SetAttribute("GeometrySpecBounds", table.concat(bounds, ","))
 
     local containerCorner = container.Position - container.Size / 2
     local originOffset = getOriginOffset(origin, scaledBounds)

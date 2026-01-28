@@ -154,47 +154,46 @@ return function()
     -- Build turret example
     print("\n[1] Building turret geometry...")
     GeometrySpec.clear()
-    local turretModel = GeometrySpec.build(turretSpec)
-    turretModel.Name = "TurretGeometry"
-    turretModel:PivotTo(CFrame.new(0, 0, 0))
-    turretModel.Parent = demoContainer
+    local turret = GeometrySpec.build({ name = "Turret", spec = turretSpec })
+    turret:PivotTo(CFrame.new(0, 0, 0))
+    turret.Parent = demoContainer
 
     -- Get parts by ID
     local base = GeometrySpec.getInstance("base")
     local barrel = GeometrySpec.getInstance("barrel")
+    print("  - Container type:", turret.ClassName)
     print("  - Base part:", base and base.Name or "not found")
     print("  - Barrel part:", barrel and barrel.Name or "not found")
 
     -- Build zone example
     print("\n[2] Building zone with mount points...")
     GeometrySpec.clear()
-    local zoneModel = GeometrySpec.build(zoneSpec)
-    zoneModel.Name = "DefensiveZone"
-    zoneModel:PivotTo(CFrame.new(50, 0, 0))
-    zoneModel.Parent = demoContainer
+    local zone = GeometrySpec.build({ name = "DefensiveZone", spec = zoneSpec })
+    zone:PivotTo(CFrame.new(50, 0, 0))
+    zone.Parent = demoContainer
 
     -- Access mount points
     local mount1 = GeometrySpec.get("turret1")
     local mount2 = GeometrySpec.get("turret2")
+    print("  - Container size:", zone.Size)
     print("  - Mount 1 position:", mount1 and mount1.geometry.position or "not found")
     print("  - Mount 2 facing:", mount2 and mount2.geometry.facing or "not found")
 
     -- Build shapes example
     print("\n[3] Building shapes showcase...")
     GeometrySpec.clear()
-    local shapesModel = GeometrySpec.build(shapesSpec)
-    shapesModel.Name = "ShapesShowcase"
-    shapesModel:PivotTo(CFrame.new(100, 0, 0))
-    shapesModel.Parent = demoContainer
+    local shapes = GeometrySpec.build({ name = "Shapes", spec = shapesSpec })
+    shapes:PivotTo(CFrame.new(100, 0, 0))
+    shapes.Parent = demoContainer
 
     -- Parent demo container
     demoContainer.Parent = workspace
 
     print("\n" .. string.rep("=", 60))
     print("Demo complete! Check workspace.GeometrySpecDemo")
-    print("  - TurretGeometry at origin")
-    print("  - DefensiveZone at X=50")
-    print("  - ShapesShowcase at X=100")
+    print("  - Turret (Part container) at origin")
+    print("  - DefensiveZone (Part container) at X=50")
+    print("  - Shapes (Part container) at X=100")
     print(string.rep("=", 60) .. "\n")
 
     return demoContainer

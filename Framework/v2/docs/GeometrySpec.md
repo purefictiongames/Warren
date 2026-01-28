@@ -1,317 +1,620 @@
-# GeometrySpec - Declarative Geometry Definition System
+# Factory & GeometrySpec - Declarative Geometry System
 
 LibPureFiction Framework v2
 
 ## Overview
 
-GeometrySpec is a declarative system for defining geometry using Lua tables. It provides a unified way to specify parts with positions, sizes, and class-based styling.
+Factory is a declarative system for building Roblox geometry from Lua tables. Define your maps, structures, and node geometry as data - the framework handles instantiation, styling, and optimization.
+
+**Primary API:** `Lib.Factory`
+**Legacy wrapper:** `Lib.GeometrySpec` (delegates to Factory)
 
 **Use cases:**
-- **Zone nodes** - Map areas with mount points and player detection
+- **Map layouts** - Buildings, landscapes, game zones
 - **Node geometry** - Turrets, launchers, any node with generated parts
-- **Mount point definitions** - Named positions for spawning child nodes
+- **Rapid prototyping** - Describe structures in natural language, generate layouts
 
-Think of it as a style sheet for 3D parts - define geometry as data, apply classes for shared attributes.
+Think of it as a stylesheet for 3D parts - define geometry as data, apply classes for shared styling, compile for production.
 
 ## Quick Start
 
 ```lua
-local GeometrySpec = require(game.ReplicatedStorage.Lib.GeometrySpec)
+local Lib = require(game.ReplicatedStorage.Lib)
+local Factory = Lib.Factory
 
-local turretSpec = {
-    bounds = {4, 6, 4},
-    parts = {
-        { id = "base", class = "frame", size = {4, 2, 4}, position = {0, 0, 0} },
-        { id = "head", class = "frame", size = {3, 1.5, 3}, position = {0, 2, 0} },
-        { id = "barrel", class = "accent", size = {0.5, 0.5, 3}, position = {0, 2.5, 1.5} },
-    },
-    classes = {
-        frame = { Material = "DiamondPlate", Color = {80, 80, 85} },
-        accent = { Material = "Metal", Color = {40, 40, 40} },
-    },
-}
+-- Build from a saved layout
+local mansion = Factory.geometry(Lib.Layouts.BeverlyMansion)
 
-local model = GeometrySpec.build(turretSpec)
+-- Build from inline spec
+local turret = Factory.geometry({
+    name = "Turret",
+    spec = {
+        bounds = {4, 6, 4},
+        parts = {
+            { id = "base", class = "frame", size = {4, 2, 4}, position = {0, 0, 0} },
+            { id = "barrel", class = "accent", size = {0.5, 0.5, 3}, position = {0, 2.5, 1.5} },
+        },
+        classes = {
+            frame = { Material = "DiamondPlate", Color = {80, 80, 85} },
+            accent = { Material = "Metal", Color = {40, 40, 40} },
+        },
+    },
+})
+
+-- Access built parts via registry
+local base = Factory.getInstance("base")
+
+-- Optimize for production
+local stats = Factory.compile(mansion, { strategy = "class" })
+print("Reduced to", stats.compiledUnions, "unions")
 ```
 
-## Core Concepts
+## Spec Format
 
-### Bounded Containers
+### Layouts (Saved Files)
 
-Every spec defines a bounding volume. Parts are positioned relative to this container.
+Stored in `Lib/Layouts/*.lua` with name metadata:
+
+```lua
+-- Lib/Layouts/DefenseZone.lua
+return {
+    name = "DefenseZone",
+    spec = {
+        bounds = {40, 12, 30},
+        origin = "corner",
+
+        base = {
+            part = { CanCollide = true },
+        },
+
+        classes = {
+            concrete = { Material = "Concrete", Color = {180, 175, 165} },
+        },
+
+        parts = {
+            { id = "floor", class = "concrete", position = {20, 0, 15}, size = {40, 0.5, 30} },
+        },
+
+        mounts = {
+            { id = "turret1", position = {10, 0.5, 5}, facing = {0, 0, 1} },
+        },
+    },
+}
+```
+
+### Inline Specs
+
+For node components, use raw spec format:
+
+```lua
+local turretSpec = {
+    bounds = {4, 6, 4},
+    parts = { ... },
+    classes = { ... },
+}
+local container = Factory.geometry({ name = "Turret", spec = turretSpec })
+```
+
+## Part Containers
+
+`Factory.geometry()` returns a **Part** (not a Model) that:
+- Has `Size` matching the spec's `bounds`
+- Is invisible (`Transparency = 1`) and non-collidable
+- Contains all child geometry as children
+- Preserves bounding volume information
+
+All child parts are **Anchored = true** by default (built into `base.part`).
+
+## Shapes
+
+Four primitive shapes are supported:
+
+### Block (default)
+
+```lua
+{ id = "wall", position = {0, 5, 0}, size = {10, 10, 1} }
+```
+
+### Cylinder
+
+```lua
+{ id = "pillar", shape = "cylinder", position = {0, 5, 0}, height = 10, radius = 2 }
+```
+
+Cylinders are oriented vertically (height along Y axis).
+
+### Sphere
+
+```lua
+{ id = "dome", shape = "sphere", position = {0, 10, 0}, radius = 5 }
+```
+
+### Wedge
+
+```lua
+{ id = "ramp", shape = "wedge", position = {0, 2, 0}, size = {4, 4, 8}, rotation = {0, 90, 0} }
+```
+
+Wedges support `rotation = {rx, ry, rz}` in degrees.
+
+## Origin Modes
+
+Control how `{0, 0, 0}` is interpreted:
 
 ```lua
 {
-    bounds = {width, height, depth},  -- in studs
-    origin = "corner",                -- or "center", "floor-center"
-    parts = { ... },
+    bounds = {20, 10, 20},
+    origin = "corner",  -- default
 }
 ```
 
-**Origin options:**
-- `"corner"` - `{0,0,0}` at min corner (default)
-- `"center"` - `{0,0,0}` at volume center
-- `"floor-center"` - `{0,0,0}` at center XZ, Y=0 at floor
-
-### Parts
-
-Generic 3D elements with position, size, and optional class:
-
-```lua
-parts = {
-    { id = "base", position = {0, 0, 0}, size = {4, 2, 4} },
-    { id = "pillar", position = {2, 2, 2}, size = {1, 4, 1}, class = "metal" },
-}
-```
-
-**Part properties:**
-- `id` - Unique identifier (optional, required if you need to reference it)
-- `position` - `{x, y, z}` relative to container origin
-- `size` - `{width, height, depth}`
-- `class` - Space-separated class names for styling
-- `shape` - `"block"` (default), `"cylinder"`, `"sphere"`, `"wedge"`
-- Any inline Roblox properties (Material, Color, etc.)
-
-### Mount Points
-
-Named positions for attaching child nodes:
-
-```lua
-mounts = {
-    { id = "turret1", position = {5, 0, 5}, facing = {0, 0, 1} },
-    { id = "turret2", position = {15, 0, 5}, facing = {0, 0, 1} },
-    { id = "spawnPoint", position = {10, 0, -5}, class = "rearGuard" },
-}
-```
-
-Mount points don't create geometry - they're positions for the orchestrator to spawn nodes at.
+| Origin | Description | Use Case |
+|--------|-------------|----------|
+| `"corner"` | `{0,0,0}` at min corner | Map layouts, buildings |
+| `"center"` | `{0,0,0}` at volume center | Symmetric objects |
+| `"floor-center"` | `{0,0,0}` at XZ center, Y=0 at floor | Characters, vehicles |
 
 ## Class-Based Styling
 
-Three-level cascade: `defaults → classes → inline`
+CSS-like cascade with four levels: `defaults → base → classes → inline`
 
 ```lua
-local spec = {
+{
+    -- Applied to all parts
     defaults = {
-        Anchored = true,
-        CanCollide = true,
         Material = "SmoothPlastic",
     },
 
+    -- Applied by element type
+    -- base.part is built-in with { Anchored = true }
+    base = {
+        part = { CanCollide = true },
+    },
+
+    -- Named style classes
     classes = {
-        frame = { Material = "DiamondPlate", Color = {80, 80, 85} },
-        accent = { Material = "Metal", Color = {40, 40, 40} },
-        trigger = { CanCollide = false, Transparency = 1 },
+        metal = { Material = "DiamondPlate", Color = {80, 80, 85} },
+        glass = { Material = "Glass", Color = {200, 220, 235}, Transparency = 0.3 },
+        danger = { Material = "Neon", Color = {255, 60, 40} },
     },
 
     parts = {
-        { id = "base", class = "frame", size = {4, 2, 4}, position = {0, 0, 0} },
-        { id = "highlight", class = "frame accent", size = {1, 1, 1}, position = {0, 3, 0} },  -- multiple classes
-        { id = "zone", class = "trigger", size = {10, 10, 10}, position = {0, 5, 0} },
+        { id = "frame", class = "metal", ... },
+        { id = "window", class = "glass", ... },
+        -- Inline properties override everything
+        { id = "custom", class = "metal", Color = {255, 0, 0}, ... },
     },
 }
 ```
 
 **Resolution order:**
 1. Start with `defaults`
-2. Merge each class (space-separated, left to right)
-3. Merge inline properties (highest priority)
-
-```lua
--- Implementation is ~5 lines
-local function resolveAttrs(part, classes, defaults)
-    local result = Table.clone(defaults or {})
-    for className in (part.class or ""):gmatch("%S+") do
-        Table.merge(result, classes[className] or {})
-    end
-    return Table.merge(result, part)
-end
-```
+2. Apply `base.part` (built-in: `{ Anchored = true }`)
+3. Merge each class (space-separated, left to right)
+4. Merge inline properties (highest priority)
 
 ## Scale
 
-Convert definition units to studs:
-
-```lua
-scale = "4:1"    -- 4 studs per 1 definition unit (e.g., meters)
-scale = 4        -- Same as "4:1"
-```
-
-Useful for working in "real" units:
+Convert spec units to studs:
 
 ```lua
 {
-    scale = "4:1",  -- 1 unit = 1 meter = 4 studs
-    bounds = {5, 3, 5},  -- 5m x 3m x 5m room
-    parts = {
-        { position = {2.5, 0, 2.5}, size = {1, 2, 1} },  -- 1m x 2m x 1m pillar
-    },
+    scale = "4:1",    -- 4 studs per 1 spec unit
+    bounds = {5, 3, 5},  -- 20x12x20 studs
 }
 ```
 
-## Scanner (Visual → Config Workflow)
+Useful for working in meters (4 studs ≈ 1 meter).
 
-Build geometry visually in Studio, export to config code.
+## Mount Points
+
+Named positions for attaching child nodes:
+
+```lua
+mounts = {
+    { id = "turret1", position = {5, 0, 5}, facing = {0, 0, 1} },
+    { id = "spawn", position = {10, 0, -5} },
+}
+```
+
+Mounts don't create geometry - they're positions in the registry for orchestrator coordination.
+
+## Properties
+
+Standard Roblox Part properties are supported:
+
+| Property | Type | Example |
+|----------|------|---------|
+| `Color` | `{r, g, b}` or string | `{255, 0, 0}` or `"Bright red"` |
+| `Material` | string | `"DiamondPlate"`, `"Neon"`, `"Glass"` |
+| `Transparency` | number | `0.5` |
+| `CanCollide` | boolean | `false` |
+| `CanTouch` | boolean | `false` |
+| `CanQuery` | boolean | `false` |
+| `Reflectance` | number | `0.5` |
+| `CastShadow` | boolean | `false` |
+| `Massless` | boolean | `true` |
+
+Colors can be:
+- RGB table `{255, 128, 0}` (0-255 range)
+- Normalized table `{1, 0.5, 0}` (0-1 range, auto-detected)
+- BrickColor name `"Bright red"`
+
+---
+
+# Compiler - Geometry Optimization
+
+## Overview
+
+`Factory.compile()` merges parts into unions, reducing draw calls for production maps.
+
+```lua
+local mansion = Factory.geometry(Lib.Layouts.BeverlyMansion)
+print("Before:", #mansion:GetChildren(), "parts")  -- ~50 parts
+
+local stats = Factory.compile(mansion, { strategy = "class" })
+print("After:", #mansion:GetChildren(), "parts")   -- ~12 unions
+```
+
+## Strategies
+
+| Strategy | Groups By | Best For |
+|----------|-----------|----------|
+| `"class"` | FactoryClass attribute | **Recommended.** Semantic, predictable. |
+| `"material"` | Material + Color + Transparency | Preserves exact appearance. |
+| `"aggressive"` | Material + Transparency only | Maximum compression, loses color variety. |
+| `"spatial"` | Grid cell + material | Streaming, LOD systems. |
+
+## Usage
+
+```lua
+-- Preview without modifying (dry run)
+local preview = Factory.compile(container, { dryRun = true })
+print("Would create", preview.compiledUnions, "unions from", preview.originalParts, "parts")
+
+-- Compile with class strategy (recommended)
+local stats = Factory.compile(container, { strategy = "class" })
+
+-- Compile with options
+local stats = Factory.compile(container, {
+    strategy = "class",
+    preserveRegistry = true,     -- Update registry with compiled parts (default)
+    collisionFidelity = "Hull",  -- "Hull" | "Box" | "Precise"
+})
+```
+
+## Stats Output
+
+```lua
+{
+    originalParts = 50,      -- Parts before compile
+    compiledUnions = 12,     -- Unions created
+    ungroupedParts = 3,      -- Single-part groups (not unioned)
+    triangleEstimate = 1200, -- Estimated triangle count
+}
+```
+
+## Constraints
+
+Unions have Roblox limitations:
+- **Same material required** - Parts with different materials cannot be unioned
+- **Same transparency required** - Mixing transparent and opaque fails
+- **Triangle limit** - Max ~20K triangles per union (compiler chunks automatically)
+- **Colors merge** - All parts in a union become one color
+
+The `"class"` strategy is safest because classes already define consistent materials.
+
+## Registry After Compile
+
+Registry entries are updated to point to the compiled unions:
+
+```lua
+-- Before compile: returns original Part
+local lawn = Factory.getInstance("lawn")
+
+-- After compile: returns the union containing that part
+local lawn = Factory.getInstance("lawn")  -- Same API, different instance
+```
+
+---
+
+# Scanner - Visual → Config Workflow
+
+## Overview
+
+Build geometry visually in Studio, export to layout code.
 
 **Workflow:**
 1. Create parts in Studio (rough placement is fine)
 2. Tag the container with `GeometrySpecTag = "area"`
 3. Run scanner - get clean Lua config
-4. Fine-tune in text editor (apply classes, adjust values)
+4. Fine-tune in text editor
 
-### Basic Usage
+## Basic Usage
 
 ```lua
 -- In Studio command bar
-local GeometrySpec = require(game.ReplicatedStorage.Lib.GeometrySpec)
-GeometrySpec.scan(workspace.myContainer)
--- Outputs Lua config to console
+local Lib = require(game.ReplicatedStorage.Lib)
+Lib.Factory.scan(workspace.MyZone)
+-- Outputs layout code to console
 ```
 
-### Explorer Structure
-
-```
-workspace
-    myContainer (Part with GeometrySpecTag = "area")
-        ├── base (Part)
-        ├── pillar (Part)
-        └── platform (Part)
-```
-
-### Attributes
+## Attributes
 
 Tag parts to guide the scanner:
 
 | Attribute | Type | Description |
 |-----------|------|-------------|
-| `GeometrySpecId` | string | Part's `id` in config |
-| `GeometrySpecClass` | string | Part's `class` in config |
+| `GeometrySpecId` | string | Part's `id` in output |
+| `GeometrySpecClass` | string | Part's `class` in output |
 | `GeometrySpecIgnore` | boolean | Skip this part |
+| `GeometrySpecTag` | string | `"area"` marks scannable containers |
 
-### Auto-Cleanup (Snapping)
+## Auto-Cleanup
 
-Scanner automatically cleans up small gaps (configurable threshold):
+Scanner automatically snaps imprecise Studio placement:
 - Part edges snap to container bounds
 - Parts snap to each other
 - Sizes round to clean values
 
-This bridges imprecise Studio placement to clean config output.
+## Mirror Preview
 
-### Mirror Preview
-
-Iterative workflow - see cleaned geometry before exporting:
+Iterative workflow - preview before exporting:
 
 ```lua
-GeometrySpec.mirror(workspace.myContainer)  -- Creates preview copy
+Lib.Factory.mirror("MyZone", workspace)  -- Creates preview copy
 -- Adjust original, run again to refresh
--- When satisfied:
-GeometrySpec.scan(workspace.myContainer)    -- Export final config
+Lib.Factory.scan(workspace.MyZone)       -- Export final config
 ```
 
-## Zone Node Integration
-
-When used as a Zone node component, GeometrySpec gains:
-- Discovery handshake (standard node lifecycle)
-- Player detection signals (PlayerEntered, PlayerExited)
-- Interaction tracking
-- Mount point coordination with orchestrator
+## List Areas
 
 ```lua
--- Zone node uses GeometrySpec internally
-local Zone = {
-    spec = {
-        bounds = {20, 10, 15},
-        mounts = {
-            { id = "turret1", position = {5, 0, 5}, facing = {0, 0, 1} },
-        },
-    },
-    -- Signals: PlayerEntered, PlayerExited, MountReady, etc.
-}
+Lib.Factory.listAreas(workspace)
+-- Outputs: MyZone: bounds {40.0, 10.0, 30.0} at (0, 5, 0)
 ```
 
-## API Reference
+---
 
-### Building
+# AI-Assisted Layout Generation
 
-```lua
-GeometrySpec.build(spec, parent)     -- Build geometry, returns Model
-GeometrySpec.get(id)                 -- Get part by ID
-GeometrySpec.clear()                 -- Clear registry before rebuild
-```
+## Overview
 
-### Class Resolution
+Natural language → geometry. Describe what you want, get walkable layouts.
 
-```lua
-GeometrySpec.resolve(part, spec)     -- Resolve all attributes for a part
-```
-
-### Scanner
-
-```lua
-GeometrySpec.scan(container, options)       -- Print config to console
-GeometrySpec.scanToTable(container, options) -- Return config table
-GeometrySpec.mirror(container, options)     -- Build preview copy
-```
-
-## Module Structure
-
-```
-GeometrySpec/
-├── init.lua          -- Public API, build orchestration
-├── ClassResolver.lua -- 3-level cascade resolution
-└── Scanner.lua       -- Visual → config export
-```
+This workflow emerged from the declarative nature of the spec format - it's structured data that AI can generate from descriptions or reference images.
 
 ## Examples
 
-### Turret Geometry
+**From description:**
+> "Build me a small defensive outpost with corner pillars, windows, and a central console"
 
 ```lua
-local turretSpec = {
-    bounds = {4, 6, 4},
-    defaults = { Anchored = true },
-    classes = {
-        frame = { Material = "DiamondPlate", Color = {80, 80, 85} },
-        barrel = { Material = "Metal", Color = {40, 40, 40} },
-    },
-    parts = {
-        { id = "base", class = "frame", position = {0, 0, 0}, size = {4, 2, 4} },
-        { id = "head", class = "frame", position = {0, 2, 0}, size = {3, 1.5, 3} },
-        { id = "barrel", class = "barrel", position = {0, 2.5, 1.5}, size = {0.5, 0.5, 3} },
+-- AI generates:
+return {
+    name = "Outpost",
+    spec = {
+        bounds = {24, 10, 24},
+        classes = {
+            floor = { Material = "Concrete", Color = {140, 135, 130} },
+            wall = { Material = "Brick", Color = {95, 85, 80} },
+            -- ...
+        },
+        parts = {
+            { id = "foundation", class = "floor", position = {12, 0.25, 12}, size = {24, 0.5, 24} },
+            { id = "pillar_nw", class = "wall", position = {2, 4, 2}, size = {2, 8, 2} },
+            -- ...
+        },
     },
 }
 ```
 
-### Zone with Mount Points
+**From reference image:**
+> "Here's an aerial view of a Belgian village. Create a layout centered on the church."
+
+The AI extracts:
+- Spatial relationships (church at center, radiating streets)
+- Architectural style (Neo-Gothic church, Flemish houses)
+- Materials (red brick, slate roofs, cobblestone)
+
+## Workflow
+
+1. **Describe or provide reference** - Text description, aerial photo, architectural reference
+2. **Generate layout** - AI produces declarative spec
+3. **Build and preview** - `Factory.geometry(layout)`
+4. **Iterate conversationally** - "Move the pool closer", "Add a guest house"
+5. **Compile for production** - `Factory.compile(container)`
+
+## Quality Scaling
+
+Detail scales with input:
+- **Aerial view** → Layout, massing, positioning
+- **Street-level photos** → Facades, materials, architectural details
+- **Specific references** → Accurate landmark recreation
+
+## Example Layouts
+
+The `Lib/Layouts/` folder contains AI-generated examples:
+
+| Layout | Description |
+|--------|-------------|
+| `Outpost` | Small defensive structure with pillars, windows, antenna |
+| `BeverlyMansion` | Large mansion with pool, garage, multiple wings |
+| `Lichtervelde` | Belgian village centered on Neo-Gothic church |
+| `SpaceNeedle` | Seattle landmark with hourglass tripod, flying saucer |
+
+---
+
+# API Reference
+
+## Factory
 
 ```lua
-local zoneSpec = {
-    bounds = {40, 12, 30},
-    defaults = { Anchored = true, CanCollide = true },
-    classes = {
-        concrete = { Material = "Concrete", Color = {180, 175, 165} },
-        trigger = { CanCollide = false, Transparency = 1 },
-    },
-    parts = {
-        { id = "floor", class = "concrete", position = {20, 0, 15}, size = {40, 0.5, 30} },
-        { id = "detectionZone", class = "trigger", position = {20, 6, 15}, size = {40, 12, 30} },
-    },
-    mounts = {
-        { id = "turret1", class = "frontLine", position = {10, 0.5, 5}, facing = {0, 0, 1} },
-        { id = "turret2", class = "frontLine", position = {30, 0.5, 5}, facing = {0, 0, 1} },
-        { id = "turret3", class = "rearGuard", position = {20, 0.5, 25}, facing = {0, 0, -1} },
+-- Building
+Factory.geometry(layout, parent)     -- Build geometry, returns Part container
+Factory.gui(layout, parent)          -- [Planned] Build GUI
+
+-- Compilation
+Factory.compile(container, options)  -- Optimize geometry into unions
+
+-- Registry
+Factory.get(id, domain)              -- Get registry entry
+Factory.getInstance(id, domain)      -- Get Roblox instance
+Factory.clear()                      -- Clear all registries
+
+-- Scanner
+Factory.scan(container, options)     -- Print layout code to console
+Factory.scanArea(name, container)    -- Scan named area
+Factory.mirror(name, container)      -- Create preview copy
+Factory.listAreas(container)         -- List scannable areas
+```
+
+## Factory.Geometry
+
+```lua
+Factory.Geometry.build(layout, parent)    -- Core build function
+Factory.Geometry.get(selector)            -- Get by ID (supports "#id" prefix)
+Factory.Geometry.getInstance(selector)    -- Get instance only
+Factory.Geometry.clear()                  -- Clear geometry registry
+Factory.Geometry.parseScale(value)        -- Parse "4:1" or number
+Factory.Geometry.getScale()               -- Current scale factor
+Factory.Geometry.toStuds(value)           -- Convert to studs
+Factory.Geometry.updateInstance(id, inst) -- Update registry entry
+```
+
+## Factory.Compiler
+
+```lua
+Factory.Compiler.compile(container, options)  -- Main compile function
+Factory.Compiler.groupParts(container, strategy, options)  -- Group by strategy
+Factory.Compiler.estimateTriangles(parts)     -- Triangle count estimate
+Factory.Compiler.chunkGroup(group, max)       -- Split large groups
+Factory.Compiler.unionGroup(group, options)   -- Create union
+```
+
+## Lib.GeometrySpec (Legacy)
+
+Backwards-compatible wrapper - delegates to Factory:
+
+```lua
+GeometrySpec.build(layout, parent)   -- → Factory.geometry()
+GeometrySpec.get(selector)           -- → Factory.Geometry.get()
+GeometrySpec.clear()                 -- → Factory.Geometry.clear()
+GeometrySpec.scan(container)         -- → Factory.scan()
+```
+
+---
+
+# Module Structure
+
+```
+Lib/
+├── ClassResolver.lua         -- Shared cascade resolution
+├── Factory/
+│   ├── init.lua              -- Public API
+│   ├── Geometry.lua          -- 3D Part builder
+│   ├── Scanner.lua           -- Visual → config export
+│   └── Compiler.lua          -- Geometry optimization
+├── GeometrySpec/
+│   └── init.lua              -- Legacy wrapper (delegates to Factory)
+└── Layouts/
+    ├── init.lua              -- Lazy loader
+    ├── _Example.lua          -- Reference layout
+    ├── Outpost.lua           -- Defensive structure
+    ├── BeverlyMansion.lua    -- Large mansion
+    ├── Lichtervelde.lua      -- Belgian village
+    └── SpaceNeedle.lua       -- Seattle landmark
+```
+
+---
+
+# Examples
+
+## Minimal Layout
+
+```lua
+return {
+    name = "Platform",
+    spec = {
+        bounds = {20, 2, 20},
+        parts = {
+            { id = "floor", position = {10, 1, 10}, size = {20, 2, 20} },
+        },
     },
 }
 ```
 
-## Migration from MapLayout
+## Styled Layout
 
-If you have existing MapLayout configs:
+```lua
+return {
+    name = "StyledPlatform",
+    spec = {
+        bounds = {20, 2, 20},
 
-| MapLayout | GeometrySpec |
-|-----------|--------------|
-| `walls`, `floors`, `platforms` | `parts` (use `shape` if needed) |
-| `types` in styles | Remove (not needed) |
-| `ids` in styles | Use inline properties |
-| `#wallA:end` references | Use explicit positions or simple relative refs |
-| `areas` | Use `mounts` for positions, nest specs for templates |
+        base = {
+            part = { CanCollide = true },
+        },
+
+        classes = {
+            metal = { Material = "DiamondPlate", Color = {100, 100, 105} },
+            glow = { Material = "Neon", Color = {0, 200, 255} },
+        },
+
+        parts = {
+            { id = "floor", class = "metal", position = {10, 1, 10}, size = {20, 2, 20} },
+            { id = "trim", class = "glow", position = {10, 2.1, 10}, size = {18, 0.2, 18} },
+        },
+    },
+}
+```
+
+## Multi-Shape Layout
+
+```lua
+return {
+    name = "Shapes",
+    spec = {
+        bounds = {20, 10, 20},
+        origin = "floor-center",
+
+        classes = {
+            stone = { Material = "Granite", Color = {120, 115, 110} },
+        },
+
+        parts = {
+            { id = "pedestal", class = "stone", position = {0, 1, 0}, size = {6, 2, 6} },
+            { id = "column", class = "stone", shape = "cylinder", position = {0, 5, 0}, height = 6, radius = 1.5 },
+            { id = "orb", class = "stone", shape = "sphere", position = {0, 9, 0}, radius = 1 },
+        },
+    },
+}
+```
+
+## Production Workflow
+
+```lua
+local Lib = require(game.ReplicatedStorage.Lib)
+
+-- 1. Build layout
+local map = Lib.Factory.geometry(Lib.Layouts.BeverlyMansion)
+
+-- 2. Preview compile (dry run)
+local preview = Lib.Factory.compile(map, {
+    strategy = "class",
+    dryRun = true
+})
+print(string.format(
+    "Compile would reduce %d parts to %d unions (%.0f%% reduction)",
+    preview.originalParts,
+    preview.compiledUnions,
+    (1 - preview.compiledUnions / preview.originalParts) * 100
+))
+
+-- 3. Compile for production
+local stats = Lib.Factory.compile(map, { strategy = "class" })
+
+-- 4. Registry still works
+local lawn = Lib.Factory.getInstance("lawn")
+print("Lawn part:", lawn)
+```

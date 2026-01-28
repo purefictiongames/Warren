@@ -63,8 +63,14 @@ Lib.Node = require(script.Node)
 -- Reusable component library (PathFollower, etc.)
 Lib.Components = require(script.Components)
 
--- Declarative geometry specification system
+-- Factory: Declarative instance builder (geometry, gui)
+Lib.Factory = require(script.Factory)
+
+-- GeometrySpec: Backwards compatibility wrapper (prefer Lib.Factory)
 Lib.GeometrySpec = require(script.GeometrySpec)
+
+-- Standalone map layouts (used with Factory.geometry)
+Lib.Layouts = require(script.Layouts)
 
 -- Test suite is NOT auto-loaded to avoid circular dependency
 -- Access via: require(game.ReplicatedStorage.Lib.Tests)

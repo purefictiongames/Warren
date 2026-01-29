@@ -107,6 +107,13 @@ function Layouts.has(name)
 end
 
 --[[
+    Clear the layout cache. Forces re-require on next access.
+--]]
+function Layouts.clearCache()
+    cache = {}
+end
+
+--[[
     Preload all layouts into cache.
     Use sparingly - lazy loading is usually preferred.
 --]]

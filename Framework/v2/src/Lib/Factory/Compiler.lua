@@ -128,6 +128,7 @@ end
 function Compiler.groupParts(container, strategy, options)
     options = options or {}
     local chunkSize = options.chunkSize or 50
+    local includeClasses = options.includeClasses  -- nil means all classes
 
     local groups = {}
 
@@ -140,6 +141,26 @@ function Compiler.groupParts(container, strategy, options)
         -- Skip transparent container (it's the bounding box)
         if child.Transparency >= 1 then
             continue
+        end
+
+        -- Skip WedgeParts - UnionAsync doesn't handle them well
+        if child:IsA("WedgePart") then
+            continue
+        end
+
+        -- Filter by class if specified
+        if includeClasses then
+            local partClass = child:GetAttribute("FactoryClass")
+            local included = false
+            for _, c in ipairs(includeClasses) do
+                if partClass == c then
+                    included = true
+                    break
+                end
+            end
+            if not included then
+                continue
+            end
         end
 
         -- Build group key
@@ -333,14 +354,20 @@ function Compiler.compile(container, options)
         groups = {},
     }
 
-    -- Count original parts
+    -- Count original parts (excluding wedges which can't be unioned)
+    local skippedWedges = 0
     for _, child in ipairs(container:GetChildren()) do
         if child:IsA("BasePart") or child:IsA("PartOperation") then
             if child.Transparency < 1 then -- Skip container bounding box
-                stats.originalParts = stats.originalParts + 1
+                if child:IsA("WedgePart") then
+                    skippedWedges = skippedWedges + 1
+                else
+                    stats.originalParts = stats.originalParts + 1
+                end
             end
         end
     end
+    stats.skippedWedges = skippedWedges
 
     -- Group parts
     local groups = Compiler.groupParts(container, strategy, options)

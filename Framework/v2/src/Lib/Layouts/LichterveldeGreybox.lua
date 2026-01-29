@@ -4,7 +4,6 @@
     Apply classes and fine-tune as needed
 
     Cathedral is referenced from LichterveldeCathedral.lua
-    Grounds (grass lawns) from LichterveldeCathedralGrounds.lua
 --]]
 
 -- Cathedral position within the greybox
@@ -13,12 +12,6 @@ local CATHEDRAL_Y_OFFSET = 0  -- Y offset now baked into cathedral layout
 
 return {
     name = "LichterveldeGreybox",
-
-    -- Grounds reference (grass lawn around cathedral)
-    grounds = {
-        ref = "LichterveldeCathedralGrounds",
-        position = CATHEDRAL_POSITION,  -- Aligns with cathedral
-    },
 
     spec = {
         origin = "floor-center",
@@ -40,17 +33,6 @@ return {
                 Color = {195, 190, 180},
                 Material = "SmoothPlastic",
             },
-            --[[
-                Cathedral grounds - grass lawns around the cathedral
-                Must be placed before cathedral so cathedral sits on top
-            --]]
-            {
-                id = "CathedralGrounds",
-                ref = "LichterveldeCathedralGrounds",
-                position = {CATHEDRAL_POSITION[1], CATHEDRAL_POSITION[2], CATHEDRAL_POSITION[3]},
-                rotation = {0, 0, 0},
-            },
-
             --[[
                 Cathedral reference - replaces greybox volumes
                 The cathedral's floor-center origin aligns with this position
@@ -151,11 +133,13 @@ return {
             },
             {
                 id = "Bldg_E2",
-                position = {193, 18, 40},
-                size = {80, 36, 65},
+                ref = "Shop1",
+                position = {193, 0, 40},
                 rotation = {0, -90, 0},
-                Color = {195, 190, 180},
-                Material = "SmoothPlastic",
+                styles = {
+                    roof = { Color = {60, 80, 120} },  -- Blue-gray roof
+                    floor_upper = { Color = {220, 215, 200} },
+                },
             },
             {
                 id = "Bldg_E3",

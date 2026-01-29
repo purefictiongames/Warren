@@ -16,6 +16,8 @@ Factory is a declarative system for building Roblox geometry from Lua tables. De
 
 Think of it as a stylesheet for 3D parts - define geometry as data, apply classes for shared styling, compile for production.
 
+**Architecture:** Factory uses the generic Resolver pattern - a formula solver that computes values in dependency order. See [RESOLVER.md](RESOLVER.md) for the mental model.
+
 ## Quick Start
 
 ```lua
@@ -156,7 +158,11 @@ Control how `{0, 0, 0}` is interpreted:
 
 ## Class-Based Styling
 
-CSS-like cascade with four levels: `defaults → base → classes → inline`
+CSS-like cascade using ClassResolver. The cascade is a formula - each step merges into the result:
+
+```
+result = merge(parent, defaults, base[type], classes..., id, inline)
+```
 
 ```lua
 {
@@ -187,11 +193,69 @@ CSS-like cascade with four levels: `defaults → base → classes → inline`
 }
 ```
 
-**Resolution order:**
-1. Start with `defaults`
-2. Apply `base.part` (built-in: `{ Anchored = true }`)
-3. Merge each class (space-separated, left to right)
-4. Merge inline properties (highest priority)
+**Resolution order (the formula):**
+1. Inherit from parent (tree-level)
+2. Apply `defaults` (applied to all)
+3. Apply `base[type]` (by element type)
+4. Merge each class (space-separated, left to right)
+5. Apply `ids[id]` (by element ID)
+6. Merge inline properties (highest priority)
+
+This is handled by ClassResolver - see [RESOLVER.md](RESOLVER.md) for details.
+
+## Function-Based Layouts (References)
+
+For layouts where parts reference each other's dimensions, use function syntax:
+
+```lua
+return function(parts)
+    return {
+        name = "Shop",
+        parts = {
+            Floor1 = {
+                parent = "root",
+                class = "stucco",
+                geometry = {
+                    origin = {0, 0, 0},
+                    scale = {80, 18, 65},
+                },
+            },
+            Floor2 = {
+                parent = "Floor1",
+                class = "stucco_cream",
+                geometry = {
+                    -- Stack on top of Floor1
+                    origin = {0, parts.Floor1.Size[2], 0},
+                    scale = {80, 18, 65},
+                },
+            },
+            Roof = {
+                parent = "Floor2",
+                class = "roof_slate",
+                shape = "wedge",
+                geometry = {
+                    -- Stack on top of Floor2 (chain accumulates)
+                    origin = {0, parts.Floor2.Size[2], 0},
+                    scale = {80, 16, 65},
+                },
+            },
+        },
+    }
+end
+```
+
+**Available references:**
+- `parts.{id}.Size[1|2|3]` - Scale X/Y/Z
+- `parts.{id}.Position[1|2|3]` - Origin X/Y/Z
+- `parts.{id}.Rotation[1|2|3]` - Rotation X/Y/Z
+
+**Arithmetic supported:**
+```lua
+origin = {0, parts.Floor1.Size[2] + 10, 0}
+origin = {parts.Wall.Size[1] * 0.5, 0, 0}
+```
+
+This follows the Logo/Turtle paradigm - each part positions relative to its parent in the chain, and origins accumulate automatically.
 
 ## Scale
 
@@ -509,22 +573,26 @@ GeometrySpec.scan(container)         -- → Factory.scan()
 
 ```
 Lib/
-├── ClassResolver.lua         -- Shared cascade resolution
+├── ClassResolver.lua         -- Per-element cascade formula (domain-agnostic)
+├── Styles.lua                -- Universal style definitions
 ├── Factory/
 │   ├── init.lua              -- Public API
-│   ├── Geometry.lua          -- 3D Part builder
+│   ├── Geometry.lua          -- Tree resolver + Part adapter
 │   ├── Scanner.lua           -- Visual → config export
 │   └── Compiler.lua          -- Geometry optimization
 ├── GeometrySpec/
 │   └── init.lua              -- Legacy wrapper (delegates to Factory)
 └── Layouts/
     ├── init.lua              -- Lazy loader
-    ├── _Example.lua          -- Reference layout
-    ├── Outpost.lua           -- Defensive structure
-    ├── BeverlyMansion.lua    -- Large mansion
-    ├── Lichtervelde.lua      -- Belgian village
-    └── SpaceNeedle.lua       -- Seattle landmark
+    └── *.lua                 -- Layout definitions
 ```
+
+**Architecture:**
+- `ClassResolver` - Generic cascade formula, used by all domains
+- `Styles.lua` - Shared style definitions (base, classes, ids)
+- `Geometry.lua` - Uses ClassResolver + adds tree resolution + Part instantiation
+
+See [RESOLVER.md](RESOLVER.md) for the full mental model.
 
 ---
 

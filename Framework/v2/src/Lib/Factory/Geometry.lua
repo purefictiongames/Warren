@@ -1,57 +1,348 @@
 --[[
     LibPureFiction Framework v2
-    Factory/Geometry.lua - 3D Part Builder
+    Geometry.lua - Geometry Adapter for the Resolver System
 
     Copyright (c) 2025 Adam Stearns / Pure Fiction Records LLC
     All rights reserved.
 
-    Builds 3D Parts from declarative specs. Used by Factory.geometry().
+    ============================================================================
+    OVERVIEW
+    ============================================================================
+
+    Geometry is an adapter that uses the generic Resolver pattern to build
+    Roblox Parts from declarative definitions.
+
+    The Resolver is a formula solver:
+        1. Create stubs (workspace for solutions)
+        2. Order by dependency (solve parents first)
+        3. Apply cascade formula (compute properties)
+        4. Resolve references (substitute values)
+
+    See docs/RESOLVER.md for the full mental model.
+
+    ============================================================================
+    BUILD PHASES
+    ============================================================================
+
+    RESOLVE Phase 1: Create stubs for all parts
+    RESOLVE Phase 2: Populate values in tree order
+    INSTANTIATE:     Create Roblox Parts from resolved table
+
+    ============================================================================
+    CASCADE FORMULA
+    ============================================================================
+
+    Properties are computed using ClassResolver:
+        parent → defaults → base[type] → classes → id → inline
+
+    Tree inheritance (parent → child) is handled here.
+    Per-element cascade is delegated to ClassResolver.
+
+    ============================================================================
+    REFERENCES
+    ============================================================================
+
+    Function-based layouts enable references between parts:
+
+        return function(parts)
+            return {
+                parts = {
+                    Floor1 = {
+                        geometry = { origin = {0, 0, 0}, scale = {80, 18, 65} },
+                    },
+                    Floor2 = {
+                        parent = "Floor1",
+                        geometry = {
+                            origin = {0, parts.Floor1.Size[2], 0},  -- Chain positioning
+                            scale = {80, 18, 65},
+                        },
+                    },
+                },
+            }
+        end
+
+    Available:
+        parts.{id}.Size[1|2|3]      - Scale X/Y/Z
+        parts.{id}.Position[1|2|3]  - Origin X/Y/Z
+        parts.{id}.Rotation[1|2|3]  - Rotation X/Y/Z
+
+    Arithmetic:
+        parts.Floor1.Size[2] + 10
+        parts.Wall.Size[1] * 0.5
+
 --]]
+
+--##############################################################################
+-- PHASE 1: LOAD
+--##############################################################################
 
 local Geometry = {}
 
--- Services
-local GeometryService = game:GetService("GeometryService")
-
--- Get ClassResolver from parent
-local ClassResolver = require(script.Parent.Parent.ClassResolver)
-
--- Layouts module for ref resolution (lazy loaded)
-local Layouts = nil
-local function getLayouts()
-    if not Layouts then
-        Layouts = require(script.Parent.Parent.Layouts)
-    end
-    return Layouts
-end
-
---------------------------------------------------------------------------------
--- REGISTRY
---------------------------------------------------------------------------------
-
+-- State
 local registry = {}
-local currentBuildId = 0
+local Styles = nil
+local ClassResolver = nil
 
-function Geometry.clear()
-    registry = {}
-    currentBuildId = currentBuildId + 1
+-- Forward declarations (defined in PHASE 2)
+local getStyles
+local getClassResolver
+local merge
+local deepCopy
+local normalizeVector
+local buildTreeOrder
+local resolvePartProperties
+local resolvePartGeometry
+local resolveReferences
+local toColor3
+local applyProperties
+local createPart
+local registerPart
+local valueToCode
+local tableToCode
+local createRefMarker
+local createPropertyProxy
+local createPartStub
+
+--##############################################################################
+-- PHASE 2: DEFINE
+--##############################################################################
+
+--------------------------------------------------------------------------------
+-- Dependencies
+--------------------------------------------------------------------------------
+
+getStyles = function()
+    if not Styles then
+        local success, result = pcall(function()
+            return require(script.Parent.Parent.Styles)
+        end)
+        if success then
+            Styles = result
+        else
+            warn("[Geometry] Could not load Styles:", result)
+            Styles = { base = {}, classes = {}, ids = {} }
+        end
+    end
+    return Styles
 end
 
-local function registerPart(id, instance, definition, geometry)
+getClassResolver = function()
+    if not ClassResolver then
+        local success, result = pcall(function()
+            return require(script.Parent.Parent.ClassResolver)
+        end)
+        if success then
+            ClassResolver = result
+        else
+            warn("[Geometry] Could not load ClassResolver:", result)
+            ClassResolver = nil
+        end
+    end
+    return ClassResolver
+end
+
+--------------------------------------------------------------------------------
+-- Utilities
+--------------------------------------------------------------------------------
+
+merge = function(target, source)
+    if not source then return target end
+    for k, v in pairs(source) do
+        target[k] = v
+    end
+    return target
+end
+
+deepCopy = function(t)
+    if type(t) ~= "table" then return t end
+    local copy = {}
+    for k, v in pairs(t) do
+        copy[k] = deepCopy(v)
+    end
+    return copy
+end
+
+parseClasses = function(classStr)
+    if not classStr or classStr == "" then return {} end
+    local classes = {}
+    for class in classStr:gmatch("%S+") do
+        table.insert(classes, class)
+    end
+    return classes
+end
+
+normalizeVector = function(v)
+    if not v then return {0, 0, 0} end
+    if v.x then
+        return {v.x, v.y, v.z}
+    end
+    return {v[1] or 0, v[2] or 0, v[3] or 0}
+end
+
+--------------------------------------------------------------------------------
+-- Reference System (metatables for lazy property access)
+--------------------------------------------------------------------------------
+
+--[[
+    Reference markers capture property access for deferred resolution.
+
+    Usage in layouts:
+        return function(parts)
+            return {
+                parts = {
+                    Floor2 = {
+                        geometry = {
+                            origin = {0, parts.Floor1.Size[2], 0},  -- Reference!
+                        },
+                    },
+                },
+            }
+        end
+
+    When parts.Floor1.Size[2] is accessed, it returns a marker:
+        { __isRef = true, partId = "Floor1", property = "Size", index = 2 }
+
+    During resolution, markers are replaced with actual values.
+--]]
+
+-- Expression marker for arithmetic on references
+local ExprMT = {}
+
+local function createExprMarker(op, left, right)
+    return setmetatable({
+        __isExpr = true,
+        op = op,
+        left = left,
+        right = right,
+    }, ExprMT)
+end
+
+-- Arithmetic metamethods for expressions
+ExprMT.__add = function(a, b) return createExprMarker("+", a, b) end
+ExprMT.__sub = function(a, b) return createExprMarker("-", a, b) end
+ExprMT.__mul = function(a, b) return createExprMarker("*", a, b) end
+ExprMT.__div = function(a, b) return createExprMarker("/", a, b) end
+ExprMT.__unm = function(a) return createExprMarker("*", a, -1) end
+
+-- Reference marker with arithmetic support
+local RefMT = {}
+RefMT.__add = function(a, b) return createExprMarker("+", a, b) end
+RefMT.__sub = function(a, b) return createExprMarker("-", a, b) end
+RefMT.__mul = function(a, b) return createExprMarker("*", a, b) end
+RefMT.__div = function(a, b) return createExprMarker("/", a, b) end
+RefMT.__unm = function(a) return createExprMarker("*", a, -1) end
+
+createRefMarker = function(partId, property, index)
+    return setmetatable({
+        __isRef = true,
+        partId = partId,
+        property = property,  -- "Size", "Position", "Rotation"
+        index = index,        -- 1, 2, 3 (X, Y, Z)
+    }, RefMT)
+end
+
+createPropertyProxy = function(partId, property)
+    -- Returns a proxy that captures index access (e.g., Size[2])
+    return setmetatable({}, {
+        __index = function(_, index)
+            if type(index) == "number" and index >= 1 and index <= 3 then
+                return createRefMarker(partId, property, index)
+            end
+            return nil
+        end,
+    })
+end
+
+createPartStub = function(partId)
+    -- Returns a stub that captures property access (e.g., Floor1.Size)
+    return setmetatable({}, {
+        __index = function(_, property)
+            -- Mirror Roblox property names
+            if property == "Size" or property == "Position" or property == "Rotation" then
+                return createPropertyProxy(partId, property)
+            end
+            return nil
+        end,
+    })
+end
+
+function Geometry.createPartsProxy()
+    -- Returns a proxy table that generates part stubs on access
+    return setmetatable({}, {
+        __index = function(t, partId)
+            local stub = createPartStub(partId)
+            rawset(t, partId, stub)  -- Cache for repeated access
+            return stub
+        end,
+    })
+end
+
+resolveReferences = function(value, resolvedParts)
+    if type(value) ~= "table" then
+        return value
+    end
+
+    -- Check if this is a reference marker
+    if value.__isRef then
+        local target = resolvedParts[value.partId]
+        if not target then
+            warn("[Geometry] Unresolved reference to part:", value.partId)
+            return 0
+        end
+
+        local prop = value.property
+        local idx = value.index
+
+        if prop == "Size" then
+            return target.geometry.scale[idx] or 0
+        elseif prop == "Position" then
+            return target.geometry.origin[idx] or 0
+        elseif prop == "Rotation" then
+            return target.geometry.rotation[idx] or 0
+        end
+
+        warn("[Geometry] Unknown reference property:", prop)
+        return 0
+    end
+
+    -- Check if this is an expression marker
+    if value.__isExpr then
+        local left = resolveReferences(value.left, resolvedParts)
+        local right = resolveReferences(value.right, resolvedParts)
+
+        if value.op == "+" then return left + right end
+        if value.op == "-" then return left - right end
+        if value.op == "*" then return left * right end
+        if value.op == "/" then return left / right end
+
+        warn("[Geometry] Unknown expression operator:", value.op)
+        return 0
+    end
+
+    -- Recurse into table
+    local result = {}
+    for k, v in pairs(value) do
+        result[k] = resolveReferences(v, resolvedParts)
+    end
+    return result
+end
+
+--------------------------------------------------------------------------------
+-- Registry
+--------------------------------------------------------------------------------
+
+registerPart = function(id, instance, entry)
     if not id then return end
     registry[id] = {
+        id = id,
         instance = instance,
-        definition = definition,
-        geometry = geometry,
-        buildId = currentBuildId,
+        entry = entry,
     }
 end
 
 function Geometry.get(selector)
-    local id = selector
-    if type(selector) == "string" and selector:sub(1, 1) == "#" then
-        id = selector:sub(2)
-    end
+    if not selector then return nil end
+    local id = selector:match("^#?(.+)$")
     return registry[id]
 end
 
@@ -60,227 +351,306 @@ function Geometry.getInstance(selector)
     return entry and entry.instance or nil
 end
 
-function Geometry.updateInstance(id, newInstance, compiled)
-    if registry[id] then
-        registry[id].instance = newInstance
-        if compiled then
-            registry[id].compiled = true
+function Geometry.clear()
+    registry = {}
+end
+
+--------------------------------------------------------------------------------
+-- Resolve: Build Tree Order
+--------------------------------------------------------------------------------
+
+buildTreeOrder = function(parts)
+    local depths = {}
+
+    local function getDepth(id, visited)
+        if depths[id] then return depths[id] end
+        if visited[id] then
+            warn("[Geometry] Circular parent reference:", id)
+            return 0
+        end
+
+        visited[id] = true
+        local part = parts[id]
+        if not part or not part.parent or part.parent == "root" then
+            depths[id] = 0
+            return 0
+        end
+
+        local parentDepth = getDepth(part.parent, visited)
+        depths[id] = parentDepth + 1
+        return depths[id]
+    end
+
+    for id, _ in pairs(parts) do
+        getDepth(id, {})
+    end
+
+    local order = {}
+    for id, depth in pairs(depths) do
+        table.insert(order, {id = id, depth = depth})
+    end
+    table.sort(order, function(a, b) return a.depth < b.depth end)
+
+    return order
+end
+
+--------------------------------------------------------------------------------
+-- Resolve: Properties Cascade
+--------------------------------------------------------------------------------
+
+--[[
+    Properties cascade uses ClassResolver for per-element resolution.
+    Tree inheritance (parent → child) is handled here.
+
+    Full cascade order:
+        1. parent properties (tree inheritance)
+        2. defaults (applied to all)
+        3. base[type] (by element type)
+        4. classes (in order)
+        5. id (by element ID)
+        6. inline properties
+--]]
+resolvePartProperties = function(partDef, parentResolved, styles)
+    local resolved = {}
+
+    -- 1. Inherit from parent (tree-level, handled here)
+    if parentResolved and parentResolved.properties then
+        merge(resolved, deepCopy(parentResolved.properties))
+    end
+
+    -- 2-6. Use ClassResolver for the rest of the cascade
+    local resolver = getClassResolver()
+    if resolver then
+        -- Build definition for ClassResolver
+        local definition = {
+            type = partDef.shape == "wedge" and "WedgePart" or "Part",
+            class = partDef.class,
+            id = partDef.id,
+        }
+
+        -- Add inline properties (non-reserved keys from partDef)
+        if partDef.properties then
+            for k, v in pairs(partDef.properties) do
+                definition[k] = v
+            end
+        end
+
+        -- Resolve using ClassResolver
+        local cascaded = resolver.resolve(definition, styles, {
+            reservedKeys = {
+                -- Geometry-specific reserved keys
+                parent = true,
+                geometry = true,
+                shape = true,
+                class = true,
+                id = true,
+                type = true,
+                name = true,
+                properties = true,
+            }
+        })
+
+        merge(resolved, cascaded)
+    else
+        -- Fallback: manual cascade if ClassResolver not available
+        local partType = partDef.shape == "wedge" and "WedgePart" or "Part"
+        if styles.base and styles.base[partType] then
+            merge(resolved, deepCopy(styles.base[partType]))
+        end
+
+        if partDef.class then
+            for class in partDef.class:gmatch("%S+") do
+                if styles.classes and styles.classes[class] then
+                    merge(resolved, deepCopy(styles.classes[class]))
+                end
+            end
+        end
+
+        if partDef.id and styles.ids and styles.ids[partDef.id] then
+            merge(resolved, deepCopy(styles.ids[partDef.id]))
+        end
+
+        if partDef.properties then
+            merge(resolved, deepCopy(partDef.properties))
         end
     end
+
+    return resolved
 end
 
 --------------------------------------------------------------------------------
--- SCALE CONVERSION
+-- Resolve: Geometry Transform
 --------------------------------------------------------------------------------
 
-local currentScale = 1
+resolvePartGeometry = function(partDef, parentResolved, resolvedParts)
+    local geom = partDef.geometry or {}
 
-function Geometry.parseScale(scaleValue)
-    if type(scaleValue) == "number" then
-        return scaleValue
-    end
-    if type(scaleValue) == "string" then
-        local a, b = scaleValue:match("^(%d+%.?%d*):(%d+%.?%d*)$")
-        if a and b then
-            return tonumber(a) / tonumber(b)
-        end
-    end
-    return 1
-end
+    -- Resolve any reference markers in geometry values
+    local resolvedGeom = resolveReferences(geom, resolvedParts)
 
-function Geometry.getScale()
-    return currentScale
-end
+    local origin = normalizeVector(resolvedGeom.origin)
+    local scale = normalizeVector(resolvedGeom.scale or resolvedGeom.dims)
+    local rotation = normalizeVector(resolvedGeom.rotation)
 
-function Geometry.toStuds(value)
-    if type(value) == "number" then
-        return value * currentScale
-    elseif type(value) == "table" then
-        local result = {}
-        for i, v in ipairs(value) do
-            result[i] = v * currentScale
-        end
-        return result
-    end
-    return value
-end
-
---------------------------------------------------------------------------------
--- MATERIAL / COLOR CONVERSION
---------------------------------------------------------------------------------
-
-local MATERIAL_MAP = {
-    ["Plastic"] = Enum.Material.Plastic,
-    ["SmoothPlastic"] = Enum.Material.SmoothPlastic,
-    ["Neon"] = Enum.Material.Neon,
-    ["Glass"] = Enum.Material.Glass,
-    ["ForceField"] = Enum.Material.ForceField,
-    ["Wood"] = Enum.Material.Wood,
-    ["WoodPlanks"] = Enum.Material.WoodPlanks,
-    ["Brick"] = Enum.Material.Brick,
-    ["Concrete"] = Enum.Material.Concrete,
-    ["Cobblestone"] = Enum.Material.Cobblestone,
-    ["Granite"] = Enum.Material.Granite,
-    ["Marble"] = Enum.Material.Marble,
-    ["Slate"] = Enum.Material.Slate,
-    ["Limestone"] = Enum.Material.Limestone,
-    ["Sandstone"] = Enum.Material.Sandstone,
-    ["Basalt"] = Enum.Material.Basalt,
-    ["CrackedLava"] = Enum.Material.CrackedLava,
-    ["Pavement"] = Enum.Material.Pavement,
-    ["Metal"] = Enum.Material.Metal,
-    ["DiamondPlate"] = Enum.Material.DiamondPlate,
-    ["CorrodedMetal"] = Enum.Material.CorrodedMetal,
-    ["Grass"] = Enum.Material.Grass,
-    ["LeafyGrass"] = Enum.Material.LeafyGrass,
-    ["Sand"] = Enum.Material.Sand,
-    ["Snow"] = Enum.Material.Snow,
-    ["Mud"] = Enum.Material.Mud,
-    ["Ground"] = Enum.Material.Ground,
-    ["Ice"] = Enum.Material.Ice,
-    ["Salt"] = Enum.Material.Salt,
-    ["Fabric"] = Enum.Material.Fabric,
-    ["Carpet"] = Enum.Material.Carpet,
-    ["Leather"] = Enum.Material.Leather,
-    ["Foil"] = Enum.Material.Foil,
-    ["Rubber"] = Enum.Material.Rubber,
-    ["Cardboard"] = Enum.Material.Cardboard,
-}
-
-local function toColor3(value)
-    if typeof(value) == "Color3" then
-        return value
-    end
-    if type(value) == "table" and #value >= 3 then
-        local r, g, b = value[1], value[2], value[3]
-        if r <= 1 and g <= 1 and b <= 1 then
-            return Color3.new(r, g, b)
-        else
-            return Color3.fromRGB(r, g, b)
-        end
-    end
-    if type(value) == "string" then
-        return BrickColor.new(value).Color
-    end
-    return Color3.fromRGB(163, 162, 165)
-end
-
-local function toMaterial(value)
-    if typeof(value) == "EnumItem" then
-        return value
-    end
-    if type(value) == "string" then
-        return MATERIAL_MAP[value] or Enum.Material.SmoothPlastic
-    end
-    return Enum.Material.SmoothPlastic
-end
-
---------------------------------------------------------------------------------
--- PROPERTY APPLICATION
---------------------------------------------------------------------------------
-
-local function applyProperties(part, properties)
-    if properties.Color then
-        part.Color = toColor3(properties.Color)
-    end
-    if properties.Material then
-        part.Material = toMaterial(properties.Material)
-    end
-    if properties.Anchored ~= nil then
-        part.Anchored = properties.Anchored
-    end
-    if properties.CanCollide ~= nil then
-        part.CanCollide = properties.CanCollide
-    end
-    if properties.CanTouch ~= nil then
-        part.CanTouch = properties.CanTouch
-    end
-    if properties.CanQuery ~= nil then
-        part.CanQuery = properties.CanQuery
-    end
-    if properties.Transparency ~= nil then
-        part.Transparency = properties.Transparency
-    end
-    if properties.Reflectance ~= nil then
-        part.Reflectance = properties.Reflectance
-    end
-    if properties.CastShadow ~= nil then
-        part.CastShadow = properties.CastShadow
-    end
-    if properties.Massless ~= nil then
-        part.Massless = properties.Massless
-    end
-end
-
---------------------------------------------------------------------------------
--- SHAPE CREATION
---------------------------------------------------------------------------------
-
-local function createBlock(definition, properties, originOffset)
-    local position = definition.position or {0, 0, 0}
-    local size = definition.size or {4, 4, 4}
-
-    position = Geometry.toStuds(position)
-    size = Geometry.toStuds(size)
-
-    local pos = Vector3.new(position[1], position[2], position[3]) + originOffset
-    local sz = Vector3.new(size[1], size[2], size[3])
-
-    local part = Instance.new("Part")
-    part.Name = definition.id or "Part"
-    part.Shape = Enum.PartType.Block
-    part.Size = sz
-    part.Position = pos
-    part.Anchored = true
-
-    -- Apply rotation if specified
-    if definition.rotation then
-        local rot = definition.rotation
-        part.Orientation = Vector3.new(rot[1] or 0, rot[2] or 0, rot[3] or 0)
+    if scale[1] == 0 and scale[2] == 0 and scale[3] == 0 then
+        scale = {4, 4, 4}
     end
 
-    applyProperties(part, properties)
-
-    if definition.id then
-        part:SetAttribute("FactoryId", definition.id)
-    end
-    if definition.class then
-        part:SetAttribute("FactoryClass", definition.class)
-    end
-    if definition.rotation then
-        part:SetAttribute("FactoryRotation", table.concat(definition.rotation, ","))
+    -- Accumulate origin from parent
+    if parentResolved and parentResolved.geometry then
+        local parentOrigin = parentResolved.geometry.origin or {0, 0, 0}
+        origin = {
+            origin[1] + parentOrigin[1],
+            origin[2] + parentOrigin[2],
+            origin[3] + parentOrigin[3],
+        }
     end
 
-    return part, {
-        type = "block",
-        position = pos,
-        size = sz,
-        center = pos,
+    return {
+        origin = origin,
+        scale = scale,
+        rotation = rotation,
     }
 end
 
-local function createCylinder(definition, properties, originOffset)
-    local position = definition.position or {0, 0, 0}
-    local height = definition.height or 4
-    local radius = definition.radius or 2
+--------------------------------------------------------------------------------
+-- Resolve: Main (Two-Phase)
+--------------------------------------------------------------------------------
 
-    position = Geometry.toStuds(position)
-    height = Geometry.toStuds(height)
-    radius = Geometry.toStuds(radius)
+function Geometry.resolve(layout)
+    local styles = getStyles()
 
-    local pos = Vector3.new(position[1], position[2], position[3]) + originOffset
+    -- Support function-based layouts for reference resolution
+    local layoutData = layout
+    if type(layout) == "function" then
+        local partsProxy = Geometry.createPartsProxy()
+        layoutData = layout(partsProxy)
+    end
 
-    local part = Instance.new("Part")
-    part.Name = definition.id or "Cylinder"
-    part.Shape = Enum.PartType.Cylinder
-    part.Size = Vector3.new(height, radius * 2, radius * 2)
-    part.Position = pos
-    part.CFrame = CFrame.new(pos) * CFrame.Angles(0, 0, math.rad(90))
-    part.Anchored = true
+    local parts = layoutData.parts or {}
 
-    -- Apply additional rotation if specified (on top of default cylinder orientation)
-    if definition.rotation then
-        local rot = definition.rotation
+    --------------------------------------------------------------------------
+    -- PHASE 1: Define tree (create empty stubs for all parts)
+    --------------------------------------------------------------------------
+    local stubs = {}
+    for id, partDef in pairs(parts) do
+        stubs[id] = {
+            id = id,
+            name = partDef.name or id,
+            parent = partDef.parent,
+            shape = partDef.shape or "block",
+            geometry = nil,
+            properties = nil,
+            _def = partDef,  -- Keep reference to definition for phase 2
+        }
+    end
+
+    --------------------------------------------------------------------------
+    -- PHASE 2: Populate values (tree order, parents before children)
+    --------------------------------------------------------------------------
+    local order = buildTreeOrder(parts)
+
+    for _, entry in ipairs(order) do
+        local id = entry.id
+        local stub = stubs[id]
+        local partDef = stub._def
+
+        local parentStub = nil
+        if partDef.parent and partDef.parent ~= "root" then
+            parentStub = stubs[partDef.parent]
+        end
+
+        -- Resolve geometry (references can now look up any stub)
+        stub.geometry = resolvePartGeometry(partDef, parentStub, stubs)
+
+        -- Resolve properties (cascade from parent)
+        stub.properties = resolvePartProperties(partDef, parentStub, styles)
+
+        -- Clean up definition reference
+        stub._def = nil
+    end
+
+    -- Attach metadata for scanner/debug
+    stubs._meta = {
+        name = layoutData.name,
+    }
+
+    return stubs
+end
+
+--------------------------------------------------------------------------------
+-- Instantiate: Helpers
+--------------------------------------------------------------------------------
+
+toColor3 = function(color)
+    if not color then return nil end
+    if typeof(color) == "Color3" then return color end
+    if type(color) == "table" then
+        local max = math.max(color[1] or 0, color[2] or 0, color[3] or 0)
+        if max > 1 then
+            return Color3.fromRGB(color[1] or 0, color[2] or 0, color[3] or 0)
+        else
+            return Color3.new(color[1] or 0, color[2] or 0, color[3] or 0)
+        end
+    end
+    if type(color) == "string" then
+        return BrickColor.new(color).Color
+    end
+    return nil
+end
+
+applyProperties = function(part, properties)
+    for key, value in pairs(properties) do
+        if key == "Color" then
+            local color = toColor3(value)
+            if color then part.Color = color end
+        elseif key == "Material" then
+            if type(value) == "string" then
+                local success = pcall(function()
+                    part.Material = Enum.Material[value]
+                end)
+                if not success then
+                    warn("[Geometry] Unknown material:", value)
+                end
+            else
+                part.Material = value
+            end
+        else
+            local success = pcall(function()
+                part[key] = value
+            end)
+            if not success then
+                part:SetAttribute(key, value)
+            end
+        end
+    end
+end
+
+createPart = function(entry)
+    local geom = entry.geometry
+    local shape = entry.shape
+
+    local part
+    if shape == "wedge" then
+        part = Instance.new("WedgePart")
+    elseif shape == "cylinder" then
+        part = Instance.new("Part")
+        part.Shape = Enum.PartType.Cylinder
+    elseif shape == "sphere" then
+        part = Instance.new("Part")
+        part.Shape = Enum.PartType.Ball
+    else
+        part = Instance.new("Part")
+    end
+
+    part.Name = entry.name or entry.id
+    part.Size = Vector3.new(geom.scale[1], geom.scale[2], geom.scale[3])
+
+    local pos = geom.origin
+    part.Position = Vector3.new(pos[1], pos[2] + geom.scale[2]/2, pos[3])
+
+    if geom.rotation then
+        local rot = geom.rotation
         part.CFrame = part.CFrame * CFrame.Angles(
             math.rad(rot[1] or 0),
             math.rad(rot[2] or 0),
@@ -288,512 +658,348 @@ local function createCylinder(definition, properties, originOffset)
         )
     end
 
-    applyProperties(part, properties)
+    applyProperties(part, entry.properties)
 
-    if definition.id then
-        part:SetAttribute("FactoryId", definition.id)
-    end
-    if definition.class then
-        part:SetAttribute("FactoryClass", definition.class)
-    end
-
-    return part, {
-        type = "cylinder",
-        position = pos,
-        height = height,
-        radius = radius,
-        center = pos,
-    }
-end
-
-local function createSphere(definition, properties, originOffset)
-    local position = definition.position or {0, 0, 0}
-    local radius = definition.radius or 2
-
-    position = Geometry.toStuds(position)
-    radius = Geometry.toStuds(radius)
-
-    local pos = Vector3.new(position[1], position[2], position[3]) + originOffset
-
-    local part = Instance.new("Part")
-    part.Name = definition.id or "Sphere"
-    part.Shape = Enum.PartType.Ball
-    part.Size = Vector3.new(radius * 2, radius * 2, radius * 2)
-    part.Position = pos
-    part.Anchored = true
-
-    applyProperties(part, properties)
-
-    if definition.id then
-        part:SetAttribute("FactoryId", definition.id)
-    end
-    if definition.class then
-        part:SetAttribute("FactoryClass", definition.class)
-    end
-
-    return part, {
-        type = "sphere",
-        position = pos,
-        radius = radius,
-        center = pos,
-    }
-end
-
-local function createWedge(definition, properties, originOffset)
-    local position = definition.position or {0, 0, 0}
-    local size = definition.size or {4, 4, 4}
-
-    position = Geometry.toStuds(position)
-    size = Geometry.toStuds(size)
-
-    local pos = Vector3.new(position[1], position[2], position[3]) + originOffset
-    local sz = Vector3.new(size[1], size[2], size[3])
-
-    local part = Instance.new("WedgePart")
-    part.Name = definition.id or "Wedge"
-    part.Size = sz
-    part.Position = pos
-    part.Anchored = true
-
-    -- Apply rotation if specified
-    if definition.rotation then
-        local rot = definition.rotation
-        part.Orientation = Vector3.new(rot[1] or 0, rot[2] or 0, rot[3] or 0)
-    end
-
-    applyProperties(part, properties)
-
-    if definition.id then
-        part:SetAttribute("FactoryId", definition.id)
-    end
-    if definition.class then
-        part:SetAttribute("FactoryClass", definition.class)
-    end
-
-    return part, {
-        type = "wedge",
-        position = pos,
-        size = sz,
-        center = pos,
-    }
+    return part
 end
 
 --------------------------------------------------------------------------------
--- HOLE CUTTING (CSG Subtraction)
+-- Instantiate: Main
 --------------------------------------------------------------------------------
 
---[[
-    Cut holes from a part using SubtractAsync.
-
-    @param part: The part to cut holes from
-    @param holes: Array of hole definitions { position, size, rotation }
-                  Positions are relative to the part's local center
-    @param partDefinition: Original part definition (for debug info)
-    @return: The resulting PartOperation, or original part if failed
---]]
-local function cutHoles(part, holes, partDefinition)
-    if not holes or #holes == 0 then
-        return part
-    end
-
-    -- Create cutter parts for each hole
-    local cutters = {}
-    for _, holeDef in ipairs(holes) do
-        local cutter = Instance.new("Part")
-        cutter.Size = Vector3.new(
-            holeDef.size[1] or 4,
-            holeDef.size[2] or 4,
-            holeDef.size[3] or 4
-        )
-
-        -- Position is relative to the part's center
-        local holePos = holeDef.position or {0, 0, 0}
-        local relativePos = Vector3.new(holePos[1], holePos[2], holePos[3])
-
-        -- Transform to world space based on part's CFrame
-        cutter.CFrame = part.CFrame * CFrame.new(relativePos)
-
-        -- Apply hole rotation if specified
-        if holeDef.rotation then
-            local rot = holeDef.rotation
-            cutter.CFrame = cutter.CFrame * CFrame.Angles(
-                math.rad(rot[1] or 0),
-                math.rad(rot[2] or 0),
-                math.rad(rot[3] or 0)
-            )
-        end
-
-        cutter.Anchored = true
-        cutter.CanCollide = false
-        table.insert(cutters, cutter)
-    end
-
-    -- Perform subtraction
-    local success, result = pcall(function()
-        return GeometryService:SubtractAsync(part, cutters, {
-            CollisionFidelity = Enum.CollisionFidelity.PreciseConvexDecomposition,
-            RenderFidelity = Enum.RenderFidelity.Precise,
-            SplitApart = false,
-        })
-    end)
-
-    -- Clean up cutters
-    for _, cutter in ipairs(cutters) do
-        cutter:Destroy()
-    end
-
-    if not success then
-        warn("[Factory.Geometry] SubtractAsync failed for", partDefinition.id or "unknown", ":", result)
-        return part -- Return original part if subtraction fails
-    end
-
-    -- SubtractAsync returns an array
-    local resultPart = result[1]
-    if not resultPart then
-        warn("[Factory.Geometry] SubtractAsync returned empty result for", partDefinition.id or "unknown")
-        return part
-    end
-
-    -- Copy attributes and properties from original
-    resultPart.Name = part.Name
-    resultPart.Anchored = part.Anchored
-    resultPart.CanCollide = part.CanCollide
-    resultPart.CanQuery = part.CanQuery
-    resultPart.CanTouch = part.CanTouch
-    resultPart.Transparency = part.Transparency
-    resultPart.Color = part.Color
-    resultPart.Material = part.Material
-    resultPart.CastShadow = part.CastShadow
-
-    -- Copy Factory attributes
-    for _, attrName in ipairs({"FactoryId", "FactoryClass", "FactoryRotation"}) do
-        local val = part:GetAttribute(attrName)
-        if val then
-            resultPart:SetAttribute(attrName, val)
-        end
-    end
-
-    -- Mark as having holes
-    resultPart:SetAttribute("FactoryHoles", #holes)
-
-    -- Destroy original part
-    part:Destroy()
-
-    return resultPart
-end
-
---------------------------------------------------------------------------------
--- PART CREATION
---------------------------------------------------------------------------------
-
-local function createPart(definition, spec, originOffset)
-    -- Add type = "part" so base.part styles apply via ClassResolver
-    local defWithType = { type = "part" }
-    for k, v in pairs(definition) do
-        defWithType[k] = v
-    end
-
-    local properties = ClassResolver.resolve(defWithType, spec)
-    local shape = definition.shape or "block"
-
-    local part, geometry
-    if shape == "block" then
-        part, geometry = createBlock(definition, properties, originOffset)
-    elseif shape == "cylinder" then
-        part, geometry = createCylinder(definition, properties, originOffset)
-    elseif shape == "sphere" then
-        part, geometry = createSphere(definition, properties, originOffset)
-    elseif shape == "wedge" then
-        part, geometry = createWedge(definition, properties, originOffset)
-    else
-        warn("[Factory.Geometry] Unknown shape:", shape)
-        part, geometry = createBlock(definition, properties, originOffset)
-    end
-
-    -- Cut holes if specified
-    if definition.holes and #definition.holes > 0 then
-        part = cutHoles(part, definition.holes, definition)
-    end
-
-    return part, geometry
-end
-
---------------------------------------------------------------------------------
--- ORIGIN OFFSET
---------------------------------------------------------------------------------
-
-local function getOriginOffset(origin, bounds)
-    if not bounds then
-        return Vector3.new(0, 0, 0)
-    end
-
-    local w, h, d = bounds[1] or 0, bounds[2] or 0, bounds[3] or 0
-
-    -- Convert from spec coordinate system to corner-relative coordinates
-    if origin == "center" then
-        -- Spec coords are relative to center, shift to corner
-        return Vector3.new(w / 2, h / 2, d / 2)
-    elseif origin == "floor-center" then
-        -- Spec coords are relative to floor-center (XZ center, Y=0 at floor)
-        return Vector3.new(w / 2, 0, d / 2)
-    else -- "corner" (default)
-        -- Spec coords already relative to corner, no shift needed
-        return Vector3.new(0, 0, 0)
-    end
-end
-
---------------------------------------------------------------------------------
--- REFERENCE HANDLING
---------------------------------------------------------------------------------
-
---[[
-    Build a referenced layout and position it within the parent container.
-
-    @param refDef: Part definition with ref property { id, ref, position, rotation }
-    @param parentOffset: World offset for positioning
-    @param parentContainer: Parent container to add the ref to
-    @return: The built container or nil
---]]
-local function buildRef(refDef, parentOffset, parentContainer)
-    local refName = refDef.ref
-    local layouts = getLayouts()
-
-    print("[Factory.Geometry] Building ref:", refName)
-
-    if not layouts then
-        warn("[Factory.Geometry] Cannot load Layouts module for ref:", refName)
-        return nil
-    end
-
-    local refLayout = layouts[refName]
-    if not refLayout then
-        warn("[Factory.Geometry] Referenced layout not found:", refName)
-        return nil
-    end
-
-    print("[Factory.Geometry] Found layout, building...")
-
-    -- Build the referenced layout (recursive call, parent=nil to avoid auto-parenting)
-    local refContainer = Geometry.build(refLayout, nil)
-    if not refContainer then
-        warn("[Factory.Geometry] Failed to build referenced layout:", refName)
-        return nil
-    end
-
-    print("[Factory.Geometry] Built container with", #refContainer:GetChildren(), "children")
-
-    -- Calculate target position for the ref's origin point
-    local position = refDef.position or {0, 0, 0}
-    position = Geometry.toStuds(position)
-    local targetOrigin = Vector3.new(position[1], position[2], position[3]) + parentOffset
-
-    -- Get the ref layout's origin mode
-    local refSpec = refLayout.spec or refLayout
-    local refOrigin = refSpec.origin or "corner"
-    local refBounds = refSpec.bounds or {4, 4, 4}
-    local scaledRefBounds = Geometry.toStuds(refBounds)
-
-    -- The built container is centered at (0, h/2, 0) in world space
-    -- Calculate where the origin point currently is relative to container center
-    local currentContainerCenter = refContainer.Position
-    local originRelativeToCenter
-    if refOrigin == "floor-center" then
-        originRelativeToCenter = Vector3.new(0, -scaledRefBounds[2] / 2, 0)
-    elseif refOrigin == "center" then
-        originRelativeToCenter = Vector3.new(0, 0, 0)
-    else -- "corner"
-        originRelativeToCenter = Vector3.new(-scaledRefBounds[1] / 2, -scaledRefBounds[2] / 2, -scaledRefBounds[3] / 2)
-    end
-
-    -- Calculate the offset to move everything
-    local currentOrigin = currentContainerCenter + originRelativeToCenter
-    local moveOffset = targetOrigin - currentOrigin
-
-    -- Build rotation CFrame if specified
-    local rotationCFrame = CFrame.new()
-    if refDef.rotation then
-        local rot = refDef.rotation
-        rotationCFrame = CFrame.Angles(
-            math.rad(rot[1] or 0),
-            math.rad(rot[2] or 0),
-            math.rad(rot[3] or 0)
-        )
-    end
-
-    -- Move and rotate all children
-    for _, child in ipairs(refContainer:GetChildren()) do
-        if child:IsA("BasePart") then
-            -- Get child's position relative to the origin point
-            local relativeToOrigin = child.Position - currentOrigin
-
-            -- Apply rotation around origin, then translate to target
-            local rotatedRelative = rotationCFrame:VectorToWorldSpace(relativeToOrigin)
-            local newPosition = targetOrigin + rotatedRelative
-
-            -- Apply the child's existing orientation combined with the ref rotation
-            local childRotation = CFrame.Angles(
-                math.rad(child.Orientation.X),
-                math.rad(child.Orientation.Y),
-                math.rad(child.Orientation.Z)
-            )
-            child.CFrame = CFrame.new(newPosition) * rotationCFrame * childRotation
-        end
-    end
-
-    -- Move and rotate the container itself
-    local newContainerCenter = targetOrigin - rotationCFrame:VectorToWorldSpace(originRelativeToCenter)
-    refContainer.CFrame = CFrame.new(newContainerCenter) * rotationCFrame
-
-    -- Rename container to the ref id if provided
-    if refDef.id then
-        refContainer.Name = refDef.id
-        refContainer:SetAttribute("FactoryId", refDef.id)
-        refContainer:SetAttribute("FactoryRef", refName)
-
-        -- Update registry for the container with new id
-        registerPart(refDef.id, refContainer, refDef, {
-            type = "ref",
-            refName = refName,
-            position = newContainerCenter,
-            size = refContainer.Size,
-        })
-    end
-
-    -- Parent to the main container
-    refContainer.Parent = parentContainer
-
-    return refContainer
-end
-
---------------------------------------------------------------------------------
--- BUILD
---------------------------------------------------------------------------------
-
---[[
-    Build geometry from a layout or spec.
-
-    @param layout: Layout { name, spec } or raw spec { bounds, parts, ... }
-    @param parent: Optional parent instance (default: workspace)
-    @return: Part container with child geometry
---]]
-function Geometry.build(layout, parent)
+function Geometry.instantiate(resolved, parent)
     parent = parent or workspace
 
-    -- Handle both layout format { name, spec } and raw spec format
-    local name, spec
-    if layout.spec then
-        name = layout.name or "Layout"
-        spec = layout.spec
-    else
-        name = layout.name or "Geometry"
-        spec = layout
+    -- Calculate bounds (skip _meta)
+    local minX, minY, minZ = math.huge, math.huge, math.huge
+    local maxX, maxY, maxZ = -math.huge, -math.huge, -math.huge
+
+    for id, entry in pairs(resolved) do
+        if id ~= "_meta" then
+            local g = entry.geometry
+            local o, s = g.origin, g.scale
+            minX = math.min(minX, o[1])
+            minY = math.min(minY, o[2])
+            minZ = math.min(minZ, o[3])
+            maxX = math.max(maxX, o[1] + s[1])
+            maxY = math.max(maxY, o[2] + s[2])
+            maxZ = math.max(maxZ, o[3] + s[3])
+        end
     end
 
-    -- Set scale
-    currentScale = Geometry.parseScale(spec.scale)
+    local bounds = {maxX - minX, maxY - minY, maxZ - minZ}
 
-    -- Calculate bounds and origin offset
-    local origin = spec.origin or "corner"
-    local bounds = spec.bounds or {4, 4, 4}
-    local scaledBounds = Geometry.toStuds(bounds)
-
-    -- Get offset if specified
-    local offset = spec.offset or {0, 0, 0}
-    offset = Geometry.toStuds(offset)
-    local offsetVec = Vector3.new(offset[1], offset[2], offset[3])
-
-    -- Create container Part
+    -- Create container
     local container = Instance.new("Part")
-    container.Name = name
-    container.Size = Vector3.new(scaledBounds[1], scaledBounds[2], scaledBounds[3])
+    container.Name = resolved._meta and resolved._meta.name or "GeometryContainer"
+    container.Size = Vector3.new(bounds[1], bounds[2], bounds[3])
+    container.Position = Vector3.new(
+        (minX + maxX) / 2,
+        (minY + maxY) / 2,
+        (minZ + maxZ) / 2
+    )
     container.Anchored = true
     container.CanCollide = false
     container.CanQuery = false
     container.Transparency = 1
-    container.Position = Vector3.new(0, scaledBounds[2] / 2, 0) + offsetVec
 
-    -- Store spec-level properties as attributes for Scanner to read back
-    container:SetAttribute("GeometrySpecTag", "area")
-    if spec.scale then
-        container:SetAttribute("GeometrySpecScale", spec.scale)
-    end
-    container:SetAttribute("GeometrySpecOrigin", origin)
-    container:SetAttribute("GeometrySpecBounds", table.concat(bounds, ","))
-
-    local containerCorner = container.Position - container.Size / 2
-    local originOffset = getOriginOffset(origin, scaledBounds)
-
-    -- Build spec with built-in base.part defaults
-    local specWithDefaults = {
-        defaults = spec.defaults,
-        base = {
-            part = { Anchored = true },
-        },
-        classes = spec.classes,
-        ids = spec.ids,
-    }
-    if spec.base then
-        for typeName, typeStyles in pairs(spec.base) do
-            if specWithDefaults.base[typeName] then
-                for k, v in pairs(typeStyles) do
-                    specWithDefaults.base[typeName][k] = v
-                end
-            else
-                specWithDefaults.base[typeName] = typeStyles
-            end
+    -- Create parts (skip _meta)
+    for id, entry in pairs(resolved) do
+        if id ~= "_meta" then
+            local part = createPart(entry)
+            part.Parent = container
+            registerPart(id, part, entry)
         end
     end
-
-    -- Build parts
-    if spec.parts then
-        for i, partDef in ipairs(spec.parts) do
-            print("[Factory.Geometry] Processing part", i, partDef.id or "no-id", "ref:", partDef.ref or "none")
-            if partDef.ref then
-                -- Handle layout reference
-                print("[Factory.Geometry] Calling buildRef for:", partDef.ref)
-                local result = buildRef(partDef, containerCorner + originOffset, container)
-                print("[Factory.Geometry] buildRef returned:", result)
-            else
-                -- Handle regular part
-                local part, geometry = createPart(partDef, specWithDefaults, containerCorner + originOffset)
-                if part then
-                    part.Parent = container
-                    registerPart(partDef.id, part, partDef, geometry)
-                end
-            end
-        end
-    end
-
-    -- Store mount points
-    if spec.mounts then
-        for _, mountDef in ipairs(spec.mounts) do
-            local position = mountDef.position or {0, 0, 0}
-            position = Geometry.toStuds(position)
-            local pos = Vector3.new(position[1], position[2], position[3]) + containerCorner + originOffset
-
-            local facing = mountDef.facing
-            if facing then
-                facing = Vector3.new(facing[1], facing[2], facing[3])
-            end
-
-            registerPart(mountDef.id, nil, mountDef, {
-                type = "mount",
-                position = pos,
-                facing = facing,
-            })
-        end
-    end
-
-    -- Register container
-    registerPart(name, container, { id = name }, {
-        type = "container",
-        position = container.Position,
-        size = container.Size,
-        bounds = scaledBounds,
-    })
 
     container.Parent = parent
     return container
 end
+
+--------------------------------------------------------------------------------
+-- Public API
+--------------------------------------------------------------------------------
+
+function Geometry.build(layout, parent)
+    local resolved = Geometry.resolve(layout)
+    return Geometry.instantiate(resolved, parent)
+end
+
+function Geometry.debug(layout)
+    local resolved = Geometry.resolve(layout)
+
+    print("=== RESOLVED LAYOUT ===")
+    for id, entry in pairs(resolved) do
+        if id ~= "_meta" then
+            print(string.format("  %s:", id))
+            print(string.format("    parent: %s", entry.parent or "root"))
+            print(string.format("    geometry: origin={%s} scale={%s}",
+                table.concat(entry.geometry.origin, ","),
+                table.concat(entry.geometry.scale, ",")))
+            for k, v in pairs(entry.properties) do
+                print(string.format("    %s = %s", k, tostring(v)))
+            end
+        end
+    end
+    print("=======================")
+
+    return resolved
+end
+
+--------------------------------------------------------------------------------
+-- Scanner: Code Generation
+--------------------------------------------------------------------------------
+
+valueToCode = function(value, indent)
+    indent = indent or ""
+    local t = type(value)
+
+    if t == "string" then
+        return string.format('"%s"', value)
+    elseif t == "number" then
+        -- Clean up floats
+        if value == math.floor(value) then
+            return tostring(math.floor(value))
+        else
+            return string.format("%.2f", value):gsub("%.?0+$", "")
+        end
+    elseif t == "boolean" then
+        return tostring(value)
+    elseif t == "table" then
+        return tableToCode(value, indent)
+    else
+        return tostring(value)
+    end
+end
+
+tableToCode = function(tbl, indent)
+    indent = indent or ""
+    local nextIndent = indent .. "    "
+    local lines = {}
+
+    -- Check if array-like (sequential integer keys starting at 1)
+    local isArray = true
+    local maxIndex = 0
+    for k, _ in pairs(tbl) do
+        if type(k) == "number" and k == math.floor(k) and k > 0 then
+            maxIndex = math.max(maxIndex, k)
+        else
+            isArray = false
+            break
+        end
+    end
+    if isArray and maxIndex > 0 then
+        -- Check for gaps
+        for i = 1, maxIndex do
+            if tbl[i] == nil then
+                isArray = false
+                break
+            end
+        end
+    end
+
+    if isArray and maxIndex > 0 then
+        -- Array format: {1, 2, 3}
+        local values = {}
+        for i = 1, maxIndex do
+            table.insert(values, valueToCode(tbl[i], nextIndent))
+        end
+        -- Short arrays on one line
+        local oneLine = "{" .. table.concat(values, ", ") .. "}"
+        if #oneLine < 60 then
+            return oneLine
+        end
+        -- Long arrays multiline
+        table.insert(lines, "{")
+        for i, v in ipairs(values) do
+            table.insert(lines, nextIndent .. v .. ",")
+        end
+        table.insert(lines, indent .. "}")
+        return table.concat(lines, "\n")
+    else
+        -- Dictionary format
+        table.insert(lines, "{")
+
+        -- Sort keys for consistent output
+        local keys = {}
+        for k, _ in pairs(tbl) do
+            table.insert(keys, k)
+        end
+        table.sort(keys, function(a, b)
+            return tostring(a) < tostring(b)
+        end)
+
+        for _, k in ipairs(keys) do
+            local v = tbl[k]
+            local keyStr
+            if type(k) == "string" and k:match("^[%a_][%w_]*$") then
+                keyStr = k
+            else
+                keyStr = "[" .. valueToCode(k, nextIndent) .. "]"
+            end
+            local valStr = valueToCode(v, nextIndent)
+            table.insert(lines, nextIndent .. keyStr .. " = " .. valStr .. ",")
+        end
+
+        table.insert(lines, indent .. "}")
+        return table.concat(lines, "\n")
+    end
+end
+
+function Geometry.scan(layout)
+    local resolved = Geometry.resolve(layout)
+
+    -- Get name from metadata or fallback
+    local layoutName = (resolved._meta and resolved._meta.name)
+        or (type(layout) == "table" and layout.name)
+        or "ScannedLayout"
+
+    -- Build output structure matching layout format
+    local output = {
+        name = layoutName,
+        parts = {},
+    }
+
+    for id, entry in pairs(resolved) do
+        -- Skip metadata
+        if id ~= "_meta" then
+            output.parts[id] = {
+                parent = entry.parent or "root",
+                shape = entry.shape ~= "block" and entry.shape or nil,
+                geometry = {
+                    origin = entry.geometry.origin,
+                    scale = entry.geometry.scale,
+                    rotation = (entry.geometry.rotation[1] ~= 0 or
+                               entry.geometry.rotation[2] ~= 0 or
+                               entry.geometry.rotation[3] ~= 0)
+                               and entry.geometry.rotation or nil,
+                },
+                properties = entry.properties,
+            }
+        end
+    end
+
+    -- Generate code
+    local code = "--[[\n"
+    code = code .. "    " .. layoutName .. "\n"
+    code = code .. "    Generated by Geometry.scan()\n"
+    code = code .. "    All values resolved - no class references\n"
+    code = code .. "--]]\n\n"
+    code = code .. "return " .. tableToCode(output)
+
+    return code
+end
+
+function Geometry.scanPrint(layout)
+    local code = Geometry.scan(layout)
+
+    print("\n" .. string.rep("=", 70))
+    print("-- Geometry Scanner Output")
+    print(string.rep("=", 70))
+    print(code)
+    print(string.rep("=", 70) .. "\n")
+
+    return code
+end
+
+--------------------------------------------------------------------------------
+-- Scanner: CSV/TSV Export
+--------------------------------------------------------------------------------
+
+function Geometry.toTSV(layout)
+    local resolved = Geometry.resolve(layout)
+
+    -- Collect all property keys (skip _meta)
+    local propKeys = {}
+    local propKeysSet = {}
+    for id, entry in pairs(resolved) do
+        if id ~= "_meta" and entry.properties then
+            for k, _ in pairs(entry.properties) do
+                if not propKeysSet[k] then
+                    propKeysSet[k] = true
+                    table.insert(propKeys, k)
+                end
+            end
+        end
+    end
+    table.sort(propKeys)
+
+    -- Build header
+    local headers = {
+        "id", "parent", "shape",
+        "origin_x", "origin_y", "origin_z",
+        "scale_x", "scale_y", "scale_z",
+        "rot_x", "rot_y", "rot_z",
+    }
+    for _, k in ipairs(propKeys) do
+        table.insert(headers, k)
+    end
+
+    local lines = { table.concat(headers, "\t") }
+
+    -- Sort entries by id for consistent output (skip _meta)
+    local ids = {}
+    for id, _ in pairs(resolved) do
+        if id ~= "_meta" then
+            table.insert(ids, id)
+        end
+    end
+    table.sort(ids)
+
+    -- Build rows
+    for _, id in ipairs(ids) do
+        local entry = resolved[id]
+        local g = entry.geometry
+        local row = {
+            id,
+            entry.parent or "root",
+            entry.shape or "block",
+            g.origin[1], g.origin[2], g.origin[3],
+            g.scale[1], g.scale[2], g.scale[3],
+            g.rotation[1], g.rotation[2], g.rotation[3],
+        }
+
+        -- Add properties
+        for _, k in ipairs(propKeys) do
+            local v = entry.properties[k]
+            if v == nil then
+                table.insert(row, "")
+            elseif type(v) == "table" then
+                -- Format arrays like {255,128,0}
+                local parts = {}
+                for _, val in ipairs(v) do
+                    table.insert(parts, tostring(val))
+                end
+                if #parts > 0 then
+                    table.insert(row, "{" .. table.concat(parts, ",") .. "}")
+                else
+                    table.insert(row, "{}")
+                end
+            else
+                table.insert(row, tostring(v))
+            end
+        end
+
+        table.insert(lines, table.concat(row, "\t"))
+    end
+
+    return table.concat(lines, "\n")
+end
+
+function Geometry.toTSVPrint(layout)
+    local tsv = Geometry.toTSV(layout)
+
+    print("\n" .. string.rep("=", 70))
+    print("-- Geometry TSV Export (paste into spreadsheet)")
+    print(string.rep("=", 70))
+    print(tsv)
+    print(string.rep("=", 70) .. "\n")
+
+    return tsv
+end
+
+--##############################################################################
+-- PHASE 3: RETURN
+--##############################################################################
 
 return Geometry

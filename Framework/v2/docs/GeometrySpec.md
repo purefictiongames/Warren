@@ -208,7 +208,7 @@ This is handled by ClassResolver - see [RESOLVER.md](RESOLVER.md) for details.
 For layouts where parts reference each other's dimensions, use function syntax:
 
 ```lua
-return function(parts)
+return function(parts, parent)
     return {
         name = "Shop",
         parts = {
@@ -224,8 +224,8 @@ return function(parts)
                 parent = "Floor1",
                 class = "stucco_cream",
                 geometry = {
-                    -- Stack on top of Floor1
-                    origin = {0, parts.Floor1.Size[2], 0},
+                    -- Stack on top of parent using parent reference
+                    origin = {0, parent.Size[2], 0},
                     scale = {80, 18, 65},
                 },
             },
@@ -234,8 +234,8 @@ return function(parts)
                 class = "roof_slate",
                 shape = "wedge",
                 geometry = {
-                    -- Stack on top of Floor2 (chain accumulates)
-                    origin = {0, parts.Floor2.Size[2], 0},
+                    -- Stack on top of parent (chain accumulates)
+                    origin = {0, parent.Size[2], 0},
                     scale = {80, 16, 65},
                 },
             },
@@ -245,17 +245,155 @@ end
 ```
 
 **Available references:**
-- `parts.{id}.Size[1|2|3]` - Scale X/Y/Z
-- `parts.{id}.Position[1|2|3]` - Origin X/Y/Z
-- `parts.{id}.Rotation[1|2|3]` - Rotation X/Y/Z
+- `parent.Size[1|2|3]` - Direct parent's scale X/Y/Z
+- `parent.Position[1|2|3]` - Direct parent's origin X/Y/Z
+- `parent.Rotation[1|2|3]` - Direct parent's rotation X/Y/Z
+- `parts.{id}.Size[1|2|3]` - Named part's scale X/Y/Z
+- `parts.{id}.Position[1|2|3]` - Named part's origin X/Y/Z
+- `parts.{id}.Rotation[1|2|3]` - Named part's rotation X/Y/Z
 
 **Arithmetic supported:**
 ```lua
-origin = {0, parts.Floor1.Size[2] + 10, 0}
+origin = {0, parent.Size[2] + 10, 0}
 origin = {parts.Wall.Size[1] * 0.5, 0, 0}
 ```
 
 This follows the Logo/Turtle paradigm - each part positions relative to its parent in the chain, and origins accumulate automatically.
+
+## Arrays
+
+Generate multiple copies of a part at regular intervals. Useful for fences, pillars, grids, and any repeating geometry.
+
+### Linear Array
+
+Repeat along a single direction:
+
+```lua
+{ id = "pillar", class = "column", position = {0, 0, 0}, size = {2, 10, 2},
+  array = { count = 4, offset = {10, 0, 0} }
+}
+-- Generates: pillar_1, pillar_2, pillar_3, pillar_4
+-- Positioned at X = 0, 10, 20, 30
+```
+
+### Grid Array (Per-Axis)
+
+Repeat along multiple axes for 2D or 3D grids:
+
+```lua
+{ id = "tile", class = "floor", position = {0, 0, 0}, size = {4, 1, 4},
+  array = {
+    x = { count = 5, spacing = 4 },
+    z = { count = 3, spacing = 4 }
+  }
+}
+-- Generates: tile_1_1 through tile_5_3 (15 tiles)
+-- Forms a 5x3 grid
+```
+
+### 3D Grid
+
+```lua
+{ id = "cube", class = "crystal", position = {0, 0, 0}, size = {2, 2, 2},
+  array = {
+    x = { count = 3, spacing = 4 },
+    y = { count = 2, spacing = 4 },
+    z = { count = 3, spacing = 4 }
+  }
+}
+-- Generates: cube_1_1_1 through cube_3_2_3 (18 cubes)
+```
+
+### Generated IDs
+
+| Dimensionality | ID Format | Example |
+|----------------|-----------|---------|
+| Linear (1 axis) | `{id}_{n}` | `pillar_1`, `pillar_2` |
+| 2D grid | `{id}_{x}_{z}` | `tile_1_1`, `tile_2_3` |
+| 3D grid | `{id}_{x}_{y}_{z}` | `cube_1_1_1`, `cube_2_2_2` |
+
+Arrays are expanded during the resolve phase, before references are resolved. This means you cannot reference individual array elements by their generated IDs in the same layout - use arrays for final leaf geometry.
+
+## Xref (Layout Composition)
+
+Import another layout as a child using `xref`. This enables modular, reusable building blocks.
+
+### Basic Usage
+
+```lua
+local SuburbanHouse = require(game.ReplicatedStorage.Lib.Layouts.SuburbanHouse)
+local GarageLayout = require(game.ReplicatedStorage.Lib.Layouts.Garage)
+
+return {
+    name = "Neighborhood",
+    spec = {
+        parts = {
+            { id = "house1", xref = SuburbanHouse, position = {0, 0, 0} },
+            { id = "house2", xref = SuburbanHouse, position = {30, 0, 0}, rotation = {0, 180, 0} },
+            { id = "garage", xref = GarageLayout, position = {-15, 0, 0} },
+        }
+    }
+}
+```
+
+### How It Works
+
+When the resolver encounters `xref`:
+
+1. **Creates a container** - The xref node becomes an invisible transform node
+2. **Imports child parts** - All parts from the referenced layout are imported
+3. **Namespaces IDs** - Imported parts get prefixed: `house1.Foundation`, `house1.Roof`
+4. **Sets parent** - Imported parts become children of the container
+5. **Inherits transforms** - Position/rotation from container applies to all children
+
+### Generated Structure
+
+```
+house1                  -- Container (invisible, transform only)
+├── house1.Foundation   -- Imported, parent = house1
+├── house1.Walls        -- Imported, parent = house1
+└── house1.Roof         -- Imported, parent = house1
+house2                  -- Container (rotated 180°)
+├── house2.Foundation   -- Inherits rotation from house2
+├── house2.Walls
+└── house2.Roof
+```
+
+### Property Cascade
+
+Properties on the xref container cascade to imported parts:
+
+```lua
+{ id = "abandoned", xref = SuburbanHouse,
+  class = "weathered",  -- All imported parts inherit this class
+  position = {100, 0, 0}
+}
+```
+
+The cascade follows normal rules: parent provides base values, children can override. If the imported layout's Roof has `class = "shingles"`, the final class becomes `"weathered shingles"` (both apply, imported wins conflicts).
+
+### Nested Xrefs
+
+Xrefs can be nested - an imported layout can itself contain xrefs:
+
+```lua
+-- Layouts/House.lua
+return {
+    name = "House",
+    spec = {
+        parts = {
+            { id = "building", ... },
+            { id = "attached_garage", xref = GarageLayout, position = {-10, 0, 0} },
+        }
+    }
+}
+
+-- Layouts/Neighborhood.lua
+-- Using House imports GarageLayout transitively
+{ id = "house1", xref = House, position = {0, 0, 0} }
+-- Creates: house1, house1.building, house1.attached_garage,
+--          house1.attached_garage.door, etc.
+```
 
 ## Scale
 
@@ -405,14 +543,80 @@ Lib.Factory.scan(workspace.MyZone)
 
 ## Attributes
 
-Tag parts to guide the scanner:
+Attributes on parts for scanning and round-trip:
 
 | Attribute | Type | Description |
 |-----------|------|-------------|
-| `GeometrySpecId` | string | Part's `id` in output |
-| `GeometrySpecClass` | string | Part's `class` in output |
-| `GeometrySpecIgnore` | boolean | Skip this part |
-| `GeometrySpecTag` | string | `"area"` marks scannable containers |
+| `FactoryId` | string | Part's `id` (set automatically by Factory.build) |
+| `FactoryClass` | string | Part's `class` (set automatically by Factory.build) |
+| `GeometrySpecId` | string | Part's `id` in output (legacy) |
+| `GeometrySpecClass` | string | Part's `class` in output (legacy) |
+| `GeometrySpecIgnore` | boolean | Skip this part during scan |
+| `GeometrySpecTag` | string | `"area"` marks scannable area containers |
+
+## Round-Trip Workflow
+
+Factory enables a full round-trip workflow for iterative development:
+
+1. **Build** - `Factory.geometry()` creates parts with `FactoryClass` / `FactoryId` attributes
+2. **Edit** - Make manual changes in Studio (adjust positions, sizes, add parts)
+3. **Scan** - `Factory.scan()` auto-resolves the layout and reconstructs clean code
+
+```lua
+-- Your layout file: Lib/Layouts/Platform.lua
+return {
+    name = "Platform",
+    spec = {
+        classes = {
+            metal = { Material = "DiamondPlate", Color = {80, 80, 85} },
+        },
+        parts = {
+            { id = "floor", class = "metal", position = {0, 0, 0}, size = {20, 1, 20} },
+        },
+    },
+}
+```
+
+```lua
+-- Build it
+local model = Factory.geometry(Lib.Layouts.Platform)
+
+-- Make changes in Studio...
+-- - Move the floor part
+-- - Change color on one part to red (override)
+
+-- Scan it back - layout auto-resolved from model name "Platform"
+local code = Factory.scan(model)
+```
+
+**Scanned output (clean, not flattened):**
+```lua
+return {
+    name = "Platform",
+    spec = {
+        classes = {
+            metal = { Material = "DiamondPlate", Color = {80, 80, 85} },
+        },
+        parts = {
+            -- Only outputs position (changed) and Color (if overridden)
+            -- Does NOT output Material - matches class definition
+            { id = "floor", class = "metal", position = {5, 0, 10}, size = {20, 1, 20} },
+        },
+    },
+}
+```
+
+**How it works:**
+- Model is named "Platform" (from `layout.name`)
+- Scanner auto-resolves `Lib.Layouts.Platform` to get class definitions
+- Parts have `FactoryClass` attribute → scanner looks up that class
+- Only outputs properties that differ from what the class provides
+
+**Workflow benefits:**
+- AI generates layout code → you get 80-90% there
+- Tweak in Studio or VS Code
+- `Factory.scan(model)` captures changes as clean source code
+- Source stays maintainable (classes, not flattened inline styles)
 
 ## Auto-Cleanup
 

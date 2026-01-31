@@ -179,9 +179,37 @@ end
 
 --[[
     Scan geometry and output layout code.
+
+    Automatically resolves the original layout from Lib.Layouts using
+    the container's name for round-trip diffing:
+        Factory.scan(model)  -- Looks up Lib.Layouts[model.Name]
+
+    Or pass layout/classes explicitly:
+        Factory.scan(model, { layout = myLayout })
+        Factory.scan(model, { classes = myClasses })
+
+    @param container: Model or Part containing geometry
+    @param options: {
+        layout = nil,   -- Original layout (auto-resolved from name if nil)
+        classes = nil,  -- Or pass classes directly
+    }
 --]]
 function Factory.scan(container, options)
     options = options or {}
+
+    -- Auto-resolve layout from Lib.Layouts if not provided
+    if not options.layout and not options.classes then
+        local success, Layouts = pcall(function()
+            return require(script.Parent.Layouts)
+        end)
+        if success and Layouts then
+            local layoutName = container.Name
+            if Layouts[layoutName] then
+                options.layout = Layouts[layoutName]
+            end
+        end
+    end
+
     local code = Factory.Scanner.scanToCode(container, options)
 
     print("\n" .. string.rep("=", 70))

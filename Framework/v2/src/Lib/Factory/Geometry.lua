@@ -679,6 +679,88 @@ local function normalizeParts(parts)
 end
 
 --------------------------------------------------------------------------------
+-- Container Flattening (Hierarchical Organization)
+--------------------------------------------------------------------------------
+
+--[[
+    Flatten containers with children into a flat parts table.
+
+    Containers are organizational nodes with no geometry:
+        { id = "GroundFloor", type = "container", position = {0, 0, 0},
+          children = {
+              { id = "Floor", class = "foundation", ... },
+              { id = "Walls", type = "container", children = { ... } },
+          }}
+
+    Becomes:
+        GroundFloor = { _isContainer = true, position = {0, 0, 0} }
+        GroundFloor.Floor = { parent = "GroundFloor", class = "foundation", ... }
+        GroundFloor.Walls = { _isContainer = true, parent = "GroundFloor" }
+        GroundFloor.Walls.Wall_South = { parent = "GroundFloor.Walls", ... }
+
+    Position offsets are NOT accumulated here - that's handled by resolvePartGeometry
+    which walks the tree and accumulates parent origins.
+
+    @param parts: Keyed parts table (from normalizeParts)
+    @param parentId: Parent container ID (for recursion)
+    @param parentClass: Parent class to cascade
+    @return: Flattened keyed parts table
+--]]
+local function flattenContainers(parts, parentId, parentClass)
+    local flattened = {}
+
+    for id, partDef in pairs(parts) do
+        local fullId = parentId and (parentId .. "." .. id) or id
+        local isContainer = partDef.type == "container"
+        local children = partDef.children
+
+        -- Cascade class from parent if not specified
+        local class = partDef.class or parentClass
+
+        if isContainer and children then
+            -- Create container node (no geometry)
+            local containerNode = {}
+            for k, v in pairs(partDef) do
+                if k ~= "children" and k ~= "type" then
+                    containerNode[k] = v
+                end
+            end
+            containerNode._isContainer = true
+            -- Keep position as-is - tree accumulation handles offsets
+            if parentId then
+                containerNode.parent = parentId
+            end
+            flattened[fullId] = containerNode
+
+            -- Recursively flatten children
+            local childrenKeyed = normalizeParts(children)
+            local flattenedChildren = flattenContainers(childrenKeyed, fullId, class)
+            for childId, childDef in pairs(flattenedChildren) do
+                flattened[childId] = childDef
+            end
+        else
+            -- Regular part - copy as-is
+            local partNode = {}
+            for k, v in pairs(partDef) do
+                if k ~= "type" then
+                    partNode[k] = v
+                end
+            end
+            -- Keep position as-is - tree accumulation handles offsets
+            if class and not partNode.class then
+                partNode.class = class
+            end
+            if parentId then
+                partNode.parent = parentId
+            end
+            flattened[fullId] = partNode
+        end
+    end
+
+    return flattened
+end
+
+--------------------------------------------------------------------------------
 -- Xref Expansion (Layout Composition)
 --------------------------------------------------------------------------------
 
@@ -779,6 +861,12 @@ local function expandXrefs(parts, collectedClasses, collectedOpenings, parentOff
         else
             -- Extract parts, classes, and openings from referenced layout
             local importedParts, importedClasses, importedOpenings = extractFromLayout(xref)
+
+            -- CRITICAL: Flatten containers in imported layout
+            -- The imported layout may have containers with children arrays that need
+            -- to be converted into flat parts with parent references before we can
+            -- properly namespace and parent them under our xref container
+            importedParts = flattenContainers(importedParts, nil, nil)
 
             -- Collect classes from imported layout
             if importedClasses then
@@ -1103,6 +1191,11 @@ function Geometry.resolve(layout)
     local parts = normalizeParts(rawParts or {})
 
     --------------------------------------------------------------------------
+    -- PHASE 0: Flatten containers (hierarchical organization)
+    --------------------------------------------------------------------------
+    parts = flattenContainers(parts, nil, nil)
+
+    --------------------------------------------------------------------------
     -- PHASE 0a: Expand xrefs (layout composition)
     --------------------------------------------------------------------------
     local xrefClasses = {}
@@ -1173,6 +1266,12 @@ function Geometry.resolve(layout)
         -- Resolve properties (cascade from parent)
         stub.properties = resolvePartProperties(partDef, parentStub, styles)
 
+        -- Preserve class and id for round-trip scanning
+        -- These are stored as attributes on built parts so Scanner can reconstruct
+        -- the original class-based styling instead of flattening to inline properties
+        stub.class = partDef.class
+        stub.id = partDef.id
+
         -- Preserve holes for CSG subtraction
         if partDef.holes then
             stub.holes = partDef.holes
@@ -1186,6 +1285,7 @@ function Geometry.resolve(layout)
     stubs._meta = {
         name = layoutData.name,
         openings = allOpenings,  -- Global openings for instantiate
+        classes = styles.classes,  -- Preserve for round-trip scanning
     }
 
     return stubs
@@ -1248,6 +1348,8 @@ createPart = function(entry, scaleFactor)
     local part
     if shape == "wedge" then
         part = Instance.new("WedgePart")
+    elseif shape == "cornerwedge" then
+        part = Instance.new("CornerWedgePart")
     elseif shape == "cylinder" then
         part = Instance.new("Part")
         part.Shape = Enum.PartType.Cylinder
@@ -1313,6 +1415,15 @@ createPart = function(entry, scaleFactor)
     -- Apply properties (skip for pure containers unless overridden)
     if not isContainer or (entry.properties and next(entry.properties)) then
         applyProperties(part, entry.properties)
+    end
+
+    -- Preserve class and id as attributes for round-trip scanning
+    -- Scanner uses these to reconstruct class-based styling instead of inline properties
+    if entry.class and entry.class ~= "" then
+        part:SetAttribute("FactoryClass", entry.class)
+    end
+    if entry.id and entry.id ~= "" then
+        part:SetAttribute("FactoryId", entry.id)
     end
 
     return part

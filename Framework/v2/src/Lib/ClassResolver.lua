@@ -103,6 +103,9 @@ local DEFAULT_RESERVED_KEYS = {
     rotation = true,
     shape = true,
     facing = true,
+    holes = true,
+    array = true,
+    xref = true,
 
     -- GUI
     ref = true,

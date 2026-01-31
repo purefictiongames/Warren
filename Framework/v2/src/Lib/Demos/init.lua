@@ -122,6 +122,9 @@ local demoModules = {
     ShootingGallery = "ShootingGallery_Demo",
     SwivelLauncher = "SwivelLauncher_Demo",
     GeometrySpec = "GeometrySpec_Demo",
+    TestMansion = "TestMansionDemo",
+    AtomicRanch = "AtomicRanch_Demo",
+    FlemishShop1 = "FlemishShop1_Demo",
 }
 
 setmetatable(Demos, {

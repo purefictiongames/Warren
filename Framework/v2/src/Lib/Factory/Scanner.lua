@@ -60,6 +60,64 @@
 local Scanner = {}
 
 --------------------------------------------------------------------------------
+-- CLASS RESOLUTION (for round-trip diffing)
+--------------------------------------------------------------------------------
+
+--[[
+    Resolve what properties a class combination would provide.
+    Handles space-separated class names like "metal danger".
+
+    @param classStr: Space-separated class names (e.g., "metal danger")
+    @param classes: Class definitions table (from layout.spec.classes)
+    @return: Merged properties table
+--]]
+local function resolveClassProperties(classStr, classes)
+    if not classStr or not classes then
+        return {}
+    end
+
+    local result = {}
+
+    -- Parse space-separated classes and merge in order
+    for className in classStr:gmatch("%S+") do
+        local classDef = classes[className]
+        if classDef then
+            for k, v in pairs(classDef) do
+                result[k] = v
+            end
+        end
+    end
+
+    return result
+end
+
+--[[
+    Compare two values for equality (handles tables/arrays).
+--]]
+local function valuesEqual(a, b)
+    if type(a) ~= type(b) then
+        return false
+    end
+
+    if type(a) == "table" then
+        -- Compare arrays/tables
+        local aKeys, bKeys = 0, 0
+        for k in pairs(a) do aKeys = aKeys + 1 end
+        for k in pairs(b) do bKeys = bKeys + 1 end
+        if aKeys ~= bKeys then return false end
+
+        for k, v in pairs(a) do
+            if not valuesEqual(v, b[k]) then
+                return false
+            end
+        end
+        return true
+    else
+        return a == b
+    end
+end
+
+--------------------------------------------------------------------------------
 -- CONFIGURATION
 --------------------------------------------------------------------------------
 
@@ -224,58 +282,86 @@ end
 
 --[[
     Extract block geometry.
+    Note: Position Y is converted to BOTTOM of part (origin convention).
+    The builder adds half-height back when creating parts.
 --]]
 local function extractBlockGeometry(part)
     local pos = part.Position
     local size = part.Size
 
+    -- Convert center Y to bottom Y (spec uses bottom-origin for Y)
+    local bottomY = pos.Y - size.Y / 2
+
     return {
-        position = { round(pos.X), round(pos.Y), round(pos.Z) },
+        position = { round(pos.X), round(bottomY), round(pos.Z) },
         size = { round(size.X), round(size.Y), round(size.Z) },
     }
 end
 
 --[[
     Extract cylinder geometry.
+    Note: Cylinders are oriented vertically (height along Y).
+    Position Y is converted to BOTTOM of cylinder.
 --]]
 local function extractCylinderGeometry(part)
     local pos = part.Position
     local size = part.Size
 
+    -- Cylinder height is along X in Roblox, Y/Z are diameter
+    -- For vertical cylinders, we use size.Y as height equivalent
+    local height = size.Y  -- Vertical extent
+    local bottomY = pos.Y - height / 2
+
     return {
-        position = { round(pos.X), round(pos.Y), round(pos.Z) },
-        height = round(size.X),
+        position = { round(pos.X), round(bottomY), round(pos.Z) },
+        height = round(size.X),  -- Roblox cylinder length is along X
         radius = round(size.Y / 2),
     }
 end
 
 --[[
     Extract sphere geometry.
+    Note: Position Y is converted to BOTTOM of sphere.
 --]]
 local function extractSphereGeometry(part)
     local pos = part.Position
     local size = part.Size
 
+    local radius = size.X / 2
+    local bottomY = pos.Y - radius
+
     return {
-        position = { round(pos.X), round(pos.Y), round(pos.Z) },
-        radius = round(size.X / 2),
+        position = { round(pos.X), round(bottomY), round(pos.Z) },
+        radius = round(radius),
     }
 end
 
 --[[
-    Extract common properties from a part.
+    Extract properties from a part, diffing against class definitions for round-trip.
+
+    @param part: BasePart to extract from
+    @param options: {
+        sparse = true,      -- Only non-default values (default: true)
+        classes = nil,      -- Class definitions for round-trip diffing
+    }
+    @return: Properties table with only overrides (not class-provided values)
 --]]
-local function extractProperties(part)
+local function extractProperties(part, options)
+    options = options or {}
+    local sparse = options.sparse ~= false  -- Default true: only non-default values
+    local classes = options.classes  -- Class definitions passed directly
+
     local props = {}
 
-    -- ID from attributes
-    local id = part:GetAttribute("GeometrySpecId")
+    -- ID from attributes (Factory attributes take priority for round-trip fidelity)
+    local id = part:GetAttribute("FactoryId")
+        or part:GetAttribute("GeometrySpecId")
         or part:GetAttribute("GeometrySpecName")
         or nil
 
     -- Fall back to part name if it's not generic
     if not id or id == "" then
-        if part.Name ~= "Part" and part.Name ~= "" then
+        if part.Name ~= "Part" and part.Name ~= "WedgePart" and part.Name ~= "" then
             id = part.Name
         end
     end
@@ -284,46 +370,156 @@ local function extractProperties(part)
         props.id = id
     end
 
-    -- Class from attributes
-    local class = part:GetAttribute("GeometrySpecClass")
+    -- Class from attributes (Factory attributes take priority for round-trip fidelity)
+    local classStr = part:GetAttribute("FactoryClass")
+        or part:GetAttribute("GeometrySpecClass")
         or part:GetAttribute("GeometrySpecTag")
 
     -- Don't use "area" tag as class
-    if class and class:lower() == "area" then
-        class = nil
+    if classStr and classStr:lower() == "area" then
+        classStr = nil
     end
 
-    if class and class ~= "" then
-        props.class = class
+    if classStr and classStr ~= "" then
+        props.class = classStr
     end
 
-    -- Material (only if not default)
-    if part.Material ~= Enum.Material.Plastic then
-        props.Material = part.Material.Name
+    -- Resolve what the class(es) would provide for diffing
+    local classProps = resolveClassProperties(classStr, classes)
+
+    -- Helper to check if a property should be output
+    -- Returns true if the value differs from what the class provides (or no class)
+    local function shouldOutput(propName, currentValue)
+        -- If classes are available and this class provides this property...
+        if classes and classProps[propName] ~= nil then
+            -- Only output if different from class value
+            return not valuesEqual(currentValue, classProps[propName])
+        end
+        -- No class info or class doesn't define this property - use sparse logic
+        return true
     end
 
-    -- Color (only if not default gray)
+    -- =========================================================================
+    -- VISUAL PROPERTIES
+    -- =========================================================================
+
+    -- Material
+    local defaultMaterial = Enum.Material.Plastic
+    local materialName = part.Material.Name
+    local materialValue = materialName
+    if shouldOutput("Material", materialValue) then
+        if not sparse or part.Material ~= defaultMaterial then
+            props.Material = materialName
+        end
+    end
+
+    -- Color (always capture as RGB array)
     local color = part.Color
-    local defaultGray = Color3.fromRGB(163, 162, 165)
-    if (math.abs(color.R - defaultGray.R) > 0.01 or
-        math.abs(color.G - defaultGray.G) > 0.01 or
-        math.abs(color.B - defaultGray.B) > 0.01) then
-        props.Color = {
-            math.floor(color.R * 255),
-            math.floor(color.G * 255),
-            math.floor(color.B * 255),
-        }
+    local colorValue = {
+        math.floor(color.R * 255 + 0.5),
+        math.floor(color.G * 255 + 0.5),
+        math.floor(color.B * 255 + 0.5),
+    }
+    if shouldOutput("Color", colorValue) then
+        local defaultGray = Color3.fromRGB(163, 162, 165)
+        local colorDiffers = math.abs(color.R - defaultGray.R) > 0.01 or
+                             math.abs(color.G - defaultGray.G) > 0.01 or
+                             math.abs(color.B - defaultGray.B) > 0.01
+        if not sparse or colorDiffers then
+            props.Color = colorValue
+        end
     end
 
-    -- Transparency (only if not 0)
-    if part.Transparency > 0 then
-        props.Transparency = round(part.Transparency)
+    -- Transparency
+    local transparencyValue = part.Transparency
+    if shouldOutput("Transparency", transparencyValue) then
+        if not sparse or transparencyValue > 0.001 then
+            props.Transparency = transparencyValue
+        end
     end
 
-    -- CanCollide (only if false)
-    -- Note: Anchored is NOT output - built geometry is always anchored by default
-    if not part.CanCollide then
-        props.CanCollide = false
+    -- Reflectance
+    local reflectanceValue = part.Reflectance
+    if shouldOutput("Reflectance", reflectanceValue) then
+        if not sparse or reflectanceValue > 0.001 then
+            props.Reflectance = reflectanceValue
+        end
+    end
+
+    -- CastShadow
+    local castShadowValue = part.CastShadow
+    if shouldOutput("CastShadow", castShadowValue) then
+        if not sparse or castShadowValue == false then
+            props.CastShadow = castShadowValue
+        end
+    end
+
+    -- =========================================================================
+    -- PHYSICS/COLLISION PROPERTIES
+    -- =========================================================================
+
+    -- Note: Anchored is NOT captured - built geometry is always anchored by default
+
+    -- CanCollide
+    local canCollideValue = part.CanCollide
+    if shouldOutput("CanCollide", canCollideValue) then
+        if not sparse or canCollideValue == false then
+            props.CanCollide = canCollideValue
+        end
+    end
+
+    -- CanTouch
+    local canTouchValue = part.CanTouch
+    if shouldOutput("CanTouch", canTouchValue) then
+        if not sparse or canTouchValue == false then
+            props.CanTouch = canTouchValue
+        end
+    end
+
+    -- CanQuery
+    local canQueryValue = part.CanQuery
+    if shouldOutput("CanQuery", canQueryValue) then
+        if not sparse or canQueryValue == false then
+            props.CanQuery = canQueryValue
+        end
+    end
+
+    -- Massless
+    local masslessValue = part.Massless
+    if shouldOutput("Massless", masslessValue) then
+        if not sparse or masslessValue == true then
+            props.Massless = masslessValue
+        end
+    end
+
+    -- =========================================================================
+    -- CUSTOM ATTRIBUTES (skip internal Factory/GeometrySpec attributes)
+    -- =========================================================================
+
+    local attributes = part:GetAttributes()
+    for name, value in pairs(attributes) do
+        -- Skip internal attributes (Factory* and GeometrySpec*)
+        if not name:match("^Factory") and not name:match("^GeometrySpec") then
+            -- Only include serializable types, and check against class if applicable
+            local valueType = typeof(value)
+            local attrValue
+            if valueType == "string" or valueType == "number" or valueType == "boolean" then
+                attrValue = value
+            elseif valueType == "Color3" then
+                attrValue = {
+                    math.floor(value.R * 255 + 0.5),
+                    math.floor(value.G * 255 + 0.5),
+                    math.floor(value.B * 255 + 0.5),
+                }
+            elseif valueType == "Vector3" then
+                attrValue = {value.X, value.Y, value.Z}
+            end
+
+            -- Check if this attribute differs from class definition
+            if attrValue ~= nil and shouldOutput(name, attrValue) then
+                props[name] = attrValue
+            end
+        end
     end
 
     return props
@@ -337,8 +533,12 @@ end
     Scan a container and extract all geometry.
 
     @param container: Model, Folder, or similar container
-    @param options: Optional configuration
-    @return: Scanned config table
+    @param options: {
+        includeChildren = true,  -- Scan descendants (default: true)
+        layout = nil,            -- Original layout for round-trip diffing (has classes)
+        classes = nil,           -- Or pass classes directly
+    }
+    @return: Scanned config table (with only overrides, not class-provided values)
 --]]
 function Scanner.scan(container, options)
     options = options or {}
@@ -368,6 +568,23 @@ function Scanner.scan(container, options)
         config.origin = specOrigin
     end
 
+    -- Get class definitions for round-trip diffing
+    -- Priority: options.classes > options.layout.spec.classes > options.layout.classes
+    local classes = options.classes
+    if not classes and options.layout then
+        local layout = options.layout
+        if layout.spec and layout.spec.classes then
+            classes = layout.spec.classes
+        elseif layout.classes then
+            classes = layout.classes
+        end
+    end
+
+    -- Preserve classes in output if available
+    if classes then
+        config.classes = classes
+    end
+
     local bounds
     if specBoundsStr then
         local parts = {}
@@ -382,7 +599,35 @@ function Scanner.scan(container, options)
 
     -- Calculate origin offset to transform world coords back to spec coords
     local scaledBounds = bounds and {bounds[1] * scale, bounds[2] * scale, bounds[3] * scale} or {0, 0, 0}
-    local containerCorner = container.Position - container.Size / 2
+
+    -- Handle both Models and Parts as containers
+    local containerCorner
+    if container:IsA("Model") then
+        -- For Models, calculate bounding box from descendants
+        local minX, minY, minZ = math.huge, math.huge, math.huge
+        local maxX, maxY, maxZ = -math.huge, -math.huge, -math.huge
+        for _, desc in ipairs(container:GetDescendants()) do
+            if desc:IsA("BasePart") and desc.Name ~= "PrimaryPart" then
+                local pos = desc.Position
+                local size = desc.Size
+                minX = math.min(minX, pos.X - size.X/2)
+                minY = math.min(minY, pos.Y - size.Y/2)
+                minZ = math.min(minZ, pos.Z - size.Z/2)
+                maxX = math.max(maxX, pos.X + size.X/2)
+                maxY = math.max(maxY, pos.Y + size.Y/2)
+                maxZ = math.max(maxZ, pos.Z + size.Z/2)
+            end
+        end
+        if minX == math.huge then
+            containerCorner = Vector3.new(0, 0, 0)
+        else
+            containerCorner = Vector3.new(minX, minY, minZ)
+        end
+    else
+        -- For Parts, use Position - Size/2
+        containerCorner = container.Position - container.Size / 2
+    end
+
     local originOffset = Vector3.new(0, 0, 0)
 
     if specOrigin == "center" then
@@ -424,7 +669,7 @@ function Scanner.scan(container, options)
         end
 
         local shape = inferShape(part)
-        local element = extractProperties(part)
+        local element = extractProperties(part, { classes = classes })
 
         if shape == "block" then
             local geo = extractBlockGeometry(part)
@@ -847,39 +1092,60 @@ function Scanner.scanArea(areaName, container, options)
         local element = extractProperties(child)
 
         -- Convert to local coordinates relative to area origin
+        -- Y is converted to BOTTOM of part (spec uses bottom-origin for Y)
         local worldPos = child.Position
-        local localPos = {
-            round(worldPos.X - areaOrigin.X),
-            round(worldPos.Y - areaOrigin.Y),
-            round(worldPos.Z - areaOrigin.Z),
-        }
+        local childSize = child.Size
 
         -- Snap edges to bounds
         if shape == "block" or shape == "wedge" then
-            local geo = extractBlockGeometry(child)
-            local localSize = { round(child.Size.X), round(child.Size.Y), round(child.Size.Z) }
+            local localSize = { round(childSize.X), round(childSize.Y), round(childSize.Z) }
 
-            -- Apply snapping
-            localPos, localSize = snapEdges(localPos, localSize, boundsTable, SNAP_THRESHOLD)
+            -- Convert to local coordinates (center-based for snapEdges)
+            local localCenterPos = {
+                worldPos.X - areaOrigin.X,
+                worldPos.Y - areaOrigin.Y,
+                worldPos.Z - areaOrigin.Z,
+            }
 
-            element.position = localPos
-            element.size = localSize
+            -- Apply snapping (works with center-based positions)
+            local snappedCenter, snappedSize = snapEdges(localCenterPos, localSize, boundsTable, SNAP_THRESHOLD)
+
+            -- Convert snapped center Y to bottom-origin Y (spec convention)
+            local bottomY = snappedCenter[2] - snappedSize[2] / 2
+            element.position = { snappedCenter[1], round(bottomY), snappedCenter[3] }
+            element.size = snappedSize
 
             if shape == "wedge" then
                 element.shape = "wedge"
             end
 
         elseif shape == "cylinder" then
+            -- Cylinder: convert center to bottom-origin Y
+            local height = childSize.Y
+            local bottomY = worldPos.Y - height / 2
+            local localPos = {
+                round(worldPos.X - areaOrigin.X),
+                round(bottomY - areaOrigin.Y),
+                round(worldPos.Z - areaOrigin.Z),
+            }
             localPos = snapPoint3D(localPos, boundsTable, SNAP_THRESHOLD)
             element.position = localPos
-            element.height = round(child.Size.X)
-            element.radius = round(child.Size.Y / 2)
+            element.height = round(childSize.X)
+            element.radius = round(childSize.Y / 2)
             element.shape = "cylinder"
 
         elseif shape == "sphere" then
+            -- Sphere: convert center to bottom-origin Y
+            local radius = childSize.X / 2
+            local bottomY = worldPos.Y - radius
+            local localPos = {
+                round(worldPos.X - areaOrigin.X),
+                round(bottomY - areaOrigin.Y),
+                round(worldPos.Z - areaOrigin.Z),
+            }
             localPos = snapPoint3D(localPos, boundsTable, SNAP_THRESHOLD)
             element.position = localPos
-            element.radius = round(child.Size.X / 2)
+            element.radius = round(radius)
             element.shape = "sphere"
         end
 
@@ -1043,7 +1309,7 @@ function Scanner.mirrorArea(areaName, container, options)
                     part.Orientation = Vector3.new(rot[1] or 0, rot[2] or 0, rot[3] or 0)
                 end
 
-                -- Apply properties
+                -- Apply all captured properties
                 if element.Material then
                     local mat = Enum.Material[element.Material]
                     if mat then part.Material = mat end
@@ -1058,8 +1324,28 @@ function Scanner.mirrorArea(areaName, container, options)
                     part.Transparency = element.Transparency
                 end
 
+                if element.Reflectance then
+                    part.Reflectance = element.Reflectance
+                end
+
+                if element.CastShadow ~= nil then
+                    part.CastShadow = element.CastShadow
+                end
+
                 if element.CanCollide ~= nil then
                     part.CanCollide = element.CanCollide
+                end
+
+                if element.CanTouch ~= nil then
+                    part.CanTouch = element.CanTouch
+                end
+
+                if element.CanQuery ~= nil then
+                    part.CanQuery = element.CanQuery
+                end
+
+                if element.Massless ~= nil then
+                    part.Massless = element.Massless
                 end
 
                 part.Parent = mirrorModel

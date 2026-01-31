@@ -1227,6 +1227,26 @@ function Geometry.resolve(layout)
     parts = expandArrays(parts)
 
     --------------------------------------------------------------------------
+    -- PHASE 0c: Extract negate parts into openings list
+    --------------------------------------------------------------------------
+    local negateParts = {}
+    for id, partDef in pairs(parts) do
+        if partDef.geometry == "negate" then
+            -- Convert to opening format
+            table.insert(allOpenings, {
+                id = id,
+                position = partDef.position or {0, 0, 0},
+                size = partDef.size or {1, 1, 1},
+            })
+            table.insert(negateParts, id)
+        end
+    end
+    -- Remove negate parts from main parts table (they don't become instances)
+    for _, id in ipairs(negateParts) do
+        parts[id] = nil
+    end
+
+    --------------------------------------------------------------------------
     -- PHASE 1: Define tree (create empty stubs for all parts)
     --------------------------------------------------------------------------
     local stubs = {}
@@ -1627,10 +1647,6 @@ function Geometry.instantiate(resolved, parent, options)
             }
         })
     end
-    print("[Geometry] Global openings count:", #globalOpenings, "scale:", scaleFactor)
-    for i, op in ipairs(globalOpenings) do
-        print("  Opening", i, op.id, "pos:", op.position[1], op.position[2], op.position[3])
-    end
 
     -- Create parts (skip _meta)
     for id, entry in pairs(resolved) do
@@ -1656,7 +1672,6 @@ function Geometry.instantiate(resolved, parent, options)
                 local intersectingOpenings = findIntersectingOpenings(scaledGeometry, globalOpenings)
 
                 if #intersectingOpenings > 0 then
-                    print("[Geometry] Cutting", #intersectingOpenings, "openings from:", id)
 
                     -- Convert openings to hole format (center-relative positions)
                     local holes = {}

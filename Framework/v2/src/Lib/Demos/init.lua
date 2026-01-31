@@ -125,6 +125,7 @@ local demoModules = {
     TestMansion = "TestMansionDemo",
     AtomicRanch = "AtomicRanch_Demo",
     FlemishShop1 = "FlemishShop1_Demo",
+    CastleDracula = "CastleDracula_Demo",
 }
 
 setmetatable(Demos, {

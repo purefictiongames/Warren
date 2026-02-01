@@ -55,13 +55,33 @@ local FACES = {
     { axis = 3, dir = -1, name = "S" },  -- -Z
 }
 
--- Horizontal faces only (for most strategies)
+-- Horizontal faces only
 local H_FACES = {
     { axis = 1, dir =  1, name = "E" },
     { axis = 1, dir = -1, name = "W" },
     { axis = 3, dir =  1, name = "N" },
     { axis = 3, dir = -1, name = "S" },
 }
+
+-- Vertical faces only
+local V_FACES = {
+    { axis = 2, dir =  1, name = "U" },  -- +Y (up)
+    { axis = 2, dir = -1, name = "D" },  -- -Y (down)
+}
+
+-- Get faces with optional vertical probability
+local function getFacesWithVertical(rng, verticalChance)
+    verticalChance = verticalChance or 15  -- 15% chance for vertical
+    local faces = { H_FACES[1], H_FACES[2], H_FACES[3], H_FACES[4] }
+
+    -- Occasionally add vertical faces
+    if rng:randomInt(1, 100) <= verticalChance then
+        table.insert(faces, V_FACES[1])  -- Up
+        table.insert(faces, V_FACES[2])  -- Down
+    end
+
+    return faces
+end
 
 -- Check if two AABBs overlap (penetrate, not just touch)
 local function aabbOverlaps(posA, dimsA, posB, dimsB, margin)
@@ -290,8 +310,7 @@ function ClusterStrategies.Grid.generate(config, rng)
     end
 
     local function faceSelector(_, rng)
-        -- Shuffle horizontal faces
-        local faces = { H_FACES[1], H_FACES[2], H_FACES[3], H_FACES[4] }
+        local faces = getFacesWithVertical(rng, 15)
         shuffle(faces, rng)
         return faces
     end
@@ -313,7 +332,7 @@ function ClusterStrategies.Poisson.generate(config, rng)
     end
 
     local function faceSelector(_, rng)
-        local faces = { H_FACES[1], H_FACES[2], H_FACES[3], H_FACES[4] }
+        local faces = getFacesWithVertical(rng, 20)  -- 20% vertical chance
         shuffle(faces, rng)
         return faces
     end
@@ -360,7 +379,7 @@ function ClusterStrategies.BSP.generate(config, rng)
     end
 
     local function faceSelector(_, rng)
-        -- Alternate axis
+        -- Alternate axis, occasionally include vertical
         lastAxis = (lastAxis == 1) and 3 or 1
 
         local faces
@@ -369,6 +388,13 @@ function ClusterStrategies.BSP.generate(config, rng)
         else
             faces = { H_FACES[3], H_FACES[4] }  -- N, S
         end
+
+        -- 15% chance to add vertical
+        if rng:randomInt(1, 100) <= 15 then
+            table.insert(faces, V_FACES[1])
+            table.insert(faces, V_FACES[2])
+        end
+
         shuffle(faces, rng)
         return faces
     end
@@ -400,7 +426,7 @@ function ClusterStrategies.Organic.generate(config, rng)
     end
 
     local function faceSelector(_, rng)
-        local faces = { H_FACES[1], H_FACES[2], H_FACES[3], H_FACES[4] }
+        local faces = getFacesWithVertical(rng, 20)  -- 20% vertical for organic feel
         shuffle(faces, rng)
         return faces
     end
@@ -473,6 +499,12 @@ function ClusterStrategies.Radial.generate(config, rng)
         -- If near center, all faces
         if #faces < 2 then
             faces = { H_FACES[1], H_FACES[2], H_FACES[3], H_FACES[4] }
+        end
+
+        -- 15% chance to add vertical faces
+        if rng:randomInt(1, 100) <= 15 then
+            table.insert(faces, V_FACES[1])
+            table.insert(faces, V_FACES[2])
         end
 
         shuffle(faces, rng)

@@ -386,6 +386,7 @@ local DoorwayCutter = Node.extend(function(parent)
     --[[
         Create a ladder for doors that are too high to jump to.
         Only for horizontal walls (N/S/E/W), not ceiling/floor.
+        Only when rooms are at different Y levels.
     --]]
     local function createLadder(self, doorway, sharedWall, roomA, roomB)
         local state = getState(self)
@@ -394,44 +395,43 @@ local DoorwayCutter = Node.extend(function(parent)
         -- Only for horizontal walls (axis 1 or 3, not 2)
         if sharedWall.axis == 2 then return nil end
 
-        local doorCenter = Vector3.new(doorway.center[1], doorway.center[2], doorway.center[3])
-        local doorBottom = doorCenter.Y - doorway.height / 2
-
-        -- Get floor level (bottom of room interior)
+        -- Get floor levels of both rooms
         local floorA = roomA.position[2] - roomA.dims[2] / 2
         local floorB = roomB.position[2] - roomB.dims[2] / 2
-        local floorLevel = math.min(floorA, floorB)
 
-        -- If door bottom is more than 3 studs above floor, add ladder
-        -- (players can jump ~2-3 studs, so only need ladder above that)
-        local heightAboveFloor = doorBottom - floorLevel
-        if heightAboveFloor < 3 then return nil end
+        -- Only need ladder if rooms are at significantly different Y levels
+        local floorDiff = math.abs(floorA - floorB)
+        if floorDiff < 3 then return nil end  -- Same level or jumpable
 
-        print(string.format("[DoorwayCutter] Adding ladder, door is %.1f studs above floor", heightAboveFloor))
+        print(string.format("[DoorwayCutter] Adding ladder, floor difference is %.1f studs", floorDiff))
 
-        -- Ladder extends from floor to door bottom
-        local ladderHeight = heightAboveFloor
+        -- Ladder extends from lower floor to higher floor
+        local lowerFloor = math.min(floorA, floorB)
+        local higherFloor = math.max(floorA, floorB)
+        local ladderHeight = higherFloor - lowerFloor
         local ladderWidth = 2
 
-        -- Position ladder centered under the door, offset into the room (not inside wall)
-        -- Offset along the wall's axis (perpendicular to wall surface)
+        local doorCenter = Vector3.new(doorway.center[1], doorway.center[2], doorway.center[3])
+
+        -- Position ladder centered under the door, offset into the lower room
         local wallAxis = sharedWall.axis
-        local offsetDist = ladderWidth / 2 + 0.5  -- Half ladder width + small margin
+        local offsetDist = ladderWidth / 2 + 0.5
 
-        local ladderPos = Vector3.new(doorCenter.X, floorLevel + ladderHeight / 2, doorCenter.Z)
+        -- Determine which direction is the lower room
+        local offsetDir = (floorA < floorB) and -sharedWall.direction or sharedWall.direction
 
-        -- Offset into room A (negative direction from wall)
+        local ladderPos
         if wallAxis == 1 then  -- X axis wall (East/West)
             ladderPos = Vector3.new(
-                doorCenter.X - sharedWall.direction * offsetDist,
-                floorLevel + ladderHeight / 2,
+                doorCenter.X + offsetDir * offsetDist,
+                lowerFloor + ladderHeight / 2,
                 doorCenter.Z
             )
         elseif wallAxis == 3 then  -- Z axis wall (North/South)
             ladderPos = Vector3.new(
                 doorCenter.X,
-                floorLevel + ladderHeight / 2,
-                doorCenter.Z - sharedWall.direction * offsetDist
+                lowerFloor + ladderHeight / 2,
+                doorCenter.Z + offsetDir * offsetDist
             )
         end
 

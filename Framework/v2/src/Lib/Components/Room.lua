@@ -91,7 +91,8 @@ local Room = Node.extend(function(parent)
                 sourcePart = nil,
                 container = nil,
                 zonePart = nil,
-                shell = nil,  -- CSG shell (replaces slabs)
+                shell = nil,           -- CSG shell (visual only)
+                collisionParts = {},   -- Invisible collision wall parts
                 zone = nil,
                 orchestrator = nil,
             }
@@ -170,18 +171,72 @@ local Room = Node.extend(function(parent)
             return nil
         end
 
-        -- Configure shell
+        -- Configure shell - VISUAL ONLY (CSG collision has artifacts)
         shell.Name = "Shell"
         shell.Anchored = true
-        shell.CanCollide = true
-        shell.Transparency = 0  -- Fully opaque
+        shell.CanCollide = false  -- Visual only, collision handled by wall parts
+        shell.CanQuery = false    -- Don't interfere with raycasts
+        shell.Transparency = 0    -- Fully opaque
         shell.Material = config.material
         shell.Color = config.color
-        shell.CollisionFidelity = Enum.CollisionFidelity.PreciseConvexDecomposition
         shell.Parent = state.container
 
         state.shell = shell
         return shell
+    end
+
+    --[[
+        Build invisible collision parts (6 wall slabs).
+        CSG PreciseConvexDecomposition creates wedge-shaped collision at internal
+        corners, so we use simple box parts for clean collision geometry.
+    --]]
+    local function buildCollisionWalls(self, innerSize, position, thickness)
+        local state = getState(self)
+        local collisionParts = {}
+
+        -- Wall definitions: {name, size, offset from center}
+        local walls = {
+            -- Floor
+            { name = "Floor_Collision",
+              size = Vector3.new(innerSize.X + thickness * 2, thickness, innerSize.Z + thickness * 2),
+              offset = Vector3.new(0, -(innerSize.Y + thickness) / 2, 0) },
+            -- Ceiling
+            { name = "Ceiling_Collision",
+              size = Vector3.new(innerSize.X + thickness * 2, thickness, innerSize.Z + thickness * 2),
+              offset = Vector3.new(0, (innerSize.Y + thickness) / 2, 0) },
+            -- North wall (+Z)
+            { name = "North_Collision",
+              size = Vector3.new(innerSize.X + thickness * 2, innerSize.Y, thickness),
+              offset = Vector3.new(0, 0, (innerSize.Z + thickness) / 2) },
+            -- South wall (-Z)
+            { name = "South_Collision",
+              size = Vector3.new(innerSize.X + thickness * 2, innerSize.Y, thickness),
+              offset = Vector3.new(0, 0, -(innerSize.Z + thickness) / 2) },
+            -- East wall (+X)
+            { name = "East_Collision",
+              size = Vector3.new(thickness, innerSize.Y, innerSize.Z),
+              offset = Vector3.new((innerSize.X + thickness) / 2, 0, 0) },
+            -- West wall (-X)
+            { name = "West_Collision",
+              size = Vector3.new(thickness, innerSize.Y, innerSize.Z),
+              offset = Vector3.new(-(innerSize.X + thickness) / 2, 0, 0) },
+        }
+
+        for _, wallDef in ipairs(walls) do
+            local part = Instance.new("Part")
+            part.Name = wallDef.name
+            part.Size = wallDef.size
+            part.Position = position + wallDef.offset
+            part.Anchored = true
+            part.CanCollide = true
+            part.CanQuery = true      -- Allow raycasts to hit
+            part.Transparency = 1     -- Invisible
+            part.Parent = state.container
+            table.insert(collisionParts, part)
+        end
+
+        state.collisionParts = collisionParts
+        return collisionParts
     end
 
     ----------------------------------------------------------------------------
@@ -240,12 +295,15 @@ local Room = Node.extend(function(parent)
         zonePart.Parent = container
         state.zonePart = zonePart
 
-        -- Build the CSG shell around the interior
+        -- Build the CSG shell around the interior (visual only)
         local shell = buildShell(self, interiorSize, interiorPos, thickness)
         if not shell then
             container:Destroy()
             return false
         end
+
+        -- Build invisible collision walls (simple boxes, no CSG artifacts)
+        buildCollisionWalls(self, interiorSize, interiorPos, thickness)
 
         -- Parent container to same parent as source
         container.Parent = sourcePart.Parent

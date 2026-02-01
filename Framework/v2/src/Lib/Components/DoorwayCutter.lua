@@ -206,12 +206,11 @@ local DoorwayCutter = Node.extend(function(parent)
         local config = state.config
 
         local minSize = config.minDoorSize
-        local sideMargin = 2  -- Keep doors away from side edges
-        local floorCut = 1    -- Cut slightly into floor to ensure clean threshold
+        local margin = 2  -- Keep doors away from edges
 
-        -- Available space (margin on sides, but door goes to floor)
-        local availableWidth = sharedWall.width - sideMargin * 2
-        local availableHeight = sharedWall.height  -- Full height available
+        -- Available space after margin
+        local availableWidth = sharedWall.width - margin * 2
+        local availableHeight = sharedWall.height - margin * 2
 
         if availableWidth < minSize or availableHeight < minSize then
             -- Shared wall too small for a door
@@ -224,26 +223,26 @@ local DoorwayCutter = Node.extend(function(parent)
         local doorWidth = math.min(availableWidth * 0.75, 12)  -- Max 12 studs wide
         doorWidth = math.max(doorWidth, minSize)
 
-        local doorHeight = math.min(availableHeight * 0.85, 12)  -- Max 12 studs tall
+        local doorHeight = math.min(availableHeight * 0.8, 10)  -- Max 10 studs tall
         doorHeight = math.max(doorHeight, minSize)
 
         -- Ensure door fits within available space
         doorWidth = math.min(doorWidth, availableWidth)
         doorHeight = math.min(doorHeight, availableHeight)
 
-        -- Position: centered horizontally, starts at floor level
+        -- Position: centered within the shared wall area
         local doorCenter = {
             sharedWall.center[1],
             sharedWall.center[2],
             sharedWall.center[3],
         }
 
-        -- Put door at floor level (cut slightly below to ensure no lip)
+        -- Put door at bottom of shared wall area (floor level + margin)
         local wallBottom = sharedWall.center[sharedWall.heightAxis] - sharedWall.height / 2
-        doorCenter[sharedWall.heightAxis] = wallBottom - floorCut + doorHeight / 2
+        doorCenter[sharedWall.heightAxis] = wallBottom + margin + doorHeight / 2
 
-        -- Door depth: cut generously through both walls and floor
-        local doorDepth = config.wallThickness * 6 + 2
+        -- Door depth: needs to cut through both walls plus extra
+        local doorDepth = config.wallThickness * 4 + 1
 
         -- Build size vector based on wall orientation
         local doorSize = { 0, 0, 0 }
@@ -312,6 +311,173 @@ local DoorwayCutter = Node.extend(function(parent)
     end
 
     --[[
+        Find collision wall parts that intersect with the doorway.
+        These are the invisible box parts used for collision (not the CSG shell).
+    --]]
+    local function findCollisionWalls(self, doorway)
+        local state = getState(self)
+        local container = state.container
+        if not container then return {} end
+
+        local doorPos = Vector3.new(doorway.center[1], doorway.center[2], doorway.center[3])
+        local doorSize = Vector3.new(doorway.size[1], doorway.size[2], doorway.size[3])
+
+        local collisionParts = {}
+
+        for _, child in ipairs(container:GetDescendants()) do
+            if child:IsA("BasePart") and child.Name:match("_Collision$") then
+                local partPos = child.Position
+                local partSize = child.Size
+
+                -- AABB intersection check
+                local margin = 0.1
+                local partMin = partPos - partSize / 2 - Vector3.new(margin, margin, margin)
+                local partMax = partPos + partSize / 2 + Vector3.new(margin, margin, margin)
+                local doorMin = doorPos - doorSize / 2
+                local doorMax = doorPos + doorSize / 2
+
+                local overlaps =
+                    partMin.X < doorMax.X and partMax.X > doorMin.X and
+                    partMin.Y < doorMax.Y and partMax.Y > doorMin.Y and
+                    partMin.Z < doorMax.Z and partMax.Z > doorMin.Z
+
+                if overlaps then
+                    table.insert(collisionParts, child)
+                end
+            end
+        end
+
+        return collisionParts
+    end
+
+    --[[
+        Split a collision wall to create a door gap.
+        Creates new parts for the sections above/beside the door.
+    --]]
+    local function splitCollisionWall(collisionPart, doorway, doorAxis)
+        local parent = collisionPart.Parent
+        local partPos = collisionPart.Position
+        local partSize = collisionPart.Size
+
+        local doorPos = Vector3.new(doorway.center[1], doorway.center[2], doorway.center[3])
+        local doorSize = Vector3.new(doorway.size[1], doorway.size[2], doorway.size[3])
+
+        local newParts = {}
+
+        -- Determine which axes are perpendicular to the door (width/height of door hole)
+        -- doorAxis is the axis the door punches through (depth)
+        local widthAxis, heightAxis
+        if doorAxis == 1 then -- X
+            widthAxis = 3  -- Z
+            heightAxis = 2 -- Y
+        elseif doorAxis == 3 then -- Z
+            widthAxis = 1  -- X
+            heightAxis = 2 -- Y
+        else -- Y (unusual for doors)
+            widthAxis = 1
+            heightAxis = 3
+        end
+
+        -- Get door bounds on perpendicular axes
+        local doorWidthMin = doorPos[widthAxis] - doorSize[widthAxis] / 2
+        local doorWidthMax = doorPos[widthAxis] + doorSize[widthAxis] / 2
+        local doorHeightMin = doorPos[heightAxis] - doorSize[heightAxis] / 2
+        local doorHeightMax = doorPos[heightAxis] + doorSize[heightAxis] / 2
+
+        -- Get wall bounds
+        local wallWidthMin = partPos[widthAxis] - partSize[widthAxis] / 2
+        local wallWidthMax = partPos[widthAxis] + partSize[widthAxis] / 2
+        local wallHeightMin = partPos[heightAxis] - partSize[heightAxis] / 2
+        local wallHeightMax = partPos[heightAxis] + partSize[heightAxis] / 2
+
+        -- Create section ABOVE the door (full width, from door top to wall top)
+        if doorHeightMax < wallHeightMax - 0.5 then
+            local aboveHeight = wallHeightMax - doorHeightMax
+            local abovePos = Vector3.new(partPos.X, partPos.Y, partPos.Z)
+            abovePos = Vector3.new(
+                heightAxis == 1 and (doorHeightMax + aboveHeight / 2) or partPos.X,
+                heightAxis == 2 and (doorHeightMax + aboveHeight / 2) or partPos.Y,
+                heightAxis == 3 and (doorHeightMax + aboveHeight / 2) or partPos.Z
+            )
+            local aboveSize = Vector3.new(partSize.X, partSize.Y, partSize.Z)
+            aboveSize = Vector3.new(
+                heightAxis == 1 and aboveHeight or partSize.X,
+                heightAxis == 2 and aboveHeight or partSize.Y,
+                heightAxis == 3 and aboveHeight or partSize.Z
+            )
+
+            local abovePart = Instance.new("Part")
+            abovePart.Name = collisionPart.Name .. "_Above"
+            abovePart.Size = aboveSize
+            abovePart.Position = abovePos
+            abovePart.Anchored = true
+            abovePart.CanCollide = true
+            abovePart.Transparency = 1
+            abovePart.Parent = parent
+            table.insert(newParts, abovePart)
+        end
+
+        -- Create section LEFT of door (from wall left to door left, full height)
+        if doorWidthMin > wallWidthMin + 0.5 then
+            local leftWidth = doorWidthMin - wallWidthMin
+            local leftPos = Vector3.new(partPos.X, partPos.Y, partPos.Z)
+            leftPos = Vector3.new(
+                widthAxis == 1 and (wallWidthMin + leftWidth / 2) or partPos.X,
+                widthAxis == 2 and (wallWidthMin + leftWidth / 2) or partPos.Y,
+                widthAxis == 3 and (wallWidthMin + leftWidth / 2) or partPos.Z
+            )
+            local leftSize = Vector3.new(partSize.X, partSize.Y, partSize.Z)
+            leftSize = Vector3.new(
+                widthAxis == 1 and leftWidth or partSize.X,
+                widthAxis == 2 and leftWidth or partSize.Y,
+                widthAxis == 3 and leftWidth or partSize.Z
+            )
+
+            local leftPart = Instance.new("Part")
+            leftPart.Name = collisionPart.Name .. "_Left"
+            leftPart.Size = leftSize
+            leftPart.Position = leftPos
+            leftPart.Anchored = true
+            leftPart.CanCollide = true
+            leftPart.Transparency = 1
+            leftPart.Parent = parent
+            table.insert(newParts, leftPart)
+        end
+
+        -- Create section RIGHT of door (from door right to wall right, full height)
+        if doorWidthMax < wallWidthMax - 0.5 then
+            local rightWidth = wallWidthMax - doorWidthMax
+            local rightPos = Vector3.new(partPos.X, partPos.Y, partPos.Z)
+            rightPos = Vector3.new(
+                widthAxis == 1 and (doorWidthMax + rightWidth / 2) or partPos.X,
+                widthAxis == 2 and (doorWidthMax + rightWidth / 2) or partPos.Y,
+                widthAxis == 3 and (doorWidthMax + rightWidth / 2) or partPos.Z
+            )
+            local rightSize = Vector3.new(partSize.X, partSize.Y, partSize.Z)
+            rightSize = Vector3.new(
+                widthAxis == 1 and rightWidth or partSize.X,
+                widthAxis == 2 and rightWidth or partSize.Y,
+                widthAxis == 3 and rightWidth or partSize.Z
+            )
+
+            local rightPart = Instance.new("Part")
+            rightPart.Name = collisionPart.Name .. "_Right"
+            rightPart.Size = rightSize
+            rightPart.Position = rightPos
+            rightPart.Anchored = true
+            rightPart.CanCollide = true
+            rightPart.Transparency = 1
+            rightPart.Parent = parent
+            table.insert(newParts, rightPart)
+        end
+
+        -- Destroy the original collision part
+        collisionPart:Destroy()
+
+        return newParts
+    end
+
+    --[[
         Cut a hole through a shell using CSG subtraction.
     --]]
     local function cutShell(self, shell, cutterPart)
@@ -370,13 +536,21 @@ local DoorwayCutter = Node.extend(function(parent)
         print(string.format("[DoorwayCutter] Found %d shells to cut for doorway %d<->%d",
             #shells, fromRoomId, toRoomId))
 
-        -- Cut each shell
+        -- Cut each shell (visual only)
         for _, shell in ipairs(shells) do
             cutShell(self, shell, cutterPart)
         end
 
         -- Destroy the cutter part after cutting holes
         cutterPart:Destroy()
+
+        -- Find and split collision wall parts to create door gap
+        local collisionWalls = findCollisionWalls(self, doorway)
+        print(string.format("[DoorwayCutter] Found %d collision walls to split", #collisionWalls))
+
+        for _, collisionPart in ipairs(collisionWalls) do
+            splitCollisionWall(collisionPart, doorway, sharedWall.axis)
+        end
 
         table.insert(state.doorways, {
             part = nil,  -- Part destroyed after cutting
@@ -386,7 +560,7 @@ local DoorwayCutter = Node.extend(function(parent)
             size = doorway.size,
         })
 
-        return cutterPart
+        return true
     end
 
     ----------------------------------------------------------------------------

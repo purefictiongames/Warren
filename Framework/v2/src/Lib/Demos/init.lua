@@ -60,6 +60,12 @@
         Controls: setMode(), fire(), rotateYaw(), rotatePitch(),
                   setYaw(), setPitch(), reload(), stop()
 
+    PathGraph (Procedural):
+        Procedural dungeon generator with rooms, doorways, and lighting.
+        Manual: Demos.PathGraph.run()
+        Auto-run: Copy PathGraph_AutoRun.server.lua to ServerScriptService
+                  Generates new map on each player respawn.
+
 --]]
 
 local RunService = game:GetService("RunService")
@@ -127,6 +133,7 @@ local demoModules = {
     FlemishShop1 = "FlemishShop1_Demo",
     CastleDracula = "CastleDracula_Demo",
     PathGraph = "PathGraph_Demo",
+    Room = "Room_Demo",
 }
 
 setmetatable(Demos, {

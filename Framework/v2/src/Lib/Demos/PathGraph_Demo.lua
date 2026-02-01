@@ -136,14 +136,19 @@ function Demo.run(config)
             print("  Total Rooms:", data.totalRooms)
             print("==========================================")
 
-            -- Draw connections between rooms
-            Demo.drawConnections(pathGraph, demoFolder)
+            -- Draw connections between rooms (hidden by default for gameplay)
+            if config.showDebug then
+                Demo.drawConnections(pathGraph, demoFolder)
+            end
 
             -- Trigger doorway cutting after rooms are built
             print("[Demo] Cutting doorways...")
             doorwayCutter.In.onRoomsComplete(doorwayCutter, {
                 layouts = data.layouts,
             })
+
+            -- Add lights to rooms
+            Demo.addLights(demoFolder, data.layouts)
         end
 
         pgOriginalFire(outSelf, signal, data)
@@ -262,6 +267,46 @@ function Demo.drawConnections(pathGraph, container)
         end
 
         sphere.Parent = container
+    end
+end
+
+function Demo.addLights(container, layouts)
+    for _, layout in ipairs(layouts) do
+        local lightPart = Instance.new("Part")
+        lightPart.Name = "Light_" .. layout.id
+        lightPart.Size = Vector3.new(2, 1, 0.5)
+        lightPart.Anchored = true
+        lightPart.CanCollide = false
+        lightPart.Material = Enum.Material.Neon
+
+        -- Random warm color
+        local hue = math.random(20, 50) / 360
+        lightPart.Color = Color3.fromHSV(hue, 0.3, 1)
+
+        -- Position on one wall
+        local pos = layout.position
+        local dims = layout.dims
+        local wallOffset = math.random(1, 4)
+        local lightPos
+
+        if wallOffset == 1 then
+            lightPos = Vector3.new(pos[1], pos[2] + dims[2] * 0.3, pos[3] + dims[3] / 2 - 1.5)
+        elseif wallOffset == 2 then
+            lightPos = Vector3.new(pos[1], pos[2] + dims[2] * 0.3, pos[3] - dims[3] / 2 + 1.5)
+        elseif wallOffset == 3 then
+            lightPos = Vector3.new(pos[1] + dims[1] / 2 - 1.5, pos[2] + dims[2] * 0.3, pos[3])
+        else
+            lightPos = Vector3.new(pos[1] - dims[1] / 2 + 1.5, pos[2] + dims[2] * 0.3, pos[3])
+        end
+
+        lightPart.Position = lightPos
+        lightPart.Parent = container
+
+        local pointLight = Instance.new("PointLight")
+        pointLight.Color = lightPart.Color
+        pointLight.Brightness = 1
+        pointLight.Range = 20
+        pointLight.Parent = lightPart
     end
 end
 

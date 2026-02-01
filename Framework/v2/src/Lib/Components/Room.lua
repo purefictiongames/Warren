@@ -70,8 +70,8 @@ local Room = Node.extend(function(parent)
             instanceStates[self.id] = {
                 config = {
                     wallThickness = 1,
-                    material = Enum.Material.SmoothPlastic,
-                    color = Color3.fromRGB(140, 140, 150),
+                    material = Enum.Material.Brick,
+                    color = Color3.fromRGB(120, 90, 70),
                     zoneColor = Color3.fromRGB(100, 150, 200),
                 },
                 sourcePart = nil,
@@ -135,11 +135,6 @@ local Room = Node.extend(function(parent)
             -- Floor (-Y)
             slab.Size = Vector3.new(sx, thickness, sz)
             slab.Position = Vector3.new(px, py - sy / 2 - thickness / 2, pz)
-        end
-
-        -- Make ceiling transparent so we can peek inside
-        if face == "U" then
-            slab.Transparency = 0.5
         end
 
         slab.Parent = state.container

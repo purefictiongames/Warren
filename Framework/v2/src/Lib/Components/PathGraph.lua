@@ -22,16 +22,79 @@
     6. Emit layout table for downstream Room creation
 
     ============================================================================
+    CONFIGURATION OPTIONS
+    ============================================================================
+
+    Core:
+        baseUnit            Base size unit in studs (default: 15)
+        seed                RNG seed for reproducible generation
+
+    Path Structure:
+        spurCount           { min, max } branching paths (default: 2-5)
+        maxSegmentsPerPath  Rooms per path before branching (default: 10)
+        straightness        0-100 tendency to continue same direction (default: 50)
+        goalBias            0-100 tendency to move toward goal (default: 70)
+
+    Vertical Movement:
+        verticalChance      0-100 chance of U/D vs N/S/E/W (default: 15)
+        allowUp             Enable upward movement (default: true)
+        allowDown           Enable downward movement (default: true)
+        minY / maxY         Vertical position limits (default: -200 to 500)
+
+    Room Sizing:
+        sizeRange           { min, max } size multiplier (default: 1.2-2.5)
+        heightScale         { min, max } height relative to size (default: 0.8-1.2)
+        aspectRatio         { min, max } width/depth ratio (default: 0.6-1.4)
+
+    Spacing:
+        scanDistance        Base units to scan ahead (default: 5)
+        roomSpacing         { min, max } extra gap between rooms (default: 0-1)
+
+    Boundaries:
+        bounds              { min={x,y,z}, max={x,y,z} } spatial limits (optional)
+
+    Multi-Phase Generation:
+        phases              Array of phase configs, each with:
+                            - preset: Preset name to apply
+                            - rooms: Switch after N rooms
+                            - paths: Switch after N paths complete
+                            - Plus any direct config overrides
+
+        Example:
+        phases = {
+            { preset = "Cavern", rooms = 5 },      -- First 5 rooms
+            { preset = "Labyrinth", paths = 2 },   -- Next 2 paths
+            { preset = "Mine" },                    -- Remaining
+        }
+
+    ============================================================================
+    PRESETS
+    ============================================================================
+
+    PathGraph.Presets.Dungeon   - Tight corridors, vertical drops
+    PathGraph.Presets.Cavern    - Wide open cave system
+    PathGraph.Presets.Tower     - Tall vertical climb (no down)
+    PathGraph.Presets.Mine      - Deep underground (no up)
+    PathGraph.Presets.Labyrinth - Sprawling flat maze
+    PathGraph.Presets.Station   - Uniform space station rooms
+    PathGraph.Presets.Cathedral - Massive open spaces
+    PathGraph.Presets.Bunker    - Compact low-ceiling bunker
+
+    Usage: pathGraph.In.onConfigure(pathGraph, PathGraph.Presets.Dungeon)
+
+    ============================================================================
     SIGNALS
     ============================================================================
 
     IN (receives):
-        onConfigure({ baseUnit, seed?, spurCount?, ... })
+        onConfigure({ ...options })
         onGenerate({ start, goals? })
+        onSwitchMode({ preset?, ...overrides })  -- Manual mode switch
 
     OUT (emits):
         roomLayout({ id, position, dims, connections })
         pathComplete({ pathIndex })
+        phaseChanged({ phase, preset, totalPhases })
         complete({ seed, totalRooms, layouts })
 
 --]]
@@ -77,13 +140,45 @@ local PathGraph = Node.extend(function(parent)
         if not instanceStates[self.id] then
             instanceStates[self.id] = {
                 config = {
+                    -- Core settings
                     baseUnit = 15,
                     seed = nil,
-                    spurCount = { min = 2, max = 5 },
-                    maxSegmentsPerPath = 10,
-                    sizeRange = { 1.2, 2.5 },
-                    scanDistance = 5, -- baseUnits to scan ahead
+
+                    -- Path structure
+                    spurCount = { min = 2, max = 5 },      -- Number of branching paths
+                    maxSegmentsPerPath = 10,               -- Rooms per path before branching
+                    straightness = 50,                     -- 0-100: tendency to continue same direction
+                    goalBias = 70,                         -- 0-100: tendency to move toward goal
+
+                    -- Vertical movement
+                    verticalChance = 15,                   -- 0-100: chance of U/D vs N/S/E/W
+                    allowUp = true,                        -- Enable upward movement
+                    allowDown = true,                      -- Enable downward movement
+                    minY = -200,                           -- Minimum Y position
+                    maxY = 500,                            -- Maximum Y position
+
+                    -- Room sizing
+                    sizeRange = { 1.2, 2.5 },              -- Room size multiplier range
+                    heightScale = { 0.8, 1.2 },            -- Height relative to size
+                    aspectRatio = { 0.6, 1.4 },            -- Width/depth ratio variation
+
+                    -- Spacing and density
+                    scanDistance = 5,                      -- Base units to scan ahead
+                    roomSpacing = { 0, 1 },                -- Extra spacing between rooms (baseUnits)
+
+                    -- Boundaries (nil = unlimited)
+                    bounds = nil,                          -- { min = {x,y,z}, max = {x,y,z} }
+
+                    -- Multi-phase generation (nil = single phase)
+                    -- Each phase applies a preset after conditions are met
+                    -- Example: { { preset = "Cavern", rooms = 5 }, { preset = "Mine", paths = 2 } }
+                    phases = nil,
                 },
+
+                -- Phase tracking
+                currentPhase = 1,
+                roomsInPhase = 0,
+                pathsInPhase = 0,
 
                 rng = nil,
                 seed = nil,
@@ -271,6 +366,105 @@ local PathGraph = Node.extend(function(parent)
     end
 
     ----------------------------------------------------------------------------
+    -- PHASE MANAGEMENT
+    ----------------------------------------------------------------------------
+
+    local function applyPreset(self, presetName)
+        local state = getState(self)
+        local config = state.config
+        local preset = PathGraph.Presets and PathGraph.Presets[presetName]
+
+        if not preset then
+            warn("[PathGraph] Unknown preset:", presetName)
+            return false
+        end
+
+        print(string.format("[PathGraph] Switching to %s mode", presetName))
+
+        -- Apply preset values to config
+        for key, value in pairs(preset) do
+            config[key] = value
+        end
+
+        return true
+    end
+
+    local function checkPhaseAdvance(self)
+        local state = getState(self)
+        local config = state.config
+
+        if not config.phases then return end
+
+        local phases = config.phases
+        local currentPhase = state.currentPhase
+
+        if currentPhase > #phases then return end
+
+        local phase = phases[currentPhase]
+        local shouldAdvance = false
+
+        -- Check room count trigger
+        if phase.rooms and state.roomsInPhase >= phase.rooms then
+            shouldAdvance = true
+        end
+
+        -- Check path count trigger
+        if phase.paths and state.pathsInPhase >= phase.paths then
+            shouldAdvance = true
+        end
+
+        if shouldAdvance then
+            state.currentPhase = currentPhase + 1
+            state.roomsInPhase = 0
+            state.pathsInPhase = 0
+
+            -- Apply next phase's preset if there is one
+            if state.currentPhase <= #phases then
+                local nextPhase = phases[state.currentPhase]
+                if nextPhase.preset then
+                    applyPreset(self, nextPhase.preset)
+                end
+                -- Apply any direct config overrides from the phase
+                for key, value in pairs(nextPhase) do
+                    if key ~= "preset" and key ~= "rooms" and key ~= "paths" then
+                        state.config[key] = value
+                    end
+                end
+
+                -- Emit phase change signal
+                self.Out:Fire("phaseChanged", {
+                    phase = state.currentPhase,
+                    preset = nextPhase.preset,
+                    totalPhases = #phases,
+                })
+            end
+        end
+    end
+
+    local function initPhases(self)
+        local state = getState(self)
+        local config = state.config
+
+        state.currentPhase = 1
+        state.roomsInPhase = 0
+        state.pathsInPhase = 0
+
+        -- Apply first phase if phases are defined
+        if config.phases and #config.phases > 0 then
+            local firstPhase = config.phases[1]
+            if firstPhase.preset then
+                applyPreset(self, firstPhase.preset)
+            end
+            -- Apply direct config overrides
+            for key, value in pairs(firstPhase) do
+                if key ~= "preset" and key ~= "rooms" and key ~= "paths" then
+                    config[key] = value
+                end
+            end
+        end
+    end
+
+    ----------------------------------------------------------------------------
     -- ROOM CREATION
     ----------------------------------------------------------------------------
 
@@ -280,6 +474,37 @@ local PathGraph = Node.extend(function(parent)
         local range = config.sizeRange
         local scale = state.rng:randomFloat(range[1], range[2])
         return config.baseUnit * scale
+    end
+
+    local function getRandomRoomDims(self)
+        local state = getState(self)
+        local config = state.config
+        local rng = state.rng
+
+        -- Base size
+        local baseSize = getRandomDim(self)
+
+        -- Apply aspect ratio variation (width vs depth)
+        local aspectRange = config.aspectRatio
+        local aspect = rng:randomFloat(aspectRange[1], aspectRange[2])
+
+        local width = baseSize * math.sqrt(aspect)
+        local depth = baseSize / math.sqrt(aspect)
+
+        -- Apply height scale
+        local heightRange = config.heightScale
+        local heightMult = rng:randomFloat(heightRange[1], heightRange[2])
+        local height = baseSize * heightMult
+
+        -- Apply room spacing (extra distance between rooms)
+        local spacingRange = config.roomSpacing
+        local spacing = rng:randomFloat(spacingRange[1], spacingRange[2]) * config.baseUnit
+
+        return {
+            width + spacing,
+            height,
+            depth + spacing,
+        }
     end
 
     local function createRoom(self, pos, dims, fromRoomId)
@@ -322,12 +547,45 @@ local PathGraph = Node.extend(function(parent)
 
         self.Out:Fire("roomLayout", layout)
 
+        -- Track phase progress
+        state.roomsInPhase = state.roomsInPhase + 1
+        checkPhaseAdvance(self)
+
         return id
     end
 
     ----------------------------------------------------------------------------
     -- DIRECTION SELECTION WITH HORIZON SCAN
     ----------------------------------------------------------------------------
+
+    local function isDirectionAllowed(self, dirKey, fromPos)
+        local state = getState(self)
+        local config = state.config
+
+        -- Check vertical direction restrictions
+        if dirKey == "U" and not config.allowUp then return false end
+        if dirKey == "D" and not config.allowDown then return false end
+
+        -- Check Y bounds
+        if dirKey == "U" and fromPos[2] >= config.maxY then return false end
+        if dirKey == "D" and fromPos[2] <= config.minY then return false end
+
+        -- Check spatial bounds if defined
+        if config.bounds then
+            local dir = DIRECTIONS[dirKey]
+            local testDist = config.baseUnit * 2
+            local testPos = {
+                fromPos[1] + dir[1] * testDist,
+                fromPos[2] + dir[2] * testDist,
+                fromPos[3] + dir[3] * testDist,
+            }
+            if testPos[1] < config.bounds.min[1] or testPos[1] > config.bounds.max[1] then return false end
+            if testPos[2] < config.bounds.min[2] or testPos[2] > config.bounds.max[2] then return false end
+            if testPos[3] < config.bounds.min[3] or testPos[3] > config.bounds.max[3] then return false end
+        end
+
+        return true
+    end
 
     local function pickDirectionWithScan(self, fromRoomId, lastDir)
         local state = getState(self)
@@ -340,21 +598,48 @@ local PathGraph = Node.extend(function(parent)
         local fromPos = room.position
         local fromDims = room.dims
 
-        -- Scan all directions
-        local scanResults = {}
+        -- Build list of allowed directions
+        local allowedDirs = {}
         for _, dirKey in ipairs(DIR_KEYS) do
             -- Skip opposite of last direction
-            if not lastDir or dirKey ~= OPPOSITES[lastDir] then
-                local distance = scanDirection(self, fromPos, fromDims, dirKey, scanDist, fromRoomId)
-                table.insert(scanResults, { dir = dirKey, distance = distance })
+            if lastDir and dirKey == OPPOSITES[lastDir] then
+                -- Skip
+            elseif not isDirectionAllowed(self, dirKey, fromPos) then
+                -- Skip restricted direction
+            else
+                table.insert(allowedDirs, dirKey)
             end
         end
 
-        if #scanResults == 0 then
+        if #allowedDirs == 0 then
             return nil, 0
         end
 
-        -- Separate into clear (full scan distance) and partially blocked
+        -- Apply vertical chance filter
+        local horizontalDirs = {}
+        local verticalDirs = {}
+        for _, dirKey in ipairs(allowedDirs) do
+            if dirKey == "U" or dirKey == "D" then
+                table.insert(verticalDirs, dirKey)
+            else
+                table.insert(horizontalDirs, dirKey)
+            end
+        end
+
+        local useVertical = #verticalDirs > 0 and rng:randomInt(1, 100) <= config.verticalChance
+        local dirPool = useVertical and verticalDirs or horizontalDirs
+        if #dirPool == 0 then
+            dirPool = allowedDirs  -- Fallback to all allowed
+        end
+
+        -- Scan directions in the pool
+        local scanResults = {}
+        for _, dirKey in ipairs(dirPool) do
+            local distance = scanDirection(self, fromPos, fromDims, dirKey, scanDist, fromRoomId)
+            table.insert(scanResults, { dir = dirKey, distance = distance })
+        end
+
+        -- Separate into clear and blocked
         local clearDirs = {}
         local blockedDirs = {}
 
@@ -362,22 +647,49 @@ local PathGraph = Node.extend(function(parent)
             if result.distance >= scanDist then
                 table.insert(clearDirs, result)
             elseif result.distance > baseUnit then
-                -- Only consider if there's at least 1 baseUnit of space
                 table.insert(blockedDirs, result)
+            end
+        end
+
+        -- Apply straightness bias (prefer last direction if clear)
+        if lastDir and config.straightness > 0 then
+            for _, result in ipairs(clearDirs) do
+                if result.dir == lastDir and rng:randomInt(1, 100) <= config.straightness then
+                    return result.dir, result.distance
+                end
+            end
+        end
+
+        -- Apply goal bias (prefer directions toward goal)
+        if state.goalPos and config.goalBias > 0 and #clearDirs > 0 then
+            local goalDirs = {}
+            local dx = state.goalPos[1] - fromPos[1]
+            local dz = state.goalPos[3] - fromPos[3]
+
+            if math.abs(dx) > 1 then
+                table.insert(goalDirs, dx > 0 and "E" or "W")
+            end
+            if math.abs(dz) > 1 then
+                table.insert(goalDirs, dz > 0 and "N" or "S")
+            end
+
+            for _, result in ipairs(clearDirs) do
+                for _, goalDir in ipairs(goalDirs) do
+                    if result.dir == goalDir and rng:randomInt(1, 100) <= config.goalBias then
+                        return result.dir, result.distance
+                    end
+                end
             end
         end
 
         -- Priority: clear > furthest blocked > nothing
         if #clearDirs > 0 then
-            -- Pick random from clear directions
             local pick = rng:randomChoice(clearDirs)
             return pick.dir, pick.distance
         elseif #blockedDirs > 0 then
-            -- Pick the one with most space
             table.sort(blockedDirs, function(a, b) return a.distance > b.distance end)
             return blockedDirs[1].dir, blockedDirs[1].distance
         else
-            -- No valid direction
             return nil, 0
         end
     end
@@ -412,7 +724,7 @@ local PathGraph = Node.extend(function(parent)
         local axis = DIR_TO_AXIS[direction]
 
         -- Generate random dims for new room, but constrain by available space
-        local toDims = { getRandomDim(self), getRandomDim(self), getRandomDim(self) }
+        local toDims = getRandomRoomDims(self)
 
         -- The room's dimension along movement axis can't exceed available space
         -- (minus some margin for the room to fit)
@@ -487,6 +799,10 @@ local PathGraph = Node.extend(function(parent)
 
             self.Out:Fire("pathComplete", { pathIndex = state.currentPathIndex })
 
+            -- Track phase progress
+            state.pathsInPhase = state.pathsInPhase + 1
+            checkPhaseAdvance(self)
+
             local candidates = findJunctionCandidates(self)
             local spurCount = state.rng:randomInt(
                 state.config.spurCount.min,
@@ -548,23 +864,42 @@ local PathGraph = Node.extend(function(parent)
                 local state = getState(self)
                 local config = state.config
 
+                -- Core settings
                 if data.baseUnit then config.baseUnit = data.baseUnit end
                 if data.seed then config.seed = data.seed end
+
+                -- Path structure
                 if data.spurCount then
                     config.spurCount = {
                         min = data.spurCount.min or config.spurCount.min,
                         max = data.spurCount.max or config.spurCount.max,
                     }
                 end
-                if data.maxSegmentsPerPath then
-                    config.maxSegmentsPerPath = data.maxSegmentsPerPath
-                end
-                if data.sizeRange then
-                    config.sizeRange = data.sizeRange
-                end
-                if data.scanDistance then
-                    config.scanDistance = data.scanDistance
-                end
+                if data.maxSegmentsPerPath then config.maxSegmentsPerPath = data.maxSegmentsPerPath end
+                if data.straightness ~= nil then config.straightness = data.straightness end
+                if data.goalBias ~= nil then config.goalBias = data.goalBias end
+
+                -- Vertical movement
+                if data.verticalChance ~= nil then config.verticalChance = data.verticalChance end
+                if data.allowUp ~= nil then config.allowUp = data.allowUp end
+                if data.allowDown ~= nil then config.allowDown = data.allowDown end
+                if data.minY ~= nil then config.minY = data.minY end
+                if data.maxY ~= nil then config.maxY = data.maxY end
+
+                -- Room sizing
+                if data.sizeRange then config.sizeRange = data.sizeRange end
+                if data.heightScale then config.heightScale = data.heightScale end
+                if data.aspectRatio then config.aspectRatio = data.aspectRatio end
+
+                -- Spacing and density
+                if data.scanDistance then config.scanDistance = data.scanDistance end
+                if data.roomSpacing then config.roomSpacing = data.roomSpacing end
+
+                -- Boundaries
+                if data.bounds then config.bounds = data.bounds end
+
+                -- Multi-phase generation
+                if data.phases then config.phases = data.phases end
             end,
 
             onGenerate = function(self, data)
@@ -589,19 +924,46 @@ local PathGraph = Node.extend(function(parent)
 
                 print("[PathGraph] Generating with seed:", state.seed)
 
+                -- Initialize phase system
+                initPhases(self)
+
                 -- Create first room
-                local startDims = { getRandomDim(self), getRandomDim(self), getRandomDim(self) }
+                local startDims = getRandomRoomDims(self)
                 state.startRoomId = createRoom(self, startPos, startDims, nil)
 
                 -- Start main path
                 startNewPath(self, state.startRoomId)
                 advance(self)
             end,
+
+            --[[
+                Manually switch generation mode mid-build.
+                Can pass a preset name or direct config overrides.
+            --]]
+            onSwitchMode = function(self, data)
+                if not data then return end
+
+                local state = getState(self)
+
+                if data.preset then
+                    applyPreset(self, data.preset)
+                end
+
+                -- Apply any direct overrides
+                for key, value in pairs(data) do
+                    if key ~= "preset" then
+                        state.config[key] = value
+                    end
+                end
+
+                print("[PathGraph] Mode switched manually")
+            end,
         },
 
         Out = {
             roomLayout = {},
             pathComplete = {},
+            phaseChanged = {},
             complete = {},
         },
 
@@ -618,5 +980,119 @@ local PathGraph = Node.extend(function(parent)
         end,
     }
 end)
+
+--------------------------------------------------------------------------------
+-- PRESETS
+--------------------------------------------------------------------------------
+-- Ready-to-use configuration presets for common map types
+
+PathGraph.Presets = {
+    -- Classic dungeon: tight corridors, lots of vertical drops
+    Dungeon = {
+        baseUnit = 12,
+        spurCount = { min = 3, max = 6 },
+        maxSegmentsPerPath = 10,
+        sizeRange = { 1.0, 2.0 },
+        heightScale = { 0.8, 1.5 },
+        aspectRatio = { 0.5, 2.0 },
+        verticalChance = 25,
+        straightness = 30,
+        goalBias = 50,
+    },
+
+    -- Wide open cave system
+    Cavern = {
+        baseUnit = 20,
+        spurCount = { min = 2, max = 4 },
+        maxSegmentsPerPath = 6,
+        sizeRange = { 1.5, 3.5 },
+        heightScale = { 1.0, 2.0 },
+        aspectRatio = { 0.8, 1.2 },
+        verticalChance = 15,
+        straightness = 60,
+        goalBias = 40,
+    },
+
+    -- Tall vertical tower
+    Tower = {
+        baseUnit = 15,
+        spurCount = { min = 1, max = 2 },
+        maxSegmentsPerPath = 12,
+        sizeRange = { 1.0, 1.8 },
+        heightScale = { 1.2, 2.0 },
+        aspectRatio = { 0.9, 1.1 },
+        verticalChance = 60,
+        allowDown = false,
+        straightness = 20,
+        goalBias = 30,
+    },
+
+    -- Deep underground mine
+    Mine = {
+        baseUnit = 10,
+        spurCount = { min = 4, max = 8 },
+        maxSegmentsPerPath = 15,
+        sizeRange = { 0.8, 1.5 },
+        heightScale = { 0.6, 1.0 },
+        aspectRatio = { 0.3, 3.0 },
+        verticalChance = 40,
+        allowUp = false,
+        straightness = 70,
+        goalBias = 20,
+    },
+
+    -- Sprawling flat maze
+    Labyrinth = {
+        baseUnit = 12,
+        spurCount = { min = 5, max = 10 },
+        maxSegmentsPerPath = 20,
+        sizeRange = { 0.8, 1.2 },
+        heightScale = { 0.6, 0.8 },
+        aspectRatio = { 0.4, 2.5 },
+        verticalChance = 0,
+        straightness = 80,
+        goalBias = 60,
+    },
+
+    -- Space station with uniform rooms
+    Station = {
+        baseUnit = 18,
+        spurCount = { min = 2, max = 4 },
+        maxSegmentsPerPath = 8,
+        sizeRange = { 1.0, 1.4 },
+        heightScale = { 0.9, 1.1 },
+        aspectRatio = { 0.9, 1.1 },
+        verticalChance = 10,
+        straightness = 50,
+        goalBias = 70,
+    },
+
+    -- Massive cathedral-like spaces
+    Cathedral = {
+        baseUnit = 25,
+        spurCount = { min = 1, max = 3 },
+        maxSegmentsPerPath = 5,
+        sizeRange = { 2.0, 4.0 },
+        heightScale = { 1.5, 3.0 },
+        aspectRatio = { 0.7, 1.3 },
+        verticalChance = 5,
+        straightness = 40,
+        goalBias = 80,
+    },
+
+    -- Compact bunker
+    Bunker = {
+        baseUnit = 10,
+        spurCount = { min = 2, max = 3 },
+        maxSegmentsPerPath = 6,
+        sizeRange = { 1.0, 1.5 },
+        heightScale = { 0.5, 0.7 },
+        aspectRatio = { 0.8, 1.2 },
+        verticalChance = 5,
+        straightness = 60,
+        goalBias = 50,
+        roomSpacing = { 0.5, 1.0 },
+    },
+}
 
 return PathGraph

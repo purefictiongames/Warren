@@ -61,14 +61,32 @@ function Demo.run(config)
         end
     end
 
-    pathGraph.In.onConfigure(pathGraph, {
-        baseUnit = baseUnit,
-        seed = seed,
-        spurCount = config.spurCount or { min = 2, max = 4 },
-        maxSegmentsPerPath = config.maxSegments or 8,
-        sizeRange = config.sizeRange or { 1.2, 2.5 },
-        scanDistance = config.scanDistance or 5,
-    })
+    -- Apply preset if specified, then override with config
+    local graphConfig = {}
+
+    if config.preset and PathGraph.Presets[config.preset] then
+        print("[Demo] Using preset:", config.preset)
+        for k, v in pairs(PathGraph.Presets[config.preset]) do
+            graphConfig[k] = v
+        end
+    end
+
+    -- Apply explicit config (overrides preset)
+    graphConfig.baseUnit = config.baseUnit or graphConfig.baseUnit or baseUnit
+    graphConfig.seed = seed
+    graphConfig.spurCount = config.spurCount or graphConfig.spurCount or { min = 2, max = 4 }
+    graphConfig.maxSegmentsPerPath = config.maxSegments or graphConfig.maxSegmentsPerPath or 8
+    graphConfig.sizeRange = config.sizeRange or graphConfig.sizeRange or { 1.2, 2.5 }
+    graphConfig.scanDistance = config.scanDistance or graphConfig.scanDistance or 5
+    graphConfig.verticalChance = config.verticalChance or graphConfig.verticalChance
+    graphConfig.straightness = config.straightness or graphConfig.straightness
+    graphConfig.goalBias = config.goalBias or graphConfig.goalBias
+    graphConfig.heightScale = config.heightScale or graphConfig.heightScale
+    graphConfig.aspectRatio = config.aspectRatio or graphConfig.aspectRatio
+    graphConfig.allowUp = config.allowUp
+    graphConfig.allowDown = config.allowDown
+
+    pathGraph.In.onConfigure(pathGraph, graphConfig)
 
     ---------------------------------------------------------------------------
     -- CREATE DOORWAY CUTTER

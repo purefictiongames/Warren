@@ -338,13 +338,14 @@ local DoorwayCutter = Node.extend(function(parent)
         local state = getState(self)
 
         -- Create cutter part
+        -- CRITICAL: Must be in workspace for SubtractAsync to work
         local cutterPart = Instance.new("Part")
         cutterPart.Name = string.format("DoorCutter_%d_%d", fromRoomId, toRoomId)
         cutterPart.Size = Vector3.new(doorway.size[1], doorway.size[2], doorway.size[3])
         cutterPart.Position = Vector3.new(doorway.center[1], doorway.center[2], doorway.center[3])
         cutterPart.Anchored = true
         cutterPart.CanCollide = false
-        cutterPart.Parent = state.container
+        cutterPart.Parent = workspace  -- Must be in DataModel for CSG
 
         -- Find shells to cut (should be 2: one per room)
         local shells = findShellsToCut(self, doorway, fromRoomId, toRoomId)

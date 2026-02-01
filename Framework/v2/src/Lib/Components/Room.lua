@@ -131,6 +131,8 @@ local Room = Node.extend(function(parent)
             innerSize.Z + thickness * 2
         )
 
+        -- CRITICAL: Parts must be parented to workspace for SubtractAsync to work
+        -- Cannot parent to container that isn't in DataModel yet
         local outerPart = Instance.new("Part")
         outerPart.Name = "Outer_Temp"
         outerPart.Size = outerSize
@@ -139,7 +141,7 @@ local Room = Node.extend(function(parent)
         outerPart.CanCollide = true
         outerPart.Material = config.material
         outerPart.Color = config.color
-        outerPart.Parent = state.container
+        outerPart.Parent = workspace  -- Must be in DataModel for CSG
 
         -- Create inner volume (to subtract)
         local innerPart = Instance.new("Part")
@@ -147,7 +149,7 @@ local Room = Node.extend(function(parent)
         innerPart.Size = innerSize
         innerPart.Position = position
         innerPart.Anchored = true
-        innerPart.Parent = state.container
+        innerPart.Parent = workspace  -- Must be in DataModel for CSG
 
         -- Perform CSG subtraction to create hollow shell
         local success, shell = pcall(function()
@@ -172,6 +174,7 @@ local Room = Node.extend(function(parent)
         shell.Name = "Shell"
         shell.Anchored = true
         shell.CanCollide = true
+        shell.Transparency = 0  -- Fully opaque
         shell.Material = config.material
         shell.Color = config.color
         shell.CollisionFidelity = Enum.CollisionFidelity.PreciseConvexDecomposition

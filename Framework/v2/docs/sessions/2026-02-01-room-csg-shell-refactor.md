@@ -107,6 +107,48 @@ function Room:mountToWall(face, offset, object)
 - Inner volume becomes source of truth for interior geometry
 - Shell is just the rendered/collidable representation
 
+## Known Issues
+
+### Room Volume Overlap (Unresolved)
+The current PathGraph approach generates rooms along path segments, which leads to
+overlap issues when paths curve back or rooms on different branches get close.
+Attempted fixes (horizon scanning, overlap checking with position shifting) reduce
+but don't eliminate the problem.
+
+**Root cause:** Path-first generation couples room placement to path topology,
+making it hard to guarantee non-overlapping volumes.
+
+## Future Architecture: Volume-First Generation
+
+A cleaner approach separates room placement from connectivity:
+
+### Current Approach (Path-First)
+1. Generate path points sequentially
+2. Create room volumes at each point (try to avoid overlap)
+3. Connections determined by path order
+4. Cut doorways between path-connected rooms
+
+### Proposed Approach (Volume-First)
+1. **Place room volumes first** - scatter/cluster in space with collision avoidance
+2. **Build connectivity graph** - pathfind through volumes to determine adjacency
+3. **Cut doorways** - where paths cross room boundaries
+
+### Benefits
+- Room placement is purely spatial (no path constraints)
+- Connectivity is flexible (can use MST, Delaunay, A*, etc.)
+- Doorways placed based on actual adjacency, not path order
+- Easier to guarantee non-overlapping volumes
+- Can support different room clustering strategies (grid, organic, etc.)
+
+### Room Sizing with Base Unit
+Room dimensions should be expressed as base unit × scale factors:
+```
+baseUnit = 15
+room dims = 15 * [3, 3, 7] = 45 x 45 x 105 studs
+```
+The scale factors (3, 3, 7) provide variation while keeping dimensions
+as clean multiples of the base unit for interior tiling.
+
 ## Implementation Summary (Completed)
 
 ### Room.lua Changes

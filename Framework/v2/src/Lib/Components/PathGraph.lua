@@ -45,6 +45,8 @@
         sizeRange           { min, max } size multiplier (default: 1.2-2.5)
         heightScale         { min, max } height relative to size (default: 0.8-1.2)
         aspectRatio         { min, max } width/depth ratio (default: 0.6-1.4)
+        gridSnap            Snap dimensions to this grid for tiling (default: 5)
+        minRoomSize         Minimum room dimension (default: baseUnit)
 
     Spacing:
         scanDistance        Base units to scan ahead (default: 5)
@@ -163,6 +165,8 @@ local PathGraph = Node.extend(function(parent)
                     sizeRange = { 1.2, 2.5 },              -- Room size multiplier range
                     heightScale = { 0.8, 1.2 },            -- Height relative to size
                     aspectRatio = { 0.6, 1.4 },            -- Width/depth ratio variation
+                    gridSnap = 5,                          -- Snap dimensions to this grid (for tiling)
+                    minRoomSize = nil,                     -- Minimum room dimension (default: baseUnit)
 
                     -- Spacing and density
                     scanDistance = 5,                      -- Base units to scan ahead
@@ -563,19 +567,9 @@ local PathGraph = Node.extend(function(parent)
     -- ROOM CREATION
     ----------------------------------------------------------------------------
 
-    -- Snap a value to the nearest multiple of baseUnit
-    local function snapToGrid(value, baseUnit)
-        return math.floor(value / baseUnit + 0.5) * baseUnit
-    end
-
-    local function getRandomDim(self)
-        local state = getState(self)
-        local config = state.config
-        local range = config.sizeRange
-        local scale = state.rng:randomFloat(range[1], range[2])
-        local rawDim = config.baseUnit * scale
-        -- Snap to baseUnit grid for predictable interior proportions
-        return math.max(config.baseUnit, snapToGrid(rawDim, config.baseUnit))
+    -- Snap a value to the nearest multiple of gridSnap
+    local function snapToGrid(value, gridSnap)
+        return math.floor(value / gridSnap + 0.5) * gridSnap
     end
 
     local function getRandomRoomDims(self)
@@ -584,8 +578,17 @@ local PathGraph = Node.extend(function(parent)
         local rng = state.rng
         local baseUnit = config.baseUnit
 
-        -- Base size (snapped to grid)
-        local baseSize = getRandomDim(self)
+        -- Grid snap unit - smaller than baseUnit for more variation
+        -- but still divides evenly for interior tiling (default: 5 studs)
+        local gridSnap = config.gridSnap or 5
+
+        -- Minimum room size
+        local minSize = config.minRoomSize or baseUnit
+
+        -- Generate base size from range
+        local range = config.sizeRange
+        local scale = rng:randomFloat(range[1], range[2])
+        local baseSize = baseUnit * scale
 
         -- Apply aspect ratio variation (width vs depth)
         local aspectRange = config.aspectRatio
@@ -599,10 +602,10 @@ local PathGraph = Node.extend(function(parent)
         local heightMult = rng:randomFloat(heightRange[1], heightRange[2])
         local height = baseSize * heightMult
 
-        -- Snap all dimensions to baseUnit grid
-        width = math.max(baseUnit, snapToGrid(width, baseUnit))
-        depth = math.max(baseUnit, snapToGrid(depth, baseUnit))
-        height = math.max(baseUnit, snapToGrid(height, baseUnit))
+        -- Snap to grid (finer than baseUnit for variation, but still tileable)
+        width = math.max(minSize, snapToGrid(width, gridSnap))
+        depth = math.max(minSize, snapToGrid(depth, gridSnap))
+        height = math.max(minSize, snapToGrid(height, gridSnap))
 
         return { width, height, depth }
     end
@@ -831,8 +834,8 @@ local PathGraph = Node.extend(function(parent)
         local toDims = getRandomRoomDims(self)
 
         -- The room's dimension along movement axis can't exceed available space
-        -- Snap the constraint to grid
-        local maxDimForAxis = snapToGrid(math.max(baseUnit, availableSpace - baseUnit), baseUnit)
+        local gridSnap = config.gridSnap or 5
+        local maxDimForAxis = snapToGrid(math.max(baseUnit, availableSpace - baseUnit), gridSnap)
         toDims[axis] = math.min(toDims[axis], maxDimForAxis)
 
         -- Calculate position: place new room so it mates with current room
@@ -1061,6 +1064,8 @@ local PathGraph = Node.extend(function(parent)
                 if data.sizeRange then config.sizeRange = data.sizeRange end
                 if data.heightScale then config.heightScale = data.heightScale end
                 if data.aspectRatio then config.aspectRatio = data.aspectRatio end
+                if data.gridSnap then config.gridSnap = data.gridSnap end
+                if data.minRoomSize then config.minRoomSize = data.minRoomSize end
 
                 -- Spacing and density
                 if data.scanDistance then config.scanDistance = data.scanDistance end

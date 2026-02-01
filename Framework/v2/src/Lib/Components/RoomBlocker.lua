@@ -144,10 +144,11 @@ local RoomBlocker = Node.extend(function(parent)
 
         -- Calculate penetration on each axis
         local overlapX = math.min(a.maxX, b.maxX) - math.max(a.minX, b.minX)
+        local overlapY = math.min(a.maxY, b.maxY) - math.max(a.minY, b.minY)
         local overlapZ = math.min(a.maxZ, b.maxZ) - math.max(a.minZ, b.minZ)
 
-        -- Return minimum horizontal overlap (the push distance needed)
-        return math.min(overlapX, overlapZ)
+        -- Return minimum overlap on any axis (the push distance needed)
+        return math.min(overlapX, overlapY, overlapZ)
     end
 
     --[[

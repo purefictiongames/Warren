@@ -384,9 +384,115 @@ local DoorwayCutter = Node.extend(function(parent)
     end
 
     --[[
+        Create a ladder for doors that are too high to reach.
+        Only for horizontal walls (N/S/E/W), not ceiling/floor.
+    --]]
+    local function createLadder(self, doorway, sharedWall, roomA, roomB)
+        local state = getState(self)
+        local container = state.container
+
+        -- Only for horizontal walls (axis 1 or 3, not 2)
+        if sharedWall.axis == 2 then return nil end
+
+        local doorCenter = Vector3.new(doorway.center[1], doorway.center[2], doorway.center[3])
+        local doorBottom = doorCenter.Y - doorway.height / 2
+
+        -- Get floor level (bottom of room interior)
+        local floorA = roomA.position[2] - roomA.dims[2] / 2
+        local floorB = roomB.position[2] - roomB.dims[2] / 2
+        local floorLevel = math.min(floorA, floorB)
+
+        -- If door bottom is more than 2 studs above floor, add ladder
+        local heightAboveFloor = doorBottom - floorLevel
+        if heightAboveFloor < 2 then return nil end
+
+        print(string.format("[DoorwayCutter] Adding ladder, door is %.1f studs above floor", heightAboveFloor))
+
+        -- Ladder extends from floor to door bottom
+        local ladderHeight = heightAboveFloor
+        local ladderWidth = 2
+
+        -- Position ladder on one side of door (left side)
+        local ladderPos = Vector3.new(doorCenter.X, doorCenter.Y, doorCenter.Z)
+        local widthAxis = sharedWall.widthAxis
+
+        -- Offset to left edge of door
+        if widthAxis == 1 then
+            ladderPos = Vector3.new(
+                doorCenter.X - doorway.width / 2 - ladderWidth / 2,
+                floorLevel + ladderHeight / 2,
+                doorCenter.Z
+            )
+        else
+            ladderPos = Vector3.new(
+                doorCenter.X,
+                floorLevel + ladderHeight / 2,
+                doorCenter.Z - doorway.width / 2 - ladderWidth / 2
+            )
+        end
+
+        local ladder = Instance.new("TrussPart")
+        ladder.Name = "Ladder_" .. roomA.id .. "_" .. roomB.id
+        ladder.Size = Vector3.new(ladderWidth, ladderHeight, ladderWidth)
+        ladder.Position = ladderPos
+        ladder.Anchored = true
+        ladder.Material = Enum.Material.Metal
+        ladder.Color = Color3.fromRGB(80, 80, 80)
+        ladder.Parent = container
+
+        return ladder
+    end
+
+    --[[
+        Create a climbing pole for ceiling openings.
+        Extends from ceiling to floor so players can climb back up.
+    --]]
+    local function createCeilingPole(self, doorway, sharedWall, roomA, roomB)
+        local state = getState(self)
+        local container = state.container
+
+        -- Only for ceiling openings (axis 2, direction +1)
+        if sharedWall.axis ~= 2 then return nil end
+
+        local doorCenter = Vector3.new(doorway.center[1], doorway.center[2], doorway.center[3])
+
+        -- Get floor and ceiling levels
+        local floorA = roomA.position[2] - roomA.dims[2] / 2
+        local floorB = roomB.position[2] - roomB.dims[2] / 2
+        local ceilingA = roomA.position[2] + roomA.dims[2] / 2
+        local ceilingB = roomB.position[2] + roomB.dims[2] / 2
+
+        -- Pole goes from lower floor to upper ceiling
+        local lowestFloor = math.min(floorA, floorB)
+        local highestCeiling = math.max(ceilingA, ceilingB)
+        local poleHeight = highestCeiling - lowestFloor
+
+        print(string.format("[DoorwayCutter] Adding ceiling pole, height %.1f studs", poleHeight))
+
+        -- Position pole at one corner of the opening
+        local poleWidth = 2
+        local polePos = Vector3.new(
+            doorCenter.X - doorway.width / 2 + poleWidth / 2,
+            lowestFloor + poleHeight / 2,
+            doorCenter.Z - doorway.height / 2 + poleWidth / 2  -- height is Z for ceiling
+        )
+
+        local pole = Instance.new("TrussPart")
+        pole.Name = "CeilingPole_" .. roomA.id .. "_" .. roomB.id
+        pole.Size = Vector3.new(poleWidth, poleHeight, poleWidth)
+        pole.Position = polePos
+        pole.Anchored = true
+        pole.Material = Enum.Material.Metal
+        pole.Color = Color3.fromRGB(60, 60, 70)
+        pole.Parent = container
+
+        return pole
+    end
+
+    --[[
         Create a doorway between two rooms by splitting their wall slabs.
     --]]
-    local function createDoorway(self, doorway, sharedWall, fromRoomId, toRoomId)
+    local function createDoorway(self, doorway, sharedWall, fromRoomId, toRoomId, roomA, roomB)
         local state = getState(self)
 
         -- Find walls to split
@@ -400,12 +506,23 @@ local DoorwayCutter = Node.extend(function(parent)
             splitWall(wall, doorway)
         end
 
+        -- Add climbing aids if needed
+        local climbingAid = nil
+        if sharedWall.axis == 2 then
+            -- Ceiling opening - add pole
+            climbingAid = createCeilingPole(self, doorway, sharedWall, roomA, roomB)
+        else
+            -- Horizontal wall - add ladder if door is elevated
+            climbingAid = createLadder(self, doorway, sharedWall, roomA, roomB)
+        end
+
         table.insert(state.doorways, {
             fromRoomId = fromRoomId,
             toRoomId = toRoomId,
             center = doorway.center,
             width = doorway.width,
             height = doorway.height,
+            climbingAid = climbingAid,
         })
 
         return true
@@ -448,7 +565,7 @@ local DoorwayCutter = Node.extend(function(parent)
                                 local doorway = calculateDoorway(self, sharedWall)
 
                                 if doorway then
-                                    createDoorway(self, doorway, sharedWall, roomA.id, connId)
+                                    createDoorway(self, doorway, sharedWall, roomA.id, connId, roomA, roomB)
                                     doorwayCount = doorwayCount + 1
 
                                     self.Out:Fire("doorwayCreated", {

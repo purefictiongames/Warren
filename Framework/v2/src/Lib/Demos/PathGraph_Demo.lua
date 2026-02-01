@@ -1,172 +1,131 @@
 --[[
     LibPureFiction Framework v2
-    PathGraph_Demo.lua - Visual Path Graph + Room Blocker Demonstration
+    PathGraph_Demo.lua - Incremental Path + Room Demo
 
-    Copyright (c) 2025 Adam Stearns / Pure Fiction Records LLC
-    All rights reserved.
+    Demonstrates the incremental architecture where PathGraph and RoomBlocker
+    work in lockstep, validating one segment at a time.
 
-    ============================================================================
-    OVERVIEW
-    ============================================================================
-
-    Demonstrates PathGraph procedural maze generation with RoomBlocker geometry.
-
-    Features:
-    - Generates a random maze path with spurs and loops
-    - Visualizes segments as neon beams color-coded by direction
-    - Marks junctions, dead ends, start, and goal points
-    - Creates room/hallway floor blocks via RoomBlocker
-    - Displays stats and legend
-
-    ============================================================================
-    USAGE
-    ============================================================================
-
+    Usage:
     ```lua
     local Demos = require(game.ReplicatedStorage.Lib.Demos)
     Demos.PathGraph.run()
-
-    -- With custom config:
-    Demos.PathGraph.run({
-        position = Vector3.new(0, 10, 0),
-        baseUnit = 20,
-        maxSegments = 80,
-        spurCount = { min = 5, max = 10 },
-        loopCount = { min = 2, max = 4 },
-        -- RoomBlocker options:
-        hallScale = 1,      -- Hallway width multiplier
-        heightScale = 2,    -- Room height multiplier
-        roomScale = 1.5,    -- Dead-end room size
-        junctionScale = 2,  -- Junction room size
-    })
     ```
-
 --]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Lib = require(ReplicatedStorage:WaitForChild("Lib"))
-
-local PathGraphDemoOrchestrator = Lib.Components.PathGraphDemoOrchestrator
 
 local Demo = {}
 
 function Demo.run(config)
     config = config or {}
 
-    local position = config.position or Vector3.new(0, 5, 0)
-
     ---------------------------------------------------------------------------
-    -- CLEANUP ALL OLD DEMOS
+    -- CLEANUP
     ---------------------------------------------------------------------------
 
-    local demosToClean = {
-        "Swivel_Demo",
-        "Turret_Demo",
-        "Launcher_Demo",
-        "Targeter_Demo",
-        "ShootingGallery_Demo",
-        "Conveyor_Demo",
-        "Combat_Demo",
-        "PathGraph_Demo",
-    }
-
-    for _, demoName in ipairs(demosToClean) do
-        local existing = workspace:FindFirstChild(demoName)
-        if existing then
-            existing:Destroy()
-        end
+    local existingDemo = workspace:FindFirstChild("PathGraph_Demo")
+    if existingDemo then
+        existingDemo:Destroy()
     end
-
     task.wait(0.1)
 
     ---------------------------------------------------------------------------
-    -- CREATE DEMO FOLDER
+    -- SETUP
     ---------------------------------------------------------------------------
 
     local demoFolder = Instance.new("Folder")
     demoFolder.Name = "PathGraph_Demo"
     demoFolder.Parent = workspace
 
+    -- Get components
+    local Lib = require(ReplicatedStorage:WaitForChild("Lib"))
+    local PathGraph = Lib.Components.PathGraph
+    local RoomBlocker = Lib.Components.RoomBlocker
+
     ---------------------------------------------------------------------------
-    -- CREATE ORCHESTRATOR
+    -- CREATE NODES
     ---------------------------------------------------------------------------
 
-    local orchestrator = PathGraphDemoOrchestrator:new({
-        id = "Demo_PathGraphOrchestrator",
-        attributes = {
-            visualFolder = demoFolder,
-            origin = position,
-            showPathLines = config.showPathLines ~= false,
-            showRoomBlocks = config.showRoomBlocks ~= false,
-        },
+    local pathGraph = PathGraph:new({ id = "Demo_PathGraph" })
+    pathGraph.Sys.onInit(pathGraph)
+
+    local roomBlocker = RoomBlocker:new({ id = "Demo_RoomBlocker" })
+    roomBlocker.Sys.onInit(roomBlocker)
+
+    local baseUnit = config.baseUnit or 15
+
+    -- Configure
+    pathGraph.In.onConfigure(pathGraph, {
+        baseUnit = baseUnit,
+        seed = config.seed,
+        spurCount = config.spurCount or { min = 2, max = 4 },
+        maxSegmentsPerPath = config.maxSegments or 8,
     })
 
-    ---------------------------------------------------------------------------
-    -- SUBSCRIBE TO SIGNALS
-    ---------------------------------------------------------------------------
-
-    local originalOutFire = orchestrator.Out.Fire
-    orchestrator.Out.Fire = function(outSelf, signal, data)
-        if signal == "pathReceived" then
-            print("=== PATH + GEOMETRY GENERATED ===")
-            print("  Seed:", data.seed)
-            if data.baseUnit then
-                print("  Base Unit:", data.baseUnit)
-                print("  Rooms:", data.roomCount)
-                print("  Hallways:", data.hallwayCount)
-            end
-        elseif signal == "generationComplete" then
-            print("  Total Points:", data.totalPoints)
-            print("  Total Segments:", data.totalSegments)
-            print("=================================")
-        end
-        originalOutFire(outSelf, signal, data)
-    end
-
-    ---------------------------------------------------------------------------
-    -- INITIALIZE AND START
-    ---------------------------------------------------------------------------
-
-    orchestrator.Sys.onInit(orchestrator)
-    orchestrator.Sys.onStart(orchestrator)
-
-    ---------------------------------------------------------------------------
-    -- CONFIGURE
-    ---------------------------------------------------------------------------
-
-    print("=== PATHGRAPH + ROOMBLOCKER DEMO ===")
-    print("Generating procedural maze with room geometry...")
-    print("")
-
-    orchestrator.In.onConfigure(orchestrator, {
-        -- PathGraph config
-        baseUnit = config.baseUnit or 15,
-        seed = config.seed,
-        spurCount = config.spurCount or { min = 4, max = 8 },
-        loopCount = config.loopCount or { min = 2, max = 4 },
-        switchbackChance = config.switchbackChance or 0.25,
-        maxSegments = config.maxSegments or 60,
-        bounds = config.bounds or {
-            x = { -200, 200 },
-            y = { 0, 60 },
-            z = { -200, 200 },
-        },
-        mode = "bulk",
-
-        -- RoomBlocker config
+    roomBlocker.In.onConfigure(roomBlocker, {
+        baseUnit = baseUnit,
+        container = demoFolder,
         hallScale = config.hallScale or 1,
         heightScale = config.heightScale or 2,
         roomScale = config.roomScale or 1.5,
         junctionScale = config.junctionScale or 2,
+        corridorScale = config.corridorScale or 1.2,
     })
 
     ---------------------------------------------------------------------------
-    -- GENERATE PATH
+    -- WIRE SIGNALS
     ---------------------------------------------------------------------------
 
-    orchestrator.In.onGenerate(orchestrator, {
-        start = { 0, 0, 0 },
-        goals = config.goals or { { 150, 0, 150 } },
+    -- PathGraph -> RoomBlocker: segment
+    local pgOriginalFire = pathGraph.Out.Fire
+    pathGraph.Out.Fire = function(outSelf, signal, data)
+        if signal == "segment" then
+            print(string.format("[Demo] PathGraph -> segment %d->%d",
+                data.fromPointId, data.toPointId))
+            roomBlocker.In.onSegment(roomBlocker, data)
+        elseif signal == "pathComplete" then
+            print(string.format("[Demo] Path %d complete", data.pathIndex))
+        elseif signal == "complete" then
+            print("==========================================")
+            print("[Demo] GENERATION COMPLETE")
+            print("  Seed:", data.seed)
+            print("  Total Points:", data.totalPoints)
+            print("  Total Segments:", data.totalSegments)
+            print("==========================================")
+
+            -- Draw path visualization
+            Demo.drawPaths(pathGraph, demoFolder, baseUnit)
+        end
+        pgOriginalFire(outSelf, signal, data)
+    end
+
+    -- RoomBlocker -> PathGraph: segmentResult
+    local rbOriginalFire = roomBlocker.Out.Fire
+    roomBlocker.Out.Fire = function(outSelf, signal, data)
+        if signal == "segmentResult" then
+            if data.ok then
+                print("[Demo] RoomBlocker -> OK")
+            else
+                print(string.format("[Demo] RoomBlocker -> OVERLAP %.1f", data.overlapAmount))
+            end
+            pathGraph.In.onSegmentResult(pathGraph, data)
+        end
+        rbOriginalFire(outSelf, signal, data)
+    end
+
+    ---------------------------------------------------------------------------
+    -- START GENERATION
+    ---------------------------------------------------------------------------
+
+    print("==========================================")
+    print("[Demo] Starting incremental path generation")
+    print("==========================================")
+
+    local origin = config.position or Vector3.new(0, 5, 0)
+
+    pathGraph.In.onGenerate(pathGraph, {
+        start = { origin.X, origin.Y, origin.Z },
+        goals = config.goals or { { origin.X + 120, origin.Y, origin.Z + 120 } },
     })
 
     ---------------------------------------------------------------------------
@@ -175,38 +134,148 @@ function Demo.run(config)
 
     demoFolder.AncestryChanged:Connect(function(_, parent)
         if not parent then
-            print("[PathGraph Demo] Cleanup...")
-            orchestrator.Sys.onStop(orchestrator)
+            print("[Demo] Cleanup...")
+            pathGraph.Sys.onStop(pathGraph)
+            roomBlocker.Sys.onStop(roomBlocker)
         end
     end)
 
-    ---------------------------------------------------------------------------
-    -- RETURN ORCHESTRATOR FOR INTERACTION
-    ---------------------------------------------------------------------------
-
-    return orchestrator
+    return {
+        pathGraph = pathGraph,
+        roomBlocker = roomBlocker,
+        folder = demoFolder,
+    }
 end
 
 --[[
-    Regenerate with new seed (keeps same config).
+    Draw path visualization after generation is complete.
 --]]
-function Demo.regenerate(orchestrator, newSeed)
-    if not orchestrator then
-        print("[PathGraph Demo] No orchestrator. Run Demo.run() first.")
+function Demo.drawPaths(pathGraph, container, baseUnit)
+    local pathData = pathGraph:getPath()
+
+    if not pathData or not pathData.segments then
+        print("[Demo] No path data to draw")
         return
     end
 
-    -- Clear and regenerate
-    orchestrator.In.onClear(orchestrator)
+    print("[Demo] Drawing", #pathData.segments, "path segments")
 
-    if newSeed then
-        orchestrator.In.onConfigure(orchestrator, { seed = newSeed })
+    -- Direction colors
+    local DIR_COLORS = {
+        N = Color3.fromRGB(0, 255, 200),
+        S = Color3.fromRGB(255, 100, 150),
+        E = Color3.fromRGB(255, 200, 0),
+        W = Color3.fromRGB(150, 100, 255),
+        U = Color3.fromRGB(100, 255, 100),
+        D = Color3.fromRGB(255, 80, 80),
+    }
+
+    local function getDirection(fromPos, toPos)
+        local dx = toPos[1] - fromPos[1]
+        local dy = toPos[2] - fromPos[2]
+        local dz = toPos[3] - fromPos[3]
+        local ax, ay, az = math.abs(dx), math.abs(dy), math.abs(dz)
+
+        if ax >= ay and ax >= az then
+            return dx > 0 and "E" or "W"
+        elseif az >= ax and az >= ay then
+            return dz > 0 and "N" or "S"
+        else
+            return dy > 0 and "U" or "D"
+        end
     end
 
-    orchestrator.In.onGenerate(orchestrator, {
-        start = { 0, 0, 0 },
-        goals = { { 150, 0, 150 } },
-    })
+    -- Draw segments
+    for _, seg in ipairs(pathData.segments) do
+        local fromPoint = pathData.points[seg.from]
+        local toPoint = pathData.points[seg.to]
+
+        if fromPoint and toPoint then
+            local fromPos = fromPoint.pos
+            local toPos = toPoint.pos
+
+            local fromVec = Vector3.new(fromPos[1], fromPos[2] + 2, fromPos[3])
+            local toVec = Vector3.new(toPos[1], toPos[2] + 2, toPos[3])
+
+            local dir = getDirection(fromPos, toPos)
+            local color = DIR_COLORS[dir] or Color3.new(1, 1, 1)
+
+            local midpoint = (fromVec + toVec) / 2
+            local delta = toVec - fromVec
+            local length = delta.Magnitude
+
+            if length > 0.1 then
+                local beam = Instance.new("Part")
+                beam.Name = "Segment_" .. seg.id
+                beam.Size = Vector3.new(0.4, 0.4, length)
+                beam.CFrame = CFrame.lookAt(midpoint, toVec)
+                beam.Anchored = true
+                beam.CanCollide = false
+                beam.Material = Enum.Material.Neon
+                beam.Color = color
+                beam.Parent = container
+
+                local glow = Instance.new("PointLight")
+                glow.Color = color
+                glow.Brightness = 0.3
+                glow.Range = 4
+                glow.Parent = beam
+            end
+        end
+    end
+
+    -- Draw junction spheres
+    for pointId, point in pairs(pathData.points) do
+        local pos = point.pos
+        local worldPos = Vector3.new(pos[1], pos[2] + 2, pos[3])
+        local connCount = #point.connections
+
+        local size = 0.6 + (connCount - 1) * 0.3
+        size = math.min(size, 2)
+
+        local color
+        if pointId == pathData.start then
+            color = Color3.fromRGB(0, 255, 0)
+            size = 1.5
+        elseif connCount >= 3 then
+            color = Color3.fromRGB(255, 255, 255)
+        elseif connCount == 1 then
+            color = Color3.fromRGB(255, 100, 100)
+        else
+            color = Color3.fromRGB(150, 150, 200)
+            size = 0.5
+        end
+
+        local sphere = Instance.new("Part")
+        sphere.Name = "Point_" .. pointId
+        sphere.Shape = Enum.PartType.Ball
+        sphere.Size = Vector3.new(size, size, size)
+        sphere.Position = worldPos
+        sphere.Anchored = true
+        sphere.CanCollide = false
+        sphere.Material = Enum.Material.Neon
+        sphere.Color = color
+        sphere.Parent = container
+
+        -- Label for start
+        if pointId == pathData.start then
+            local billboard = Instance.new("BillboardGui")
+            billboard.Size = UDim2.new(0, 60, 0, 20)
+            billboard.StudsOffset = Vector3.new(0, size + 1, 0)
+            billboard.AlwaysOnTop = true
+            billboard.Parent = sphere
+
+            local label = Instance.new("TextLabel")
+            label.Size = UDim2.new(1, 0, 1, 0)
+            label.BackgroundTransparency = 0.3
+            label.BackgroundColor3 = Color3.new(0, 0, 0)
+            label.TextColor3 = color
+            label.TextScaled = true
+            label.Font = Enum.Font.GothamBold
+            label.Text = "START"
+            label.Parent = billboard
+        end
+    end
 end
 
 return Demo

@@ -78,8 +78,5 @@ Components.FlyingTarget = require(script.FlyingTarget)
 -- Procedural Generation
 Components.PathGraph = require(script.PathGraph)
 Components.RoomBlocker = require(script.RoomBlocker)
-Components.PathGraphDemoOrchestrator = require(script.PathGraphDemoOrchestrator)
-Components.PathGraphIncremental = require(script.PathGraphIncremental)
-Components.RoomBlockerIncremental = require(script.RoomBlockerIncremental)
 
 return Components

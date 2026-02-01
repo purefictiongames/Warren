@@ -127,7 +127,6 @@ local demoModules = {
     FlemishShop1 = "FlemishShop1_Demo",
     CastleDracula = "CastleDracula_Demo",
     PathGraph = "PathGraph_Demo",
-    PathGraphIncremental = "PathGraphIncremental_Demo",
 }
 
 setmetatable(Demos, {

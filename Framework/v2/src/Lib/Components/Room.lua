@@ -14,28 +14,24 @@
 
     A Room:
     - Takes an existing Part (blocking volume) that defines INTERIOR space
-    - Creates a CSG hollow shell around it (outer - inner = walls)
+    - Creates 6 wall slabs around it (floor, ceiling, N/S/E/W walls)
     - Interior volume becomes zone detector (CanCollide=false, CanTouch=true)
     - Tracks what enters/exits via an internal Zone node
     - Provides mounting helpers for placing objects on interior walls
 
-    CSG Shell Approach (2026-02-01 refactor):
-    - Previously: 6 separate wall slabs (7 parts total)
-    - Now: 1 CSG shell + 1 zone part (2 parts total)
-    - Benefits: Fewer parts, simpler doorway cutting, cleaner geometry
-    - Interior volume serves dual purpose: zone detection + mounting reference
+    Slab-Based Approach (2026-02-01 - reverted from CSG):
+    - CSG shells created collision artifacts (invisible wedges at corners)
+    - Simple box slabs have clean, predictable collision
+    - 6 wall parts + 1 zone part = 7 parts total
+    - Door cutting just removes/splits the appropriate wall slab
 
-    Mounting Reference:
-    The zone part's faces correspond to interior wall surfaces:
-        +Z face = North wall interior
-        -Z face = South wall interior
-        +X face = East wall interior
-        -X face = West wall interior
-        +Y face = Ceiling interior
-        -Y face = Floor interior
-
-    Rooms don't know or care about their place in a larger map. They only
-    manage what happens within their 6 sides.
+    Wall Layout:
+        +Y = Ceiling
+        -Y = Floor
+        +Z = North wall
+        -Z = South wall
+        +X = East wall
+        -X = West wall
 
     ============================================================================
     SIGNALS
@@ -91,8 +87,7 @@ local Room = Node.extend(function(parent)
                 sourcePart = nil,
                 container = nil,
                 zonePart = nil,
-                shell = nil,           -- CSG shell (visual only)
-                collisionParts = {},   -- Invisible collision wall parts
+                walls = {},  -- { Floor, Ceiling, North, South, East, West }
                 zone = nil,
                 orchestrator = nil,
             }
@@ -105,138 +100,98 @@ local Room = Node.extend(function(parent)
     end
 
     ----------------------------------------------------------------------------
-    -- CSG SHELL CONSTRUCTION
+    -- WALL SLAB CONSTRUCTION
     ----------------------------------------------------------------------------
 
     --[[
-        Build a hollow shell using CSG subtraction.
-
-        New approach (CSG Shell):
-        - Inner volume = original room dims (this IS the interior)
-        - Outer volume = inner + (wallThickness * 2) on each axis
-        - Shell = Outer:SubtractAsync({Inner})
-
-        Benefits:
-        - 2 parts per room (shell + zone) vs 7 parts (6 slabs + zone)
-        - Simpler doorway cutting (cut 1 shell vs 2+ slabs)
-        - Inner volume serves dual purpose: zone detector + mounting reference
+        Build 6 wall slabs around the interior volume.
+        Simple box parts with clean collision - no CSG artifacts.
     --]]
-    local function buildShell(self, innerSize, position, thickness)
+    local function buildWalls(self, interiorSize, position, thickness)
         local state = getState(self)
         local config = state.config
+        local walls = {}
 
-        -- Create outer volume (shell boundary)
-        local outerSize = Vector3.new(
-            innerSize.X + thickness * 2,
-            innerSize.Y + thickness * 2,
-            innerSize.Z + thickness * 2
-        )
-
-        -- CRITICAL: Parts must be parented to workspace for SubtractAsync to work
-        -- Cannot parent to container that isn't in DataModel yet
-        local outerPart = Instance.new("Part")
-        outerPart.Name = "Outer_Temp"
-        outerPart.Size = outerSize
-        outerPart.Position = position
-        outerPart.Anchored = true
-        outerPart.CanCollide = true
-        outerPart.Material = config.material
-        outerPart.Color = config.color
-        outerPart.Parent = workspace  -- Must be in DataModel for CSG
-
-        -- Create inner volume (to subtract)
-        local innerPart = Instance.new("Part")
-        innerPart.Name = "Inner_Temp"
-        innerPart.Size = innerSize
-        innerPart.Position = position
-        innerPart.Anchored = true
-        innerPart.Parent = workspace  -- Must be in DataModel for CSG
-
-        -- Perform CSG subtraction to create hollow shell
-        local success, shell = pcall(function()
-            return outerPart:SubtractAsync({ innerPart })
-        end)
-
-        -- Cleanup temp parts
-        outerPart:Destroy()
-        innerPart:Destroy()
-
-        if not success or not shell then
-            self.Err:Fire({
-                reason = "csg_failed",
-                message = "CSG SubtractAsync failed",
-                roomId = self.id,
-                error = tostring(shell),
-            })
-            return nil
-        end
-
-        -- Configure shell - VISUAL ONLY (CSG collision has artifacts)
-        shell.Name = "Shell"
-        shell.Anchored = true
-        shell.CanCollide = false  -- Visual only, collision handled by wall parts
-        shell.CanQuery = false    -- Don't interfere with raycasts
-        shell.Transparency = 0    -- Fully opaque
-        shell.Material = config.material
-        shell.Color = config.color
-        shell.Parent = state.container
-
-        state.shell = shell
-        return shell
-    end
-
-    --[[
-        Build invisible collision parts (6 wall slabs).
-        CSG PreciseConvexDecomposition creates wedge-shaped collision at internal
-        corners, so we use simple box parts for clean collision geometry.
-    --]]
-    local function buildCollisionWalls(self, innerSize, position, thickness)
-        local state = getState(self)
-        local collisionParts = {}
-
-        -- Wall definitions: {name, size, offset from center}
-        local walls = {
-            -- Floor
-            { name = "Floor_Collision",
-              size = Vector3.new(innerSize.X + thickness * 2, thickness, innerSize.Z + thickness * 2),
-              offset = Vector3.new(0, -(innerSize.Y + thickness) / 2, 0) },
-            -- Ceiling
-            { name = "Ceiling_Collision",
-              size = Vector3.new(innerSize.X + thickness * 2, thickness, innerSize.Z + thickness * 2),
-              offset = Vector3.new(0, (innerSize.Y + thickness) / 2, 0) },
+        -- Wall definitions: { name, size, offset from center }
+        local wallDefs = {
+            -- Floor (-Y)
+            {
+                name = "Floor",
+                size = Vector3.new(
+                    interiorSize.X + thickness * 2,
+                    thickness,
+                    interiorSize.Z + thickness * 2
+                ),
+                offset = Vector3.new(0, -(interiorSize.Y + thickness) / 2, 0),
+            },
+            -- Ceiling (+Y)
+            {
+                name = "Ceiling",
+                size = Vector3.new(
+                    interiorSize.X + thickness * 2,
+                    thickness,
+                    interiorSize.Z + thickness * 2
+                ),
+                offset = Vector3.new(0, (interiorSize.Y + thickness) / 2, 0),
+            },
             -- North wall (+Z)
-            { name = "North_Collision",
-              size = Vector3.new(innerSize.X + thickness * 2, innerSize.Y, thickness),
-              offset = Vector3.new(0, 0, (innerSize.Z + thickness) / 2) },
+            {
+                name = "North",
+                size = Vector3.new(
+                    interiorSize.X + thickness * 2,
+                    interiorSize.Y,
+                    thickness
+                ),
+                offset = Vector3.new(0, 0, (interiorSize.Z + thickness) / 2),
+            },
             -- South wall (-Z)
-            { name = "South_Collision",
-              size = Vector3.new(innerSize.X + thickness * 2, innerSize.Y, thickness),
-              offset = Vector3.new(0, 0, -(innerSize.Z + thickness) / 2) },
+            {
+                name = "South",
+                size = Vector3.new(
+                    interiorSize.X + thickness * 2,
+                    interiorSize.Y,
+                    thickness
+                ),
+                offset = Vector3.new(0, 0, -(interiorSize.Z + thickness) / 2),
+            },
             -- East wall (+X)
-            { name = "East_Collision",
-              size = Vector3.new(thickness, innerSize.Y, innerSize.Z),
-              offset = Vector3.new((innerSize.X + thickness) / 2, 0, 0) },
+            {
+                name = "East",
+                size = Vector3.new(
+                    thickness,
+                    interiorSize.Y,
+                    interiorSize.Z
+                ),
+                offset = Vector3.new((interiorSize.X + thickness) / 2, 0, 0),
+            },
             -- West wall (-X)
-            { name = "West_Collision",
-              size = Vector3.new(thickness, innerSize.Y, innerSize.Z),
-              offset = Vector3.new(-(innerSize.X + thickness) / 2, 0, 0) },
+            {
+                name = "West",
+                size = Vector3.new(
+                    thickness,
+                    interiorSize.Y,
+                    interiorSize.Z
+                ),
+                offset = Vector3.new(-(interiorSize.X + thickness) / 2, 0, 0),
+            },
         }
 
-        for _, wallDef in ipairs(walls) do
-            local part = Instance.new("Part")
-            part.Name = wallDef.name
-            part.Size = wallDef.size
-            part.Position = position + wallDef.offset
-            part.Anchored = true
-            part.CanCollide = true
-            part.CanQuery = true      -- Allow raycasts to hit
-            part.Transparency = 1     -- Invisible
-            part.Parent = state.container
-            table.insert(collisionParts, part)
+        for _, def in ipairs(wallDefs) do
+            local wall = Instance.new("Part")
+            wall.Name = def.name
+            wall.Size = def.size
+            wall.Position = position + def.offset
+            wall.Anchored = true
+            wall.CanCollide = true
+            wall.Material = config.material
+            wall.Color = config.color
+            wall.Parent = state.container
+
+            walls[def.name] = wall
         end
 
-        state.collisionParts = collisionParts
-        return collisionParts
+        state.walls = walls
+        return walls
     end
 
     ----------------------------------------------------------------------------
@@ -244,10 +199,8 @@ local Room = Node.extend(function(parent)
     ----------------------------------------------------------------------------
 
     --[[
-        Convert a blocking volume into a room with CSG shell and zone detection.
-
-        The source part defines the INTERIOR dimensions (not shrunk).
-        Walls are built OUTSIDE the interior space.
+        Convert a blocking volume into a room with wall slabs and zone detection.
+        The source part defines the INTERIOR dimensions.
     --]]
     local function buildRoom(self, sourcePart)
         local state = getState(self)
@@ -258,7 +211,6 @@ local Room = Node.extend(function(parent)
         state.sourcePart = sourcePart
 
         -- Get original dimensions and position
-        -- These ARE the interior dimensions (no shrinking)
         local interiorSize = sourcePart.Size
         local interiorPos = sourcePart.Position
 
@@ -279,9 +231,6 @@ local Room = Node.extend(function(parent)
         state.container = container
 
         -- Create zone Part (the interior detection volume)
-        -- This serves dual purpose:
-        -- 1. Zone detector (CanCollide=false, CanTouch=true)
-        -- 2. Mounting reference (CFrame math against real Part surfaces)
         local zonePart = Instance.new("Part")
         zonePart.Name = "Zone"
         zonePart.Size = interiorSize
@@ -289,26 +238,19 @@ local Room = Node.extend(function(parent)
         zonePart.Anchored = true
         zonePart.CanCollide = false
         zonePart.CanTouch = true
-        zonePart.Transparency = 1  -- Invisible but functional
+        zonePart.Transparency = 1  -- Invisible
         zonePart.Material = Enum.Material.ForceField
         zonePart.Color = config.zoneColor
         zonePart.Parent = container
         state.zonePart = zonePart
 
-        -- Build the CSG shell around the interior (visual only)
-        local shell = buildShell(self, interiorSize, interiorPos, thickness)
-        if not shell then
-            container:Destroy()
-            return false
-        end
-
-        -- Build invisible collision walls (simple boxes, no CSG artifacts)
-        buildCollisionWalls(self, interiorSize, interiorPos, thickness)
+        -- Build wall slabs around the interior
+        buildWalls(self, interiorSize, interiorPos, thickness)
 
         -- Parent container to same parent as source
         container.Parent = sourcePart.Parent
 
-        -- Remove the source part
+        -- Remove the source part (it was just a placeholder)
         sourcePart:Destroy()
 
         -- Set PrimaryPart for the container
@@ -360,7 +302,6 @@ local Room = Node.extend(function(parent)
 
     --[[
         Create the internal Orchestrator stub.
-        This is a placeholder that can be configured or replaced downstream.
     --]]
     local function setupOrchestrator(self)
         local state = getState(self)
@@ -520,18 +461,19 @@ local Room = Node.extend(function(parent)
         ------------------------------------------------------------------------
 
         getZonePart = function(self)
-            local state = getState(self)
-            return state.zonePart
+            return getState(self).zonePart
         end,
 
         getContainer = function(self)
-            local state = getState(self)
-            return state.container
+            return getState(self).container
         end,
 
-        getShell = function(self)
-            local state = getState(self)
-            return state.shell
+        getWalls = function(self)
+            return getState(self).walls
+        end,
+
+        getWall = function(self, name)
+            return getState(self).walls[name]
         end,
 
         getBounds = function(self)
@@ -555,8 +497,7 @@ local Room = Node.extend(function(parent)
         end,
 
         getOrchestrator = function(self)
-            local state = getState(self)
-            return state.orchestrator
+            return getState(self).orchestrator
         end,
 
         ------------------------------------------------------------------------
@@ -579,22 +520,16 @@ local Room = Node.extend(function(parent)
             local cf = zone.CFrame
 
             if face == "N" then
-                -- North wall (+Z face) - lookVector points -Z (into room)
                 return cf * CFrame.new(0, 0, size.Z / 2) * CFrame.Angles(0, math.pi, 0)
             elseif face == "S" then
-                -- South wall (-Z face) - lookVector points +Z (into room)
                 return cf * CFrame.new(0, 0, -size.Z / 2)
             elseif face == "E" then
-                -- East wall (+X face) - lookVector points -X (into room)
                 return cf * CFrame.new(size.X / 2, 0, 0) * CFrame.Angles(0, math.pi / 2, 0)
             elseif face == "W" then
-                -- West wall (-X face) - lookVector points +X (into room)
                 return cf * CFrame.new(-size.X / 2, 0, 0) * CFrame.Angles(0, -math.pi / 2, 0)
             elseif face == "U" then
-                -- Ceiling (+Y face) - lookVector points -Y (into room)
                 return cf * CFrame.new(0, size.Y / 2, 0) * CFrame.Angles(math.pi / 2, 0, 0)
             elseif face == "D" then
-                -- Floor (-Y face) - lookVector points +Y (into room)
                 return cf * CFrame.new(0, -size.Y / 2, 0) * CFrame.Angles(-math.pi / 2, 0, 0)
             end
 
@@ -605,7 +540,7 @@ local Room = Node.extend(function(parent)
             Get the size of a specific interior wall face.
             face: "N", "S", "E", "W", "U", "D"
 
-            Returns Vector2 (width, height) from viewer's perspective facing the wall.
+            Returns Vector2 (width, height) from viewer's perspective.
         --]]
         getWallSize = function(self, face)
             local state = getState(self)
@@ -614,13 +549,10 @@ local Room = Node.extend(function(parent)
             local size = state.zonePart.Size
 
             if face == "N" or face == "S" then
-                -- Z-facing walls: width = X, height = Y
                 return Vector2.new(size.X, size.Y)
             elseif face == "E" or face == "W" then
-                -- X-facing walls: width = Z, height = Y
                 return Vector2.new(size.Z, size.Y)
             elseif face == "U" or face == "D" then
-                -- Y-facing walls (floor/ceiling): width = X, height = Z
                 return Vector2.new(size.X, size.Z)
             end
 
@@ -630,28 +562,20 @@ local Room = Node.extend(function(parent)
         --[[
             Mount an object to an interior wall face.
             face: "N", "S", "E", "W", "U", "D"
-            offset: Vector3 offset from wall center (X = right, Y = up, Z = depth from wall)
+            offset: Vector3 offset from wall center
             object: The Part or Model to mount
-
-            The object will be positioned relative to the wall face,
-            with Z offset moving away from the wall into the room.
         --]]
         mountToWall = function(self, face, offset, object)
             local wallCF = self:getWallCFrame(face)
             if not wallCF then return false end
 
             offset = offset or Vector3.new(0, 0, 0)
-
-            -- Apply offset in wall-local space
-            -- X = right along wall, Y = up along wall, Z = into room
             local mountCF = wallCF * CFrame.new(offset.X, offset.Y, offset.Z)
 
             if object:IsA("Model") then
                 if object.PrimaryPart then
                     object:SetPrimaryPartCFrame(mountCF)
                 else
-                    -- Try to move model by its bounding box center
-                    local _, size = object:GetBoundingBox()
                     object:MoveTo(mountCF.Position)
                 end
             elseif object:IsA("BasePart") then

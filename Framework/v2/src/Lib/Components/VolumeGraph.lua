@@ -381,6 +381,7 @@ local VolumeGraph = Node.extend(function(parent)
         local strategyConfig = {
             baseUnit = config.baseUnit,
             wallThickness = config.wallThickness,
+            minDoorSize = config.minDoorSize,
             origin = origin or { 0, 0, 0 },
         }
         for k, v in pairs(config.strategyConfig) do
@@ -405,42 +406,58 @@ local VolumeGraph = Node.extend(function(parent)
                 dims = dims,
                 scale = room.scale,
                 connections = {},
+                attachedTo = room.attachedTo,  -- Preserve attachment info
             }
         end
 
-        -- Find all possible connections (adjacent rooms)
-        local allEdges = findAllAdjacencies(state.rooms, config.minDoorSize, config.wallThickness)
-        print("[VolumeGraph] Found", #allEdges, "possible connections")
-
-        -- Build connectivity based on method
-        local selectedEdges = {}
-
-        if config.connectionMethod == "All" then
-            selectedEdges = allEdges
-
-        elseif config.connectionMethod == "MST" then
-            local mstEdges = buildMST(state.rooms, allEdges)
-            local extraEdges = addExtraConnections(state.rooms, allEdges, mstEdges, config.maxConnections, state.rng)
-            for _, e in ipairs(mstEdges) do table.insert(selectedEdges, e) end
-            for _, e in ipairs(extraEdges) do table.insert(selectedEdges, e) end
-
-        elseif config.connectionMethod == "Nearest" then
-            selectedEdges = buildNearestConnections(state.rooms, allEdges, config.maxConnections)
-
-        elseif config.connectionMethod == "Delaunay" then
-            -- Delaunay is complex in 3D, fall back to MST + extras
-            local mstEdges = buildMST(state.rooms, allEdges)
-            local extraEdges = addExtraConnections(state.rooms, allEdges, mstEdges, config.maxConnections, state.rng)
-            for _, e in ipairs(mstEdges) do table.insert(selectedEdges, e) end
-            for _, e in ipairs(extraEdges) do table.insert(selectedEdges, e) end
+        -- Build connections from attachedTo info (primary source - guaranteed by construction)
+        -- This is more reliable than geometric adjacency detection
+        local connectionCount = 0
+        for i, room in ipairs(state.rooms) do
+            if room.attachedTo then
+                -- Add bidirectional connection
+                table.insert(room.connections, room.attachedTo)
+                table.insert(state.rooms[room.attachedTo].connections, i)
+                connectionCount = connectionCount + 1
+            end
         end
+        print("[VolumeGraph] Built", connectionCount, "connections from attachedTo info")
 
-        print("[VolumeGraph] Selected", #selectedEdges, "connections")
+        -- Optionally find additional adjacencies for extra loop connections
+        if config.connectionMethod ~= "Tree" and config.maxConnections > 1 then
+            local allEdges = findAllAdjacencies(state.rooms, config.minDoorSize, config.wallThickness)
+            print("[VolumeGraph] Found", #allEdges, "geometric adjacencies")
 
-        -- Apply connections to rooms
-        for _, edge in ipairs(selectedEdges) do
-            table.insert(state.rooms[edge.from].connections, edge.to)
-            table.insert(state.rooms[edge.to].connections, edge.from)
+            -- Add extra connections beyond the tree (creates loops)
+            local usedEdges = {}
+            for _, room in ipairs(state.rooms) do
+                for _, conn in ipairs(room.connections) do
+                    local key = math.min(room.id, conn) .. "_" .. math.max(room.id, conn)
+                    usedEdges[key] = true
+                end
+            end
+
+            local extraCount = 0
+            for _, edge in ipairs(allEdges) do
+                local key = edge.from .. "_" .. edge.to
+                if not usedEdges[key] then
+                    local roomA = state.rooms[edge.from]
+                    local roomB = state.rooms[edge.to]
+
+                    -- Check connection limits
+                    if #roomA.connections < config.maxConnections and
+                       #roomB.connections < config.maxConnections then
+                        -- 30% chance to add extra connection
+                        if state.rng:randomInt(1, 100) <= 30 then
+                            table.insert(roomA.connections, edge.to)
+                            table.insert(roomB.connections, edge.from)
+                            usedEdges[key] = true
+                            extraCount = extraCount + 1
+                        end
+                    end
+                end
+            end
+            print("[VolumeGraph] Added", extraCount, "extra loop connections")
         end
 
         -- Build layouts and emit signals

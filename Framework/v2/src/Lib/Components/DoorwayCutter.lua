@@ -413,12 +413,27 @@ local DoorwayCutter = Node.extend(function(parent)
         local ladderHeight = heightAboveFloor
         local ladderWidth = 2
 
-        -- Position ladder centered under the door
-        local ladderPos = Vector3.new(
-            doorCenter.X,
-            floorLevel + ladderHeight / 2,
-            doorCenter.Z
-        )
+        -- Position ladder centered under the door, offset into the room (not inside wall)
+        -- Offset along the wall's axis (perpendicular to wall surface)
+        local wallAxis = sharedWall.axis
+        local offsetDist = ladderWidth / 2 + 0.5  -- Half ladder width + small margin
+
+        local ladderPos = Vector3.new(doorCenter.X, floorLevel + ladderHeight / 2, doorCenter.Z)
+
+        -- Offset into room A (negative direction from wall)
+        if wallAxis == 1 then  -- X axis wall (East/West)
+            ladderPos = Vector3.new(
+                doorCenter.X - sharedWall.direction * offsetDist,
+                floorLevel + ladderHeight / 2,
+                doorCenter.Z
+            )
+        elseif wallAxis == 3 then  -- Z axis wall (North/South)
+            ladderPos = Vector3.new(
+                doorCenter.X,
+                floorLevel + ladderHeight / 2,
+                doorCenter.Z - sharedWall.direction * offsetDist
+            )
+        end
 
         local ladder = Instance.new("TrussPart")
         ladder.Name = "Ladder_" .. roomA.id .. "_" .. roomB.id

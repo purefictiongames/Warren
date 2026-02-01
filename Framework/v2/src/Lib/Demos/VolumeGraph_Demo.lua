@@ -16,12 +16,17 @@ local Demo = {}
 function Demo.run(config)
     config = config or {}
 
+    print("==========================================")
+    print("[VolumeGraph_Demo] Starting...")
+    print("==========================================")
+
     ---------------------------------------------------------------------------
     -- CLEANUP
     ---------------------------------------------------------------------------
 
     local existingDemo = workspace:FindFirstChild("VolumeGraph_Demo")
     if existingDemo then
+        print("[Demo] Cleaning up existing demo folder")
         existingDemo:Destroy()
     end
     task.wait(0.1)
@@ -34,10 +39,32 @@ function Demo.run(config)
     demoFolder.Name = "VolumeGraph_Demo"
     demoFolder.Parent = workspace
 
-    local Lib = require(ReplicatedStorage:WaitForChild("Lib"))
+    local success, Lib = pcall(function()
+        return require(ReplicatedStorage:WaitForChild("Lib"))
+    end)
+    if not success then
+        warn("[VolumeGraph_Demo] Failed to require Lib:", Lib)
+        return nil
+    end
+
     local VolumeGraph = Lib.Components.VolumeGraph
     local Room = Lib.Components.Room
     local DoorwayCutter = Lib.Components.DoorwayCutter
+
+    if not VolumeGraph then
+        warn("[VolumeGraph_Demo] VolumeGraph component not found!")
+        return nil
+    end
+    if not Room then
+        warn("[VolumeGraph_Demo] Room component not found!")
+        return nil
+    end
+    if not DoorwayCutter then
+        warn("[VolumeGraph_Demo] DoorwayCutter component not found!")
+        return nil
+    end
+
+    print("[Demo] Components loaded successfully")
 
     local rooms = {}
     local doorwayCutter = nil
@@ -87,34 +114,44 @@ function Demo.run(config)
     -- WIRE SIGNALS
     ---------------------------------------------------------------------------
 
+    print("[Demo] Wiring signal handlers...")
+
     local vgOriginalFire = volumeGraph.Out.Fire
     volumeGraph.Out.Fire = function(outSelf, signal, data)
+        print("[Demo] Signal received:", signal)
+
         if signal == "roomLayout" then
             print(string.format("[Demo] Room %d at (%.1f, %.1f, %.1f) dims (%.1f, %.1f, %.1f)",
                 data.id, data.position[1], data.position[2], data.position[3],
                 data.dims[1], data.dims[2], data.dims[3]))
 
             -- Create blocking volume part for Room node
-            local blockPart = Instance.new("Part")
-            blockPart.Name = "Block_" .. data.id
-            blockPart.Size = Vector3.new(data.dims[1], data.dims[2], data.dims[3])
-            blockPart.Position = Vector3.new(data.position[1], data.position[2], data.position[3])
-            blockPart.Anchored = true
-            blockPart.CanCollide = false
-            blockPart.Transparency = 1
-            blockPart.Parent = demoFolder
+            local roomSuccess, roomErr = pcall(function()
+                local blockPart = Instance.new("Part")
+                blockPart.Name = "Block_" .. data.id
+                blockPart.Size = Vector3.new(data.dims[1], data.dims[2], data.dims[3])
+                blockPart.Position = Vector3.new(data.position[1], data.position[2], data.position[3])
+                blockPart.Anchored = true
+                blockPart.CanCollide = false
+                blockPart.Transparency = 1
+                blockPart.Parent = demoFolder
 
-            -- Create Room node from the blocking volume
-            local roomId = "Room_" .. data.id
-            local room = Room:new({ id = roomId })
-            room.Sys.onInit(room)
+                -- Create Room node from the blocking volume
+                local roomId = "Room_" .. data.id
+                local room = Room:new({ id = roomId })
+                room.Sys.onInit(room)
 
-            room.In.onConfigure(room, {
-                part = blockPart,
-                wallThickness = wallThickness,
-            })
-            room.Sys.onStart(room)
-            table.insert(rooms, room)
+                room.In.onConfigure(room, {
+                    part = blockPart,
+                    wallThickness = wallThickness,
+                })
+                room.Sys.onStart(room)
+                table.insert(rooms, room)
+            end)
+
+            if not roomSuccess then
+                warn("[Demo] Failed to create room", data.id, ":", roomErr)
+            end
 
         elseif signal == "complete" then
             print("==========================================")
@@ -127,21 +164,43 @@ function Demo.run(config)
 
             -- Cut doorways
             print("[Demo] Cutting doorways...")
-            doorwayCutter.In.onRoomsComplete(doorwayCutter, {
-                layouts = data.layouts,
-            })
+            local doorSuccess, doorErr = pcall(function()
+                doorwayCutter.In.onRoomsComplete(doorwayCutter, {
+                    layouts = data.layouts,
+                })
+            end)
+            if not doorSuccess then
+                warn("[Demo] Doorway cutting failed:", doorErr)
+            end
 
             -- Add lights
             print("[Demo] Adding lights...")
-            Demo.addLights(demoFolder, data.layouts)
+            local lightSuccess, lightErr = pcall(function()
+                Demo.addLights(demoFolder, data.layouts)
+            end)
+            if not lightSuccess then
+                warn("[Demo] Light placement failed:", lightErr)
+            end
 
             -- Add climbing aids
             print("[Demo] Adding climbing aids...")
-            Demo.addClimbingAids(demoFolder, data.layouts, wallThickness)
+            local climbSuccess, climbErr = pcall(function()
+                Demo.addClimbingAids(demoFolder, data.layouts, wallThickness)
+            end)
+            if not climbSuccess then
+                warn("[Demo] Climbing aids failed:", climbErr)
+            end
 
             -- Move spawn
             print("[Demo] Moving spawn point...")
-            Demo.moveSpawnToFirstRoom(data.layouts)
+            local spawnSuccess, spawnErr = pcall(function()
+                Demo.moveSpawnToFirstRoom(data.layouts)
+            end)
+            if not spawnSuccess then
+                warn("[Demo] Spawn relocation failed:", spawnErr)
+            end
+
+            print("[Demo] All post-generation tasks completed")
         end
 
         vgOriginalFire(outSelf, signal, data)
@@ -166,9 +225,18 @@ function Demo.run(config)
         baseplate.Transparency = 0.8
     end
 
-    volumeGraph.In.onGenerate(volumeGraph, {
-        origin = origin,
-    })
+    local genSuccess, genErr = pcall(function()
+        volumeGraph.In.onGenerate(volumeGraph, {
+            origin = origin,
+        })
+    end)
+
+    if not genSuccess then
+        warn("[VolumeGraph_Demo] Generation failed:", genErr)
+        return nil
+    end
+
+    print("[Demo] Generation call completed")
 
     ---------------------------------------------------------------------------
     -- CLEANUP HANDLER

@@ -135,6 +135,7 @@ local demoModules = {
     PathGraph = "PathGraph_Demo",
     Room = "Room_Demo",
     VolumeGraph = "VolumeGraph_Demo",
+    DungeonGeneration = "DungeonGeneration_Demo",
 }
 
 setmetatable(Demos, {

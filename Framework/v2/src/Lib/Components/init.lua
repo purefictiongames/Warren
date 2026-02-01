@@ -83,4 +83,11 @@ Components.DoorwayCutter = require(script.DoorwayCutter)
 Components.VolumeGraph = require(script.VolumeGraph)
 Components.ClusterStrategies = require(script.ClusterStrategies)
 
+-- Sequential Dungeon Generation
+Components.VolumeBuilder = require(script.VolumeBuilder)
+Components.ShellBuilder = require(script.ShellBuilder)
+Components.DoorCutter = require(script.DoorCutter)
+Components.TrussBuilder = require(script.TrussBuilder)
+Components.DungeonOrchestrator = require(script.DungeonOrchestrator)
+
 return Components

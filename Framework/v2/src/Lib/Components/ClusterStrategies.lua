@@ -143,12 +143,18 @@ local function tryAttachRoom(parentRoom, newScale, face, rooms, baseUnit, minDoo
         newScale[3] * baseUnit,
     }
 
-    -- Calculate base position: new room touching parent on this face
+    -- Calculate base position: new room's OUTER SHELL touching parent's OUTER SHELL
+    -- Inner dims don't include wall thickness, but shells extend by wallThickness on each side
+    -- So to have shells touch (not overlap): offset by innerDims/2 + wallThickness for each room
     local newPos = { parentPos[1], parentPos[2], parentPos[3] }
 
-    -- Move along touch axis so walls touch
+    -- Move along touch axis so SHELLS touch (not inner volumes)
+    -- Parent shell edge: parentPos + parentDims/2 + wallThickness
+    -- New shell edge: newPos - newDims/2 - wallThickness
+    -- For shells to touch: parentShellEdge = newShellEdge
+    -- Therefore: newPos = parentPos + parentDims/2 + newDims/2 + 2*wallThickness
     newPos[face.axis] = parentPos[face.axis] +
-        face.dir * (parentDims[face.axis]/2 + newDims[face.axis]/2)
+        face.dir * (parentDims[face.axis]/2 + newDims[face.axis]/2 + 2 * wallThickness)
 
     -- Calculate max offset on perpendicular axes while maintaining door overlap
     for axis = 1, 3 do

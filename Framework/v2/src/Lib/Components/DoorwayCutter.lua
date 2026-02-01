@@ -80,17 +80,26 @@ local DoorwayCutter = Node.extend(function(parent)
     --[[
         Find the axis along which two rooms are adjacent.
         Returns: axis (1=X, 2=Y, 3=Z), direction (+1 or -1 from A to B), or nil if not adjacent
+
+        Note: Room dims are INNER dimensions. Outer shells extend by wallThickness on each side.
+        When shells touch, inner volumes have a gap of 2*wallThickness between them.
     --]]
-    local function findAdjacencyAxis(roomA, roomB)
+    local function findAdjacencyAxis(self, roomA, roomB)
+        local state = getState(self)
+        local wallThickness = state.config.wallThickness
+
         local posA, dimsA = roomA.position, roomA.dims
         local posB, dimsB = roomB.position, roomB.dims
 
         for axis = 1, 3 do
             local distCenters = math.abs(posB[axis] - posA[axis])
-            local touchDist = dimsA[axis] / 2 + dimsB[axis] / 2
+            -- When outer shells touch, inner volumes are separated by 2*wallThickness
+            -- Inner touch dist: dimsA/2 + dimsB/2
+            -- Shell touch dist: dimsA/2 + wallThickness + dimsB/2 + wallThickness
+            local shellTouchDist = dimsA[axis] / 2 + dimsB[axis] / 2 + 2 * wallThickness
 
-            -- Check if they touch on this axis (within small tolerance)
-            if math.abs(distCenters - touchDist) < 0.1 then
+            -- Check if shells touch on this axis (within tolerance)
+            if math.abs(distCenters - shellTouchDist) < 1 then
                 local direction = posB[axis] > posA[axis] and 1 or -1
                 return axis, direction
             end
@@ -102,13 +111,20 @@ local DoorwayCutter = Node.extend(function(parent)
     --[[
         Calculate the shared wall rectangle between two adjacent rooms.
         Returns: { center = {x,y,z}, width, height, axis, normal }
+
+        Note: With shells touching, the shared wall surface is between the two shells.
+        Each shell extends wallThickness beyond the inner dims.
     --]]
-    local function calculateSharedWall(roomA, roomB, axis, direction)
+    local function calculateSharedWall(self, roomA, roomB, axis, direction)
+        local state = getState(self)
+        local wallThickness = state.config.wallThickness
+
         local posA, dimsA = roomA.position, roomA.dims
         local posB, dimsB = roomB.position, roomB.dims
 
-        -- Wall position is at the boundary between the two rooms
-        local wallPos = posA[axis] + (dimsA[axis] / 2) * direction
+        -- Wall position is at the shell boundary (inner edge + wallThickness)
+        -- This is where the two room shells meet
+        local wallPos = posA[axis] + (dimsA[axis] / 2 + wallThickness) * direction
 
         -- Find the intersection rectangle on the two perpendicular axes
         local perpAxes = {}
@@ -404,11 +420,11 @@ local DoorwayCutter = Node.extend(function(parent)
                     local roomB = roomsById[connId]
                     if roomB then
                         -- Find adjacency
-                        local axis, direction = findAdjacencyAxis(roomA, roomB)
+                        local axis, direction = findAdjacencyAxis(self, roomA, roomB)
 
                         if axis then
                             -- Calculate shared wall
-                            local sharedWall = calculateSharedWall(roomA, roomB, axis, direction)
+                            local sharedWall = calculateSharedWall(self, roomA, roomB, axis, direction)
 
                             if sharedWall then
                                 -- Calculate doorway

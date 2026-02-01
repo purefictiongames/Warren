@@ -68,7 +68,9 @@ local PathGraph = Node.extend(function(parent)
         U = "D", D = "U",
     }
 
-    local DIR_LIST = { "N", "S", "E", "W" } -- Horizontal only for now
+    -- Direction lists for weighted selection
+    local DIR_HORIZONTAL = { "N", "S", "E", "W" }
+    local DIR_VERTICAL = { "U", "D" }
 
     local function getState(self)
         if not instanceStates[self.id] then
@@ -78,6 +80,7 @@ local PathGraph = Node.extend(function(parent)
                     seed = nil,
                     spurCount = { min = 2, max = 5 },
                     maxSegmentsPerPath = 10,
+                    verticalChance = 15, -- % chance to pick vertical direction
                 },
 
                 rng = nil,
@@ -215,12 +218,27 @@ local PathGraph = Node.extend(function(parent)
         local rng = state.rng
         local goalPos = state.goalPos
         local baseUnit = state.config.baseUnit
+        local verticalChance = state.config.verticalChance
+
+        -- Decide if this will be a vertical move
+        local useVertical = rng:randomInt(1, 100) <= verticalChance
+        local dirPool = useVertical and DIR_VERTICAL or DIR_HORIZONTAL
 
         -- Build list of valid directions (no reversal)
         local validDirs = {}
-        for _, dir in ipairs(DIR_LIST) do
+        for _, dir in ipairs(dirPool) do
             if not lastDir or dir ~= OPPOSITES[lastDir] then
                 table.insert(validDirs, dir)
+            end
+        end
+
+        -- If vertical pool is empty (e.g., last was U and we rolled vertical again),
+        -- fall back to horizontal
+        if #validDirs == 0 then
+            for _, dir in ipairs(DIR_HORIZONTAL) do
+                if not lastDir or dir ~= OPPOSITES[lastDir] then
+                    table.insert(validDirs, dir)
+                end
             end
         end
 
@@ -228,8 +246,8 @@ local PathGraph = Node.extend(function(parent)
             return nil
         end
 
-        -- If we have a goal, prefer directions toward it
-        if goalPos then
+        -- If horizontal and we have a goal, prefer directions toward it
+        if not useVertical and goalPos then
             local dx = goalPos[1] - fromPos[1]
             local dz = goalPos[3] - fromPos[3]
 
@@ -543,6 +561,9 @@ local PathGraph = Node.extend(function(parent)
                 end
                 if data.maxSegmentsPerPath then
                     config.maxSegmentsPerPath = data.maxSegmentsPerPath
+                end
+                if data.verticalChance then
+                    config.verticalChance = data.verticalChance
                 end
             end,
 

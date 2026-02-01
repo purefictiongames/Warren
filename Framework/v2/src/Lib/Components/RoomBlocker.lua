@@ -54,10 +54,13 @@ local RoomBlocker = Node.extend(function(parent)
                     baseUnit = 15,
                     hallScale = 1,
                     heightScale = 2,
-                    roomScale = 1.5,
-                    junctionScale = 2,
-                    corridorScale = 1.2,
+                    -- Size ranges for variation (min, max multipliers of baseUnit)
+                    roomSizeRange = { 1.2, 2.0 },
+                    hallSizeRange = { 0.6, 1.0 },
+                    heightRange = { 1.5, 2.5 },
                 },
+
+                rng = nil,
 
                 container = nil,
                 parts = {},
@@ -77,6 +80,42 @@ local RoomBlocker = Node.extend(function(parent)
 
     local function cleanupState(self)
         instanceStates[self.id] = nil
+    end
+
+    ----------------------------------------------------------------------------
+    -- RNG (mirrors PathGraph's RNG for consistency)
+    ----------------------------------------------------------------------------
+
+    local function createRNG(seed)
+        local rngState
+        if type(seed) == "string" then
+            rngState = 0
+            for i = 1, #seed do
+                rngState = rngState + seed:byte(i) * (i * 31)
+            end
+            rngState = bit32.band(rngState, 0xFFFFFFFF)
+            if rngState == 0 then rngState = 1 end
+        else
+            rngState = seed or os.time()
+            if rngState == 0 then rngState = 1 end
+        end
+
+        local rng = {}
+
+        function rng:next()
+            rngState = bit32.bxor(rngState, bit32.lshift(rngState, 13))
+            rngState = bit32.bxor(rngState, bit32.rshift(rngState, 17))
+            rngState = bit32.bxor(rngState, bit32.lshift(rngState, 5))
+            rngState = bit32.band(rngState, 0xFFFFFFFF)
+            return rngState
+        end
+
+        function rng:randomFloat(min, max)
+            local val = self:next() / 0xFFFFFFFF
+            return min + val * (max - min)
+        end
+
+        return rng
     end
 
     ----------------------------------------------------------------------------
@@ -132,34 +171,37 @@ local RoomBlocker = Node.extend(function(parent)
     end
 
     ----------------------------------------------------------------------------
-    -- ROOM SIZING
+    -- ROOM SIZING (with random variation)
     ----------------------------------------------------------------------------
 
-    --[[
-        Determine room size based on connection count.
-        Called when we know how many connections a point has.
-    --]]
-    local function getRoomSize(self, connectionCount)
+    local function getRandomRoomSize(self)
         local state = getState(self)
         local config = state.config
-        local baseUnit = config.baseUnit
+        local rng = state.rng
+        local range = config.roomSizeRange
 
-        local scale
-        if connectionCount >= 3 then
-            scale = config.junctionScale
-        elseif connectionCount == 1 then
-            scale = config.roomScale
-        else
-            scale = config.corridorScale
-        end
-
-        return baseUnit * scale
+        local scale = rng:randomFloat(range[1], range[2])
+        return config.baseUnit * scale
     end
 
-    local function getRoomHeight(self)
+    local function getRandomHallSize(self)
         local state = getState(self)
         local config = state.config
-        return config.baseUnit * config.heightScale
+        local rng = state.rng
+        local range = config.hallSizeRange
+
+        local scale = rng:randomFloat(range[1], range[2])
+        return config.baseUnit * scale
+    end
+
+    local function getRandomHeight(self)
+        local state = getState(self)
+        local config = state.config
+        local rng = state.rng
+        local range = config.heightRange
+
+        local scale = rng:randomFloat(range[1], range[2])
+        return config.baseUnit * scale
     end
 
     ----------------------------------------------------------------------------
@@ -196,8 +238,6 @@ local RoomBlocker = Node.extend(function(parent)
 
     local function createHallwayPart(self, segmentKey, fromPos, toPos)
         local state = getState(self)
-        local config = state.config
-        local baseUnit = config.baseUnit
 
         local dx = toPos[1] - fromPos[1]
         local dy = toPos[2] - fromPos[2]
@@ -210,8 +250,9 @@ local RoomBlocker = Node.extend(function(parent)
         local midY = (fromPos[2] + toPos[2]) / 2
         local midZ = (fromPos[3] + toPos[3]) / 2
 
-        local hallSize = baseUnit * config.hallScale
-        local height = baseUnit * config.heightScale * 0.8
+        -- Random hall dimensions
+        local hallSize = getRandomHallSize(self)
+        local hallHeight = getRandomHeight(self) * 0.8
 
         local sizeX, sizeY, sizeZ
         local isVertical = false
@@ -219,12 +260,12 @@ local RoomBlocker = Node.extend(function(parent)
         if math.abs(dx) > math.abs(dz) and math.abs(dx) > math.abs(dy) then
             -- East/West hallway
             sizeX = math.abs(dx)
-            sizeY = height
+            sizeY = hallHeight
             sizeZ = hallSize
         elseif math.abs(dz) > math.abs(dy) then
             -- North/South hallway
             sizeX = hallSize
-            sizeY = height
+            sizeY = hallHeight
             sizeZ = math.abs(dz)
         else
             -- Vertical shaft
@@ -234,7 +275,7 @@ local RoomBlocker = Node.extend(function(parent)
             sizeZ = hallSize
         end
 
-        local posY = midY + height / 2
+        local posY = midY + hallHeight / 2
 
         local hall = Instance.new("Part")
         hall.Name = (isVertical and "Shaft_" or "Hall_") .. segmentKey
@@ -296,13 +337,17 @@ local RoomBlocker = Node.extend(function(parent)
                 if data.baseUnit then config.baseUnit = data.baseUnit end
                 if data.hallScale then config.hallScale = data.hallScale end
                 if data.heightScale then config.heightScale = data.heightScale end
-                if data.roomScale then config.roomScale = data.roomScale end
-                if data.junctionScale then config.junctionScale = data.junctionScale end
-                if data.corridorScale then config.corridorScale = data.corridorScale end
+                if data.roomSizeRange then config.roomSizeRange = data.roomSizeRange end
+                if data.hallSizeRange then config.hallSizeRange = data.hallSizeRange end
+                if data.heightRange then config.heightRange = data.heightRange end
 
                 if data.container then
                     state.container = data.container
                 end
+
+                -- Initialize RNG (use seed if provided, otherwise use a default)
+                local seed = data.seed or "roomblocker"
+                state.rng = createRNG(seed)
             end,
 
             --[[
@@ -317,29 +362,33 @@ local RoomBlocker = Node.extend(function(parent)
                     return
                 end
 
+                -- Initialize RNG if not already done (fallback)
+                if not state.rng then
+                    state.rng = createRNG("roomblocker")
+                end
+
                 local fromPointId = data.fromPointId
                 local toPointId = data.toPointId
                 local fromPos = data.fromPos
                 local toPos = data.toPos
 
-                local height = getRoomHeight(self)
-
-                -- Use corridor size for now (2 connections assumed)
-                local roomSize = getRoomSize(self, 2)
-
                 -- STEP 1: Build FROM room if not already built
                 if not state.builtPoints[fromPointId] then
-                    print(string.format("[RoomBlocker] Building FROM room %d at %.1f, %.1f, %.1f",
-                        fromPointId, fromPos[1], fromPos[2], fromPos[3]))
-                    createRoomPart(self, fromPointId, fromPos, roomSize, height)
+                    local fromSize = getRandomRoomSize(self)
+                    local fromHeight = getRandomHeight(self)
+                    print(string.format("[RoomBlocker] Building FROM room %d (%.1fx%.1f) at %.1f, %.1f, %.1f",
+                        fromPointId, fromSize, fromHeight, fromPos[1], fromPos[2], fromPos[3]))
+                    createRoomPart(self, fromPointId, fromPos, fromSize, fromHeight)
                 end
 
-                -- STEP 2: Check if TO room would overlap
-                local toAABB = createAABB(toPos[1], toPos[2] + height / 2, toPos[3], roomSize, height, roomSize)
+                -- STEP 2: Check if TO room would overlap (use random size for checking)
+                local toSize = getRandomRoomSize(self)
+                local toHeight = getRandomHeight(self)
+                local toAABB = createAABB(toPos[1], toPos[2] + toHeight / 2, toPos[3], toSize, toHeight, toSize)
                 local overlapAmount = checkOverlap(self, toAABB, fromPointId)
 
                 if overlapAmount > 0 then
-                    -- Overlap detected
+                    -- Overlap detected - need to re-roll size on retry
                     print(string.format("[RoomBlocker] OVERLAP: %.1f studs at point %d (%.1f, %.1f, %.1f)",
                         overlapAmount, toPointId, toPos[1], toPos[2], toPos[3]))
 
@@ -348,11 +397,11 @@ local RoomBlocker = Node.extend(function(parent)
                         overlapAmount = overlapAmount,
                     })
                 else
-                    -- No overlap - build geometry
-                    print(string.format("[RoomBlocker] OK - building TO room %d at %.1f, %.1f, %.1f",
-                        toPointId, toPos[1], toPos[2], toPos[3]))
+                    -- No overlap - build geometry with the size we checked
+                    print(string.format("[RoomBlocker] OK - building TO room %d (%.1fx%.1f) at %.1f, %.1f, %.1f",
+                        toPointId, toSize, toHeight, toPos[1], toPos[2], toPos[3]))
 
-                    createRoomPart(self, toPointId, toPos, roomSize, height)
+                    createRoomPart(self, toPointId, toPos, toSize, toHeight)
 
                     local segmentKey = fromPointId .. "_" .. toPointId
                     if not state.builtSegments[segmentKey] then

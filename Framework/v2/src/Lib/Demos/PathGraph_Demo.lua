@@ -54,22 +54,34 @@ function Demo.run(config)
 
     local baseUnit = config.baseUnit or 15
 
-    -- Configure
+    -- Generate seed early so both PathGraph and RoomBlocker use the same one
+    local seed = config.seed
+    if not seed then
+        local chars = "abcdefghijklmnopqrstuvwxyz0123456789"
+        seed = ""
+        for _ = 1, 12 do
+            local idx = math.random(1, #chars)
+            seed = seed .. chars:sub(idx, idx)
+        end
+    end
+
+    -- Configure both with the same seed
     pathGraph.In.onConfigure(pathGraph, {
         baseUnit = baseUnit,
-        seed = config.seed,
+        seed = seed,
         spurCount = config.spurCount or { min = 2, max = 4 },
         maxSegmentsPerPath = config.maxSegments or 8,
+        verticalChance = config.verticalChance or 15,
     })
 
     roomBlocker.In.onConfigure(roomBlocker, {
         baseUnit = baseUnit,
         container = demoFolder,
-        hallScale = config.hallScale or 1,
-        heightScale = config.heightScale or 2,
-        roomScale = config.roomScale or 1.5,
-        junctionScale = config.junctionScale or 2,
-        corridorScale = config.corridorScale or 1.2,
+        seed = seed,
+        -- Size ranges for variation (multipliers of baseUnit)
+        roomSizeRange = config.roomSizeRange or { 1.2, 2.2 },
+        hallSizeRange = config.hallSizeRange or { 0.5, 1.0 },
+        heightRange = config.heightRange or { 1.5, 3.0 },
     })
 
     ---------------------------------------------------------------------------
@@ -119,6 +131,9 @@ function Demo.run(config)
 
     print("==========================================")
     print("[Demo] Starting incremental path generation")
+    print("  Seed:", seed)
+    print("  BaseUnit:", baseUnit)
+    print("  VerticalChance:", config.verticalChance or 15, "%")
     print("==========================================")
 
     local origin = config.position or Vector3.new(0, 5, 0)

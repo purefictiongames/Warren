@@ -37,8 +37,10 @@ function Demo.run(config)
     local Lib = require(ReplicatedStorage:WaitForChild("Lib"))
     local PathGraph = Lib.Components.PathGraph
     local Room = Lib.Components.Room
+    local DoorwayCutter = Lib.Components.DoorwayCutter
 
     local rooms = {}
+    local doorwayCutter = nil
 
     ---------------------------------------------------------------------------
     -- CREATE PATHGRAPH
@@ -66,6 +68,20 @@ function Demo.run(config)
         maxSegmentsPerPath = config.maxSegments or 8,
         sizeRange = config.sizeRange or { 1.2, 2.5 },
         scanDistance = config.scanDistance or 5,
+    })
+
+    ---------------------------------------------------------------------------
+    -- CREATE DOORWAY CUTTER
+    ---------------------------------------------------------------------------
+
+    doorwayCutter = DoorwayCutter:new({ id = "Demo_DoorwayCutter" })
+    doorwayCutter.Sys.onInit(doorwayCutter)
+
+    doorwayCutter.In.onConfigure(doorwayCutter, {
+        baseUnit = config.doorBaseUnit or 5,
+        wallThickness = config.wallThickness or 1,
+        doorHeight = config.doorHeight or 8,
+        container = demoFolder,
     })
 
     ---------------------------------------------------------------------------
@@ -122,6 +138,12 @@ function Demo.run(config)
 
             -- Draw connections between rooms
             Demo.drawConnections(pathGraph, demoFolder)
+
+            -- Trigger doorway cutting after rooms are built
+            print("[Demo] Cutting doorways...")
+            doorwayCutter.In.onRoomsComplete(doorwayCutter, {
+                layouts = data.layouts,
+            })
         end
 
         pgOriginalFire(outSelf, signal, data)
@@ -137,7 +159,15 @@ function Demo.run(config)
     print("  BaseUnit:", baseUnit)
     print("==========================================")
 
-    local origin = config.position or Vector3.new(0, 20, 0)
+    -- Start high enough that downward paths don't go below baseplate
+    local origin = config.position or Vector3.new(0, 80, 0)
+
+    -- Disable baseplate collision so underground rooms are accessible
+    local baseplate = workspace:FindFirstChild("Baseplate")
+    if baseplate then
+        baseplate.CanCollide = false
+        baseplate.Transparency = 0.8
+    end
 
     pathGraph.In.onGenerate(pathGraph, {
         start = { origin.X, origin.Y, origin.Z },
@@ -152,6 +182,9 @@ function Demo.run(config)
         if not parent then
             print("[Demo] Cleanup...")
             pathGraph.Sys.onStop(pathGraph)
+            if doorwayCutter then
+                doorwayCutter.Sys.onStop(doorwayCutter)
+            end
             for _, room in ipairs(rooms) do
                 room.Sys.onStop(room)
             end
@@ -160,6 +193,7 @@ function Demo.run(config)
 
     return {
         pathGraph = pathGraph,
+        doorwayCutter = doorwayCutter,
         rooms = rooms,
         folder = demoFolder,
     }

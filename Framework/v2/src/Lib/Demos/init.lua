@@ -134,6 +134,7 @@ local demoModules = {
     CastleDracula = "CastleDracula_Demo",
     PathGraph = "PathGraph_Demo",
     Room = "Room_Demo",
+    VolumeGraph = "VolumeGraph_Demo",
 }
 
 setmetatable(Demos, {

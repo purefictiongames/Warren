@@ -80,5 +80,7 @@ Components.PathGraph = require(script.PathGraph)
 Components.RoomBlocker = require(script.RoomBlocker)
 Components.Room = require(script.Room)
 Components.DoorwayCutter = require(script.DoorwayCutter)
+Components.VolumeGraph = require(script.VolumeGraph)
+Components.ClusterStrategies = require(script.ClusterStrategies)
 
 return Components

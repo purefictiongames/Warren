@@ -384,67 +384,66 @@ local DoorwayCutter = Node.extend(function(parent)
     end
 
     --[[
-        Create a ladder for doors that are too high to jump to.
+        Create ladders for doors between rooms at different Y levels.
+        Places a ladder on BOTH sides of the opening for access from either room.
         Only for horizontal walls (N/S/E/W), not ceiling/floor.
-        Only when rooms are at different Y levels.
     --]]
-    local function createLadder(self, doorway, sharedWall, roomA, roomB)
+    local function createLadders(self, doorway, sharedWall, roomA, roomB)
         local state = getState(self)
         local container = state.container
 
         -- Only for horizontal walls (axis 1 or 3, not 2)
-        if sharedWall.axis == 2 then return nil end
+        if sharedWall.axis == 2 then return {} end
 
         -- Get floor levels of both rooms
         local floorA = roomA.position[2] - roomA.dims[2] / 2
         local floorB = roomB.position[2] - roomB.dims[2] / 2
 
-        -- Only need ladder if rooms are at significantly different Y levels
+        -- Only need ladders if rooms are at significantly different Y levels
         local floorDiff = math.abs(floorA - floorB)
-        if floorDiff < 3 then return nil end  -- Same level or jumpable
+        if floorDiff < 3 then return {} end  -- Same level or jumpable
 
-        print(string.format("[DoorwayCutter] Adding ladder, floor difference is %.1f studs", floorDiff))
+        print(string.format("[DoorwayCutter] Adding ladders on both sides, floor difference is %.1f studs", floorDiff))
 
-        -- Ladder extends from lower floor to higher floor
+        local ladders = {}
         local lowerFloor = math.min(floorA, floorB)
         local higherFloor = math.max(floorA, floorB)
         local ladderHeight = higherFloor - lowerFloor
         local ladderWidth = 2
 
         local doorCenter = Vector3.new(doorway.center[1], doorway.center[2], doorway.center[3])
-
-        -- Position ladder centered under the door, offset into the lower room
         local wallAxis = sharedWall.axis
         local offsetDist = ladderWidth / 2 + 0.5
 
-        -- Determine which direction is the lower room
-        local offsetDir = (floorA < floorB) and -sharedWall.direction or sharedWall.direction
+        -- Create ladder on both sides of the doorway
+        for _, offsetDir in ipairs({ -1, 1 }) do
+            local ladderPos
+            if wallAxis == 1 then  -- X axis wall (East/West)
+                ladderPos = Vector3.new(
+                    doorCenter.X + offsetDir * offsetDist,
+                    lowerFloor + ladderHeight / 2,
+                    doorCenter.Z
+                )
+            elseif wallAxis == 3 then  -- Z axis wall (North/South)
+                ladderPos = Vector3.new(
+                    doorCenter.X,
+                    lowerFloor + ladderHeight / 2,
+                    doorCenter.Z + offsetDir * offsetDist
+                )
+            end
 
-        local ladderPos
-        if wallAxis == 1 then  -- X axis wall (East/West)
-            ladderPos = Vector3.new(
-                doorCenter.X + offsetDir * offsetDist,
-                lowerFloor + ladderHeight / 2,
-                doorCenter.Z
-            )
-        elseif wallAxis == 3 then  -- Z axis wall (North/South)
-            ladderPos = Vector3.new(
-                doorCenter.X,
-                lowerFloor + ladderHeight / 2,
-                doorCenter.Z + offsetDir * offsetDist
-            )
+            local ladder = Instance.new("TrussPart")
+            ladder.Name = "Ladder_" .. roomA.id .. "_" .. roomB.id .. "_" .. (offsetDir > 0 and "A" or "B")
+            ladder.Size = Vector3.new(ladderWidth, ladderHeight, ladderWidth)
+            ladder.Position = ladderPos
+            ladder.Anchored = true
+            ladder.Material = Enum.Material.Metal
+            ladder.Color = Color3.fromRGB(80, 80, 80)
+            ladder.Parent = container
+            table.insert(ladders, ladder)
         end
 
-        local ladder = Instance.new("TrussPart")
-        ladder.Name = "Ladder_" .. roomA.id .. "_" .. roomB.id
-        ladder.Size = Vector3.new(ladderWidth, ladderHeight, ladderWidth)
-        ladder.Position = ladderPos
-        ladder.Anchored = true
-        ladder.Material = Enum.Material.Metal
-        ladder.Color = Color3.fromRGB(80, 80, 80)
-        ladder.Parent = container
-
-        return ladder
+        return ladders
     end
 
     --[[
@@ -511,13 +510,17 @@ local DoorwayCutter = Node.extend(function(parent)
         end
 
         -- Add climbing aids if needed
-        local climbingAid = nil
+        local climbingAids = {}
         if sharedWall.axis == 2 then
             -- Ceiling opening - add pole
-            climbingAid = createCeilingPole(self, doorway, sharedWall, roomA, roomB)
+            local pole = createCeilingPole(self, doorway, sharedWall, roomA, roomB)
+            if pole then table.insert(climbingAids, pole) end
         else
-            -- Horizontal wall - add ladder if door is elevated
-            climbingAid = createLadder(self, doorway, sharedWall, roomA, roomB)
+            -- Horizontal wall - add ladders if rooms at different levels
+            local ladders = createLadders(self, doorway, sharedWall, roomA, roomB)
+            for _, ladder in ipairs(ladders) do
+                table.insert(climbingAids, ladder)
+            end
         end
 
         table.insert(state.doorways, {
@@ -526,7 +529,7 @@ local DoorwayCutter = Node.extend(function(parent)
             center = doorway.center,
             width = doorway.width,
             height = doorway.height,
-            climbingAid = climbingAid,
+            climbingAids = climbingAids,
         })
 
         return true

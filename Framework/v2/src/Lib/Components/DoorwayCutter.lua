@@ -384,7 +384,7 @@ local DoorwayCutter = Node.extend(function(parent)
     end
 
     --[[
-        Create a ladder for doors that are too high to reach.
+        Create a ladder for doors that are too high to jump to.
         Only for horizontal walls (N/S/E/W), not ceiling/floor.
     --]]
     local function createLadder(self, doorway, sharedWall, roomA, roomB)
@@ -402,9 +402,10 @@ local DoorwayCutter = Node.extend(function(parent)
         local floorB = roomB.position[2] - roomB.dims[2] / 2
         local floorLevel = math.min(floorA, floorB)
 
-        -- If door bottom is more than 2 studs above floor, add ladder
+        -- If door bottom is more than 3 studs above floor, add ladder
+        -- (players can jump ~2-3 studs, so only need ladder above that)
         local heightAboveFloor = doorBottom - floorLevel
-        if heightAboveFloor < 2 then return nil end
+        if heightAboveFloor < 3 then return nil end
 
         print(string.format("[DoorwayCutter] Adding ladder, door is %.1f studs above floor", heightAboveFloor))
 
@@ -412,24 +413,12 @@ local DoorwayCutter = Node.extend(function(parent)
         local ladderHeight = heightAboveFloor
         local ladderWidth = 2
 
-        -- Position ladder on one side of door (left side)
-        local ladderPos = Vector3.new(doorCenter.X, doorCenter.Y, doorCenter.Z)
-        local widthAxis = sharedWall.widthAxis
-
-        -- Offset to left edge of door
-        if widthAxis == 1 then
-            ladderPos = Vector3.new(
-                doorCenter.X - doorway.width / 2 - ladderWidth / 2,
-                floorLevel + ladderHeight / 2,
-                doorCenter.Z
-            )
-        else
-            ladderPos = Vector3.new(
-                doorCenter.X,
-                floorLevel + ladderHeight / 2,
-                doorCenter.Z - doorway.width / 2 - ladderWidth / 2
-            )
-        end
+        -- Position ladder centered under the door
+        local ladderPos = Vector3.new(
+            doorCenter.X,
+            floorLevel + ladderHeight / 2,
+            doorCenter.Z
+        )
 
         local ladder = Instance.new("TrussPart")
         ladder.Name = "Ladder_" .. roomA.id .. "_" .. roomB.id

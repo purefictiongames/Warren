@@ -206,11 +206,12 @@ local DoorwayCutter = Node.extend(function(parent)
         local config = state.config
 
         local minSize = config.minDoorSize
-        local margin = 2  -- Keep doors away from edges
+        local sideMargin = 2  -- Keep doors away from side edges
+        local floorCut = 1    -- Cut slightly into floor to ensure clean threshold
 
-        -- Available space after margin
-        local availableWidth = sharedWall.width - margin * 2
-        local availableHeight = sharedWall.height - margin * 2
+        -- Available space (margin on sides, but door goes to floor)
+        local availableWidth = sharedWall.width - sideMargin * 2
+        local availableHeight = sharedWall.height  -- Full height available
 
         if availableWidth < minSize or availableHeight < minSize then
             -- Shared wall too small for a door
@@ -223,26 +224,26 @@ local DoorwayCutter = Node.extend(function(parent)
         local doorWidth = math.min(availableWidth * 0.75, 12)  -- Max 12 studs wide
         doorWidth = math.max(doorWidth, minSize)
 
-        local doorHeight = math.min(availableHeight * 0.8, 10)  -- Max 10 studs tall
+        local doorHeight = math.min(availableHeight * 0.85, 12)  -- Max 12 studs tall
         doorHeight = math.max(doorHeight, minSize)
 
         -- Ensure door fits within available space
         doorWidth = math.min(doorWidth, availableWidth)
         doorHeight = math.min(doorHeight, availableHeight)
 
-        -- Position: centered within the shared wall area
+        -- Position: centered horizontally, starts at floor level
         local doorCenter = {
             sharedWall.center[1],
             sharedWall.center[2],
             sharedWall.center[3],
         }
 
-        -- Put door at bottom of shared wall area (floor level)
+        -- Put door at floor level (cut slightly below to ensure no lip)
         local wallBottom = sharedWall.center[sharedWall.heightAxis] - sharedWall.height / 2
-        doorCenter[sharedWall.heightAxis] = wallBottom + margin + doorHeight / 2
+        doorCenter[sharedWall.heightAxis] = wallBottom - floorCut + doorHeight / 2
 
-        -- Door depth: needs to cut through both walls plus extra
-        local doorDepth = config.wallThickness * 4 + 1
+        -- Door depth: cut generously through both walls and floor
+        local doorDepth = config.wallThickness * 6 + 2
 
         -- Build size vector based on wall orientation
         local doorSize = { 0, 0, 0 }

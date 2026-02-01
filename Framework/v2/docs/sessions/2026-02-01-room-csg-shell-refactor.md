@@ -1,7 +1,7 @@
 # Room Node CSG Shell Refactor Plan
 
 **Date:** 2026-02-01
-**Status:** Planned
+**Status:** Implemented
 
 ## Problem with Current Approach
 
@@ -106,3 +106,27 @@ function Room:mountToWall(face, offset, object)
 - Don't union rooms together - keep as separate shells for flexibility
 - Inner volume becomes source of truth for interior geometry
 - Shell is just the rendered/collidable representation
+
+## Implementation Summary (Completed)
+
+### Room.lua Changes
+1. Replaced `buildSlabs()` with `buildShell()` using CSG `SubtractAsync`
+2. Source part now defines INTERIOR dimensions (no more shrinking)
+3. Zone part made invisible (Transparency=1) but functional
+4. Added mounting helpers:
+   - `getWallCFrame(face)` - Get CFrame for interior wall face
+   - `getWallSize(face)` - Get Vector2 (width, height) of wall face
+   - `mountToWall(face, offset, object)` - Mount object to wall
+5. State tracks `shell` instead of `slabs`
+6. Added `getShell()` public method
+
+### DoorwayCutter.lua Changes
+1. Replaced `findWallsToCut()` with `findShellsToCut()`
+2. Renamed `cutWall()` to `cutShell()`
+3. Removed `removeOverlappingWall()` (no longer needed with shells)
+4. Updated debug logging to count shells instead of slabs
+
+### Part Count Reduction
+- **Before:** 7 parts per room (6 slabs + 1 zone)
+- **After:** 2 parts per room (1 shell + 1 zone)
+- For 30 rooms: 60 parts instead of 210

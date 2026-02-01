@@ -2,7 +2,7 @@
     LibPureFiction Framework v2
     DoorwayCutter.lua - Creates Doorway Geometry Between Adjacent Rooms
 
-    Copyright (c) 2025 Adam Stearns / Pure Fiction Records LLC
+    Copyright (c) 2025-2026 Adam Stearns / Pure Fiction Records LLC
     All rights reserved.
 
     ============================================================================
@@ -13,12 +13,18 @@
     their shared wall surfaces. It then creates door openings sized appropriately
     for the available wall space.
 
+    Works with CSG shell-based rooms (2026-02-01 refactor):
+    - Each room has 1 shell (hollow box created by CSG subtraction)
+    - Doorway cutting finds 2 shells (one per room) and cuts both
+    - Simpler than the old 6-slab approach (no overlapping wall removal needed)
+
     Flow:
     1. Receive roomsComplete signal with layout data
     2. For each room connection, find the shared wall area
     3. Select door size (base unit 5 studs) constrained by shared area
-    4. Create door box that cuts through both walls
-    5. Emit doorway signals for each created opening
+    4. Create door cutter box
+    5. Cut through both room shells using CSG SubtractAsync
+    6. Emit doorway signals for each created opening
 
     ============================================================================
     SIGNALS
@@ -238,9 +244,10 @@ local DoorwayCutter = Node.extend(function(parent)
     end
 
     --[[
-        Find wall parts that intersect with the doorway position.
+        Find shell parts that intersect with the doorway position.
+        With the CSG shell approach, each room has 1 shell instead of 6 slabs.
     --]]
-    local function findWallsToCut(self, doorway, fromRoomId, toRoomId)
+    local function findShellsToCut(self, doorway, fromRoomId, toRoomId)
         local state = getState(self)
         local container = state.container
         if not container then
@@ -251,98 +258,81 @@ local DoorwayCutter = Node.extend(function(parent)
         local doorPos = Vector3.new(doorway.center[1], doorway.center[2], doorway.center[3])
         local doorSize = Vector3.new(doorway.size[1], doorway.size[2], doorway.size[3])
 
-        local walls = {}
-        local slabCount = 0
+        local shells = {}
+        local shellCount = 0
 
-        -- Search for Room models and their wall slabs
+        -- Search for Room models and their shells
         for _, child in ipairs(container:GetDescendants()) do
-            if child:IsA("BasePart") and child.Name:match("^Slab_") then
-                slabCount = slabCount + 1
+            if child:IsA("BasePart") and child.Name == "Shell" then
+                shellCount = shellCount + 1
 
-                -- Check if this slab intersects with our door region
-                local slabPos = child.Position
-                local slabSize = child.Size
+                -- Get the shell's bounding box (CSG parts may have complex geometry)
+                local shellCF = child.CFrame
+                local shellSize = child.Size
 
                 -- Simple AABB intersection check with some margin
                 local margin = 0.5
-                local slabMin = slabPos - slabSize / 2 - Vector3.new(margin, margin, margin)
-                local slabMax = slabPos + slabSize / 2 + Vector3.new(margin, margin, margin)
+                local shellPos = shellCF.Position
+                local shellMin = shellPos - shellSize / 2 - Vector3.new(margin, margin, margin)
+                local shellMax = shellPos + shellSize / 2 + Vector3.new(margin, margin, margin)
                 local doorMin = doorPos - doorSize / 2
                 local doorMax = doorPos + doorSize / 2
 
                 local overlaps =
-                    slabMin.X < doorMax.X and slabMax.X > doorMin.X and
-                    slabMin.Y < doorMax.Y and slabMax.Y > doorMin.Y and
-                    slabMin.Z < doorMax.Z and slabMax.Z > doorMin.Z
+                    shellMin.X < doorMax.X and shellMax.X > doorMin.X and
+                    shellMin.Y < doorMax.Y and shellMax.Y > doorMin.Y and
+                    shellMin.Z < doorMax.Z and shellMax.Z > doorMin.Z
 
                 if overlaps then
-                    table.insert(walls, child)
+                    table.insert(shells, child)
                 end
             end
         end
 
-        print(string.format("[DoorwayCutter] Searched %d slabs, found %d intersecting", slabCount, #walls))
+        print(string.format("[DoorwayCutter] Searched %d shells, found %d intersecting", shellCount, #shells))
 
-        return walls
+        return shells
     end
 
     --[[
-        Cut a hole through a wall using CSG subtraction.
+        Cut a hole through a shell using CSG subtraction.
     --]]
-    local function cutWall(self, wall, cutterPart)
-        local parent = wall.Parent
-        local wallName = wall.Name
-        local wallMaterial = wall.Material
-        local wallColor = wall.Color
-        local wallTransparency = wall.Transparency
-        local wallCFrame = wall.CFrame
+    local function cutShell(self, shell, cutterPart)
+        local parent = shell.Parent
+        local shellName = shell.Name
+        local shellMaterial = shell.Material
+        local shellColor = shell.Color
+        local shellTransparency = shell.Transparency
 
-        print(string.format("[DoorwayCutter] Cutting wall %s at %s", wallName, tostring(wall.Position)))
+        print(string.format("[DoorwayCutter] Cutting shell at %s", tostring(shell.Position)))
 
         local success, result = pcall(function()
-            return wall:SubtractAsync({ cutterPart })
+            return shell:SubtractAsync({ cutterPart })
         end)
 
         if success and result then
-            result.Name = wallName
-            result.Material = wallMaterial
-            result.Color = wallColor
-            result.Transparency = wallTransparency
+            result.Name = shellName
+            result.Material = shellMaterial
+            result.Color = shellColor
+            result.Transparency = shellTransparency
             result.Anchored = true
             result.CanCollide = true
             result.CollisionFidelity = Enum.CollisionFidelity.PreciseConvexDecomposition
             result.Parent = parent
 
-            wall:Destroy()
+            shell:Destroy()
 
-            print(string.format("[DoorwayCutter] Successfully cut %s", wallName))
+            print(string.format("[DoorwayCutter] Successfully cut shell"))
             return result
         else
-            warn("[DoorwayCutter] CSG subtract failed for " .. wallName .. ":", tostring(result))
+            warn("[DoorwayCutter] CSG subtract failed:", tostring(result))
             return nil
         end
     end
 
     --[[
-        Remove one of two overlapping walls at shared boundary.
-        After cutting, we have two walls with holes - keep one, delete the other.
-    --]]
-    local function removeOverlappingWall(self, walls)
-        if #walls < 2 then return end
-
-        -- If we found 2+ walls at the shared boundary, delete all but the first
-        -- (they're overlapping and causing z-fighting)
-        for i = 2, #walls do
-            local wall = walls[i]
-            if wall and wall.Parent then
-                print(string.format("[DoorwayCutter] Removing duplicate wall: %s", wall.Name))
-                wall:Destroy()
-            end
-        end
-    end
-
-    --[[
-        Create the door cutter and cut through walls.
+        Create the door cutter and cut through shells.
+        With CSG shell approach, we cut 1 shell per room (2 total for each doorway).
     --]]
     local function createDoorway(self, doorway, sharedWall, fromRoomId, toRoomId)
         local state = getState(self)
@@ -356,23 +346,16 @@ local DoorwayCutter = Node.extend(function(parent)
         cutterPart.CanCollide = false
         cutterPart.Parent = state.container
 
-        -- Find walls to cut
-        local walls = findWallsToCut(self, doorway, fromRoomId, toRoomId)
+        -- Find shells to cut (should be 2: one per room)
+        local shells = findShellsToCut(self, doorway, fromRoomId, toRoomId)
 
-        print(string.format("[DoorwayCutter] Found %d walls to cut for doorway %d<->%d",
-            #walls, fromRoomId, toRoomId))
+        print(string.format("[DoorwayCutter] Found %d shells to cut for doorway %d<->%d",
+            #shells, fromRoomId, toRoomId))
 
-        -- Cut each wall and collect the results
-        local cutWalls = {}
-        for _, wall in ipairs(walls) do
-            local result = cutWall(self, wall, cutterPart)
-            if result then
-                table.insert(cutWalls, result)
-            end
+        -- Cut each shell
+        for _, shell in ipairs(shells) do
+            cutShell(self, shell, cutterPart)
         end
-
-        -- Remove duplicate overlapping walls (keep only one with the hole)
-        removeOverlappingWall(self, cutWalls)
 
         -- Destroy the cutter part after cutting holes
         cutterPart:Destroy()
@@ -531,16 +514,16 @@ local DoorwayCutter = Node.extend(function(parent)
                 local state = getState(self)
                 if state.container then
                     local partCount = 0
-                    local slabCount = 0
+                    local shellCount = 0
                     for _, child in ipairs(state.container:GetDescendants()) do
                         if child:IsA("BasePart") then
                             partCount = partCount + 1
-                            if child.Name:match("^Slab_") then
-                                slabCount = slabCount + 1
+                            if child.Name == "Shell" then
+                                shellCount = shellCount + 1
                             end
                         end
                     end
-                    print(string.format("[DoorwayCutter] Container has %d parts, %d slabs", partCount, slabCount))
+                    print(string.format("[DoorwayCutter] Container has %d parts, %d shells", partCount, shellCount))
                 else
                     warn("[DoorwayCutter] No container!")
                 end

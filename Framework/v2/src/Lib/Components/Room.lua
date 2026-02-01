@@ -2,7 +2,7 @@
     LibPureFiction Framework v2
     Room.lua - Self-Contained Room Manager Node
 
-    Copyright (c) 2025 Adam Stearns / Pure Fiction Records LLC
+    Copyright (c) 2025-2026 Adam Stearns / Pure Fiction Records LLC
     All rights reserved.
 
     ============================================================================
@@ -13,12 +13,26 @@
     into a proper room with walls, floor, ceiling, and zone detection.
 
     A Room:
-    - Takes an existing Part (blocking volume)
-    - Shrinks it to create interior space
-    - Creates 1-stud thick slabs on all 6 sides
-    - Converts the interior to a zone detector (CanCollide=false, CanTouch=true)
+    - Takes an existing Part (blocking volume) that defines INTERIOR space
+    - Creates a CSG hollow shell around it (outer - inner = walls)
+    - Interior volume becomes zone detector (CanCollide=false, CanTouch=true)
     - Tracks what enters/exits via an internal Zone node
-    - Acts as an orchestrator for everything inside its bounds
+    - Provides mounting helpers for placing objects on interior walls
+
+    CSG Shell Approach (2026-02-01 refactor):
+    - Previously: 6 separate wall slabs (7 parts total)
+    - Now: 1 CSG shell + 1 zone part (2 parts total)
+    - Benefits: Fewer parts, simpler doorway cutting, cleaner geometry
+    - Interior volume serves dual purpose: zone detection + mounting reference
+
+    Mounting Reference:
+    The zone part's faces correspond to interior wall surfaces:
+        +Z face = North wall interior
+        -Z face = South wall interior
+        +X face = East wall interior
+        -X face = West wall interior
+        +Y face = Ceiling interior
+        -Y face = Floor interior
 
     Rooms don't know or care about their place in a larger map. They only
     manage what happens within their 6 sides.
@@ -29,10 +43,10 @@
 
     IN (receives):
         onConfigure({ part, wallThickness?, material?, color? })
-            - part: The blocking volume Part to convert
+            - part: The blocking volume Part (defines interior dimensions)
             - wallThickness: Thickness of walls (default 1)
-            - material: Material for walls (default SmoothPlastic)
-            - color: Color for walls (default gray)
+            - material: Material for walls (default Brick)
+            - color: Color for walls (default warm brown)
 
         onStart()
             - Enable zone detection
@@ -77,7 +91,7 @@ local Room = Node.extend(function(parent)
                 sourcePart = nil,
                 container = nil,
                 zonePart = nil,
-                slabs = {},
+                shell = nil,  -- CSG shell (replaces slabs)
                 zone = nil,
                 orchestrator = nil,
             }
@@ -90,66 +104,81 @@ local Room = Node.extend(function(parent)
     end
 
     ----------------------------------------------------------------------------
-    -- SLAB CREATION
+    -- CSG SHELL CONSTRUCTION
     ----------------------------------------------------------------------------
 
     --[[
-        Create a single slab on one face of the room.
-        face: "N", "S", "E", "W", "U", "D"
+        Build a hollow shell using CSG subtraction.
+
+        New approach (CSG Shell):
+        - Inner volume = original room dims (this IS the interior)
+        - Outer volume = inner + (wallThickness * 2) on each axis
+        - Shell = Outer:SubtractAsync({Inner})
+
+        Benefits:
+        - 2 parts per room (shell + zone) vs 7 parts (6 slabs + zone)
+        - Simpler doorway cutting (cut 1 shell vs 2+ slabs)
+        - Inner volume serves dual purpose: zone detector + mounting reference
     --]]
-    local function createSlab(self, face, zoneSize, zonePos, thickness)
+    local function buildShell(self, innerSize, position, thickness)
         local state = getState(self)
         local config = state.config
 
-        local slab = Instance.new("Part")
-        slab.Name = "Slab_" .. face
-        slab.Anchored = true
-        slab.CanCollide = true
-        slab.Material = config.material
-        slab.Color = config.color
+        -- Create outer volume (shell boundary)
+        local outerSize = Vector3.new(
+            innerSize.X + thickness * 2,
+            innerSize.Y + thickness * 2,
+            innerSize.Z + thickness * 2
+        )
 
-        local sx, sy, sz = zoneSize.X, zoneSize.Y, zoneSize.Z
-        local px, py, pz = zonePos.X, zonePos.Y, zonePos.Z
+        local outerPart = Instance.new("Part")
+        outerPart.Name = "Outer_Temp"
+        outerPart.Size = outerSize
+        outerPart.Position = position
+        outerPart.Anchored = true
+        outerPart.CanCollide = true
+        outerPart.Material = config.material
+        outerPart.Color = config.color
+        outerPart.Parent = state.container
 
-        if face == "N" then
-            -- North wall (+Z)
-            slab.Size = Vector3.new(sx + thickness * 2, sy + thickness * 2, thickness)
-            slab.Position = Vector3.new(px, py, pz + sz / 2 + thickness / 2)
-        elseif face == "S" then
-            -- South wall (-Z)
-            slab.Size = Vector3.new(sx + thickness * 2, sy + thickness * 2, thickness)
-            slab.Position = Vector3.new(px, py, pz - sz / 2 - thickness / 2)
-        elseif face == "E" then
-            -- East wall (+X)
-            slab.Size = Vector3.new(thickness, sy + thickness * 2, sz + thickness * 2)
-            slab.Position = Vector3.new(px + sx / 2 + thickness / 2, py, pz)
-        elseif face == "W" then
-            -- West wall (-X)
-            slab.Size = Vector3.new(thickness, sy + thickness * 2, sz + thickness * 2)
-            slab.Position = Vector3.new(px - sx / 2 - thickness / 2, py, pz)
-        elseif face == "U" then
-            -- Ceiling (+Y)
-            slab.Size = Vector3.new(sx, thickness, sz)
-            slab.Position = Vector3.new(px, py + sy / 2 + thickness / 2, pz)
-        elseif face == "D" then
-            -- Floor (-Y)
-            slab.Size = Vector3.new(sx, thickness, sz)
-            slab.Position = Vector3.new(px, py - sy / 2 - thickness / 2, pz)
+        -- Create inner volume (to subtract)
+        local innerPart = Instance.new("Part")
+        innerPart.Name = "Inner_Temp"
+        innerPart.Size = innerSize
+        innerPart.Position = position
+        innerPart.Anchored = true
+        innerPart.Parent = state.container
+
+        -- Perform CSG subtraction to create hollow shell
+        local success, shell = pcall(function()
+            return outerPart:SubtractAsync({ innerPart })
+        end)
+
+        -- Cleanup temp parts
+        outerPart:Destroy()
+        innerPart:Destroy()
+
+        if not success or not shell then
+            self.Err:Fire({
+                reason = "csg_failed",
+                message = "CSG SubtractAsync failed",
+                roomId = self.id,
+                error = tostring(shell),
+            })
+            return nil
         end
 
-        slab.Parent = state.container
-        table.insert(state.slabs, slab)
+        -- Configure shell
+        shell.Name = "Shell"
+        shell.Anchored = true
+        shell.CanCollide = true
+        shell.Material = config.material
+        shell.Color = config.color
+        shell.CollisionFidelity = Enum.CollisionFidelity.PreciseConvexDecomposition
+        shell.Parent = state.container
 
-        return slab
-    end
-
-    --[[
-        Build all 6 slabs around the zone.
-    --]]
-    local function buildSlabs(self, zoneSize, zonePos, thickness)
-        for _, face in ipairs({ "N", "S", "E", "W", "U", "D" }) do
-            createSlab(self, face, zoneSize, zonePos, thickness)
-        end
+        state.shell = shell
+        return shell
     end
 
     ----------------------------------------------------------------------------
@@ -157,7 +186,10 @@ local Room = Node.extend(function(parent)
     ----------------------------------------------------------------------------
 
     --[[
-        Convert a blocking volume into a room with walls and zone detection.
+        Convert a blocking volume into a room with CSG shell and zone detection.
+
+        The source part defines the INTERIOR dimensions (not shrunk).
+        Walls are built OUTSIDE the interior space.
     --]]
     local function buildRoom(self, sourcePart)
         local state = getState(self)
@@ -168,24 +200,17 @@ local Room = Node.extend(function(parent)
         state.sourcePart = sourcePart
 
         -- Get original dimensions and position
-        local originalSize = sourcePart.Size
-        local originalPos = sourcePart.Position
+        -- These ARE the interior dimensions (no shrinking)
+        local interiorSize = sourcePart.Size
+        local interiorPos = sourcePart.Position
 
-        -- Calculate zone size (shrink by thickness on each side)
-        local zoneSize = Vector3.new(
-            originalSize.X - thickness * 2,
-            originalSize.Y - thickness * 2,
-            originalSize.Z - thickness * 2
-        )
-
-        -- Ensure zone isn't negative
-        if zoneSize.X <= 0 or zoneSize.Y <= 0 or zoneSize.Z <= 0 then
+        -- Validate minimum size
+        if interiorSize.X <= 0 or interiorSize.Y <= 0 or interiorSize.Z <= 0 then
             self.Err:Fire({
                 reason = "room_too_small",
-                message = "Source part too small for wall thickness",
+                message = "Source part has invalid dimensions",
                 roomId = self.id,
-                originalSize = originalSize,
-                wallThickness = thickness,
+                originalSize = interiorSize,
             })
             return false
         end
@@ -196,26 +221,33 @@ local Room = Node.extend(function(parent)
         state.container = container
 
         -- Create zone Part (the interior detection volume)
+        -- This serves dual purpose:
+        -- 1. Zone detector (CanCollide=false, CanTouch=true)
+        -- 2. Mounting reference (CFrame math against real Part surfaces)
         local zonePart = Instance.new("Part")
         zonePart.Name = "Zone"
-        zonePart.Size = zoneSize
-        zonePart.Position = originalPos
+        zonePart.Size = interiorSize
+        zonePart.Position = interiorPos
         zonePart.Anchored = true
         zonePart.CanCollide = false
         zonePart.CanTouch = true
-        zonePart.Transparency = 0.8
+        zonePart.Transparency = 1  -- Invisible but functional
         zonePart.Material = Enum.Material.ForceField
         zonePart.Color = config.zoneColor
         zonePart.Parent = container
         state.zonePart = zonePart
 
-        -- Build the 6 slabs
-        buildSlabs(self, zoneSize, originalPos, thickness)
+        -- Build the CSG shell around the interior
+        local shell = buildShell(self, interiorSize, interiorPos, thickness)
+        if not shell then
+            container:Destroy()
+            return false
+        end
 
         -- Parent container to same parent as source
         container.Parent = sourcePart.Parent
 
-        -- Remove or hide the source part
+        -- Remove the source part
         sourcePart:Destroy()
 
         -- Set PrimaryPart for the container
@@ -436,9 +468,9 @@ local Room = Node.extend(function(parent)
             return state.container
         end,
 
-        getSlabs = function(self)
+        getShell = function(self)
             local state = getState(self)
-            return state.slabs
+            return state.shell
         end,
 
         getBounds = function(self)
@@ -464,6 +496,108 @@ local Room = Node.extend(function(parent)
         getOrchestrator = function(self)
             local state = getState(self)
             return state.orchestrator
+        end,
+
+        ------------------------------------------------------------------------
+        -- MOUNTING HELPERS
+        ------------------------------------------------------------------------
+
+        --[[
+            Get the CFrame for a specific interior wall face.
+            face: "N" (+Z), "S" (-Z), "E" (+X), "W" (-X), "U" (+Y ceiling), "D" (-Y floor)
+
+            Returns the CFrame at the center of that interior face.
+            The CFrame's lookVector points INTO the room (away from wall).
+        --]]
+        getWallCFrame = function(self, face)
+            local state = getState(self)
+            if not state.zonePart then return nil end
+
+            local zone = state.zonePart
+            local size = zone.Size
+            local cf = zone.CFrame
+
+            if face == "N" then
+                -- North wall (+Z face) - lookVector points -Z (into room)
+                return cf * CFrame.new(0, 0, size.Z / 2) * CFrame.Angles(0, math.pi, 0)
+            elseif face == "S" then
+                -- South wall (-Z face) - lookVector points +Z (into room)
+                return cf * CFrame.new(0, 0, -size.Z / 2)
+            elseif face == "E" then
+                -- East wall (+X face) - lookVector points -X (into room)
+                return cf * CFrame.new(size.X / 2, 0, 0) * CFrame.Angles(0, math.pi / 2, 0)
+            elseif face == "W" then
+                -- West wall (-X face) - lookVector points +X (into room)
+                return cf * CFrame.new(-size.X / 2, 0, 0) * CFrame.Angles(0, -math.pi / 2, 0)
+            elseif face == "U" then
+                -- Ceiling (+Y face) - lookVector points -Y (into room)
+                return cf * CFrame.new(0, size.Y / 2, 0) * CFrame.Angles(math.pi / 2, 0, 0)
+            elseif face == "D" then
+                -- Floor (-Y face) - lookVector points +Y (into room)
+                return cf * CFrame.new(0, -size.Y / 2, 0) * CFrame.Angles(-math.pi / 2, 0, 0)
+            end
+
+            return nil
+        end,
+
+        --[[
+            Get the size of a specific interior wall face.
+            face: "N", "S", "E", "W", "U", "D"
+
+            Returns Vector2 (width, height) from viewer's perspective facing the wall.
+        --]]
+        getWallSize = function(self, face)
+            local state = getState(self)
+            if not state.zonePart then return nil end
+
+            local size = state.zonePart.Size
+
+            if face == "N" or face == "S" then
+                -- Z-facing walls: width = X, height = Y
+                return Vector2.new(size.X, size.Y)
+            elseif face == "E" or face == "W" then
+                -- X-facing walls: width = Z, height = Y
+                return Vector2.new(size.Z, size.Y)
+            elseif face == "U" or face == "D" then
+                -- Y-facing walls (floor/ceiling): width = X, height = Z
+                return Vector2.new(size.X, size.Z)
+            end
+
+            return nil
+        end,
+
+        --[[
+            Mount an object to an interior wall face.
+            face: "N", "S", "E", "W", "U", "D"
+            offset: Vector3 offset from wall center (X = right, Y = up, Z = depth from wall)
+            object: The Part or Model to mount
+
+            The object will be positioned relative to the wall face,
+            with Z offset moving away from the wall into the room.
+        --]]
+        mountToWall = function(self, face, offset, object)
+            local wallCF = self:getWallCFrame(face)
+            if not wallCF then return false end
+
+            offset = offset or Vector3.new(0, 0, 0)
+
+            -- Apply offset in wall-local space
+            -- X = right along wall, Y = up along wall, Z = into room
+            local mountCF = wallCF * CFrame.new(offset.X, offset.Y, offset.Z)
+
+            if object:IsA("Model") then
+                if object.PrimaryPart then
+                    object:SetPrimaryPartCFrame(mountCF)
+                else
+                    -- Try to move model by its bounding box center
+                    local _, size = object:GetBoundingBox()
+                    object:MoveTo(mountCF.Position)
+                end
+            elseif object:IsA("BasePart") then
+                object.CFrame = mountCF
+            end
+
+            return true
         end,
     }
 end)

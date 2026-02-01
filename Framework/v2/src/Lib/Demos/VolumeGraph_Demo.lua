@@ -6,13 +6,6 @@
     ```lua
     local Demos = require(game.ReplicatedStorage.Lib.Demos)
     Demos.VolumeGraph.run()
-
-    -- With specific strategy
-    Demos.VolumeGraph.run({ strategy = "BSP" })
-    Demos.VolumeGraph.run({ strategy = "Grid" })
-    Demos.VolumeGraph.run({ strategy = "Organic" })
-    Demos.VolumeGraph.run({ strategy = "Radial" })
-    Demos.VolumeGraph.run({ strategy = "Poisson" })
     ```
 --]]
 
@@ -47,19 +40,15 @@ function Demo.run(config)
     local DoorwayCutter = Lib.Components.DoorwayCutter
 
     local rooms = {}
-    local roomContainers = {}  -- Map room ID to container
-    local layouts = nil
+    local doorwayCutter = nil
+    local finalLayouts = nil
 
     local baseUnit = config.baseUnit or 15
     local wallThickness = config.wallThickness or 1
 
     ---------------------------------------------------------------------------
-    -- STAGE 1: GENERATE ROOM LAYOUTS
+    -- CREATE VOLUMEGRAPH
     ---------------------------------------------------------------------------
-
-    print("==========================================")
-    print("[Demo] STAGE 1: Generating room layouts")
-    print("==========================================")
 
     local volumeGraph = VolumeGraph:new({ id = "Demo_VolumeGraph" })
     volumeGraph.Sys.onInit(volumeGraph)
@@ -80,80 +69,11 @@ function Demo.run(config)
 
     volumeGraph.In.onConfigure(volumeGraph, graphConfig)
 
-    -- Collect layouts from generation
-    local generationComplete = false
-    local vgOriginalFire = volumeGraph.Out.Fire
-    volumeGraph.Out.Fire = function(outSelf, signal, data)
-        if signal == "complete" then
-            layouts = data.layouts
-            generationComplete = true
-            print(string.format("[Demo] Generated %d room layouts", #layouts))
-        end
-        vgOriginalFire(outSelf, signal, data)
-    end
-
-    local origin = config.origin or { 0, 80, 0 }
-    volumeGraph.In.onGenerate(volumeGraph, { origin = origin })
-
-    -- Wait for generation
-    while not generationComplete do
-        task.wait()
-    end
-
-    if not layouts or #layouts == 0 then
-        warn("[Demo] No layouts generated!")
-        return nil
-    end
-
     ---------------------------------------------------------------------------
-    -- STAGE 2: BUILD ROOM GEOMETRY
+    -- CREATE DOORWAY CUTTER
     ---------------------------------------------------------------------------
 
-    print("==========================================")
-    print("[Demo] STAGE 2: Building room geometry")
-    print("==========================================")
-
-    for _, layout in ipairs(layouts) do
-        print(string.format("[Demo] Building Room %d at (%.1f, %.1f, %.1f)",
-            layout.id, layout.position[1], layout.position[2], layout.position[3]))
-
-        -- Create blocking volume part
-        local blockPart = Instance.new("Part")
-        blockPart.Name = "Block_" .. layout.id
-        blockPart.Size = Vector3.new(layout.dims[1], layout.dims[2], layout.dims[3])
-        blockPart.Position = Vector3.new(layout.position[1], layout.position[2], layout.position[3])
-        blockPart.Anchored = true
-        blockPart.CanCollide = false
-        blockPart.Transparency = 1
-        blockPart.Parent = demoFolder
-
-        -- Create Room node
-        local roomId = "Room_" .. layout.id
-        local room = Room:new({ id = roomId })
-        room.Sys.onInit(room)
-
-        room.In.onConfigure(room, {
-            part = blockPart,
-            wallThickness = wallThickness,
-        })
-        room.Sys.onStart(room)
-
-        table.insert(rooms, room)
-        roomContainers[layout.id] = room:getContainer()
-    end
-
-    print(string.format("[Demo] Built %d rooms", #rooms))
-    task.wait(0.1)  -- Let geometry settle
-
-    ---------------------------------------------------------------------------
-    -- STAGE 3: CUT DOORWAYS
-    ---------------------------------------------------------------------------
-
-    print("==========================================")
-    print("[Demo] STAGE 3: Cutting doorways")
-    print("==========================================")
-
-    local doorwayCutter = DoorwayCutter:new({ id = "Demo_DoorwayCutter" })
+    doorwayCutter = DoorwayCutter:new({ id = "Demo_DoorwayCutter" })
     doorwayCutter.Sys.onInit(doorwayCutter)
 
     doorwayCutter.In.onConfigure(doorwayCutter, {
@@ -163,42 +83,81 @@ function Demo.run(config)
         container = demoFolder,
     })
 
-    -- Cut doorways (without ladders/poles for now)
-    doorwayCutter.In.onRoomsComplete(doorwayCutter, {
-        layouts = layouts,
-    })
+    ---------------------------------------------------------------------------
+    -- WIRE SIGNALS
+    ---------------------------------------------------------------------------
 
-    task.wait(0.1)  -- Let CSG operations complete
+    local vgOriginalFire = volumeGraph.Out.Fire
+    volumeGraph.Out.Fire = function(outSelf, signal, data)
+        if signal == "roomLayout" then
+            print(string.format("[Demo] Room %d at (%.1f, %.1f, %.1f) dims (%.1f, %.1f, %.1f)",
+                data.id, data.position[1], data.position[2], data.position[3],
+                data.dims[1], data.dims[2], data.dims[3]))
+
+            -- Create blocking volume part for Room node
+            local blockPart = Instance.new("Part")
+            blockPart.Name = "Block_" .. data.id
+            blockPart.Size = Vector3.new(data.dims[1], data.dims[2], data.dims[3])
+            blockPart.Position = Vector3.new(data.position[1], data.position[2], data.position[3])
+            blockPart.Anchored = true
+            blockPart.CanCollide = false
+            blockPart.Transparency = 1
+            blockPart.Parent = demoFolder
+
+            -- Create Room node from the blocking volume
+            local roomId = "Room_" .. data.id
+            local room = Room:new({ id = roomId })
+            room.Sys.onInit(room)
+
+            room.In.onConfigure(room, {
+                part = blockPart,
+                wallThickness = wallThickness,
+            })
+            room.Sys.onStart(room)
+            table.insert(rooms, room)
+
+        elseif signal == "complete" then
+            print("==========================================")
+            print("[Demo] GENERATION COMPLETE")
+            print("  Seed:", data.seed)
+            print("  Total Rooms:", data.totalRooms)
+            print("==========================================")
+
+            finalLayouts = data.layouts
+
+            -- Cut doorways
+            print("[Demo] Cutting doorways...")
+            doorwayCutter.In.onRoomsComplete(doorwayCutter, {
+                layouts = data.layouts,
+            })
+
+            -- Add lights
+            print("[Demo] Adding lights...")
+            Demo.addLights(demoFolder, data.layouts)
+
+            -- Add climbing aids
+            print("[Demo] Adding climbing aids...")
+            Demo.addClimbingAids(demoFolder, data.layouts, wallThickness)
+
+            -- Move spawn
+            print("[Demo] Moving spawn point...")
+            Demo.moveSpawnToFirstRoom(data.layouts)
+        end
+
+        vgOriginalFire(outSelf, signal, data)
+    end
 
     ---------------------------------------------------------------------------
-    -- STAGE 4: ADD LIGHTS
+    -- START GENERATION
     ---------------------------------------------------------------------------
 
     print("==========================================")
-    print("[Demo] STAGE 4: Adding lights")
+    print("[Demo] Starting VolumeGraph generation")
+    print("  Strategy:", graphConfig.strategy)
+    print("  BaseUnit:", baseUnit)
     print("==========================================")
 
-    Demo.addLights(demoFolder, layouts)
-
-    ---------------------------------------------------------------------------
-    -- STAGE 5: ADD CLIMBING AIDS (ladders/poles)
-    ---------------------------------------------------------------------------
-
-    print("==========================================")
-    print("[Demo] STAGE 5: Adding climbing aids")
-    print("==========================================")
-
-    Demo.addClimbingAids(demoFolder, layouts, wallThickness)
-
-    ---------------------------------------------------------------------------
-    -- STAGE 6: RELOCATE SPAWN POINT
-    ---------------------------------------------------------------------------
-
-    print("==========================================")
-    print("[Demo] STAGE 6: Relocating spawn point")
-    print("==========================================")
-
-    Demo.moveSpawnToFirstRoom(layouts)
+    local origin = config.origin or { 0, 80, 0 }
 
     -- Disable baseplate
     local baseplate = workspace:FindFirstChild("Baseplate")
@@ -207,19 +166,21 @@ function Demo.run(config)
         baseplate.Transparency = 0.8
     end
 
+    volumeGraph.In.onGenerate(volumeGraph, {
+        origin = origin,
+    })
+
     ---------------------------------------------------------------------------
     -- CLEANUP HANDLER
     ---------------------------------------------------------------------------
-
-    print("==========================================")
-    print("[Demo] COMPLETE")
-    print("==========================================")
 
     demoFolder.AncestryChanged:Connect(function(_, parent)
         if not parent then
             print("[Demo] Cleanup...")
             volumeGraph.Sys.onStop(volumeGraph)
-            doorwayCutter.Sys.onStop(doorwayCutter)
+            if doorwayCutter then
+                doorwayCutter.Sys.onStop(doorwayCutter)
+            end
             for _, room in ipairs(rooms) do
                 room.Sys.onStop(room)
             end
@@ -230,7 +191,7 @@ function Demo.run(config)
         volumeGraph = volumeGraph,
         doorwayCutter = doorwayCutter,
         rooms = rooms,
-        layouts = layouts,
+        layouts = finalLayouts,
         folder = demoFolder,
     }
 end
@@ -240,7 +201,6 @@ end
 --------------------------------------------------------------------------------
 
 function Demo.addLights(container, layouts)
-    local lightCount = 0
     for _, layout in ipairs(layouts) do
         local lightPart = Instance.new("Part")
         lightPart.Name = "Light_" .. layout.id
@@ -266,23 +226,15 @@ function Demo.addLights(container, layouts)
         pointLight.Brightness = 1
         pointLight.Range = math.max(dims[1], dims[3]) * 0.8
         pointLight.Parent = lightPart
-
-        lightCount = lightCount + 1
     end
-    print(string.format("[Demo] Added %d lights", lightCount))
 end
 
 function Demo.addClimbingAids(container, layouts, wallThickness)
-    local ladderCount = 0
-    local poleCount = 0
-
-    -- Build room lookup
     local roomsById = {}
     for _, layout in ipairs(layouts) do
         roomsById[layout.id] = layout
     end
 
-    -- Check each connection for height differences
     local processed = {}
     for _, layout in ipairs(layouts) do
         for _, connId in ipairs(layout.connections) do
@@ -299,7 +251,6 @@ function Demo.addClimbingAids(container, layouts, wallThickness)
                 if roomB then
                     local floorA = roomA.position[2] - roomA.dims[2] / 2
                     local floorB = roomB.position[2] - roomB.dims[2] / 2
-                    local floorDiff = math.abs(floorA - floorB)
 
                     -- Find adjacency axis
                     local axis = nil
@@ -312,18 +263,17 @@ function Demo.addClimbingAids(container, layouts, wallThickness)
                         end
                     end
 
+                    local doorX = (roomA.position[1] + roomB.position[1]) / 2
+                    local doorZ = (roomA.position[3] + roomB.position[3]) / 2
+
                     if axis == 2 then
-                        -- Vertical connection (ceiling/floor) - add pole
+                        -- Vertical connection - add pole
                         local lowerFloor = math.min(floorA, floorB)
                         local higherCeiling = math.max(
                             roomA.position[2] + roomA.dims[2]/2,
                             roomB.position[2] + roomB.dims[2]/2
                         )
                         local poleHeight = higherCeiling - lowerFloor
-
-                        -- Find door center (overlap area)
-                        local doorX = (roomA.position[1] + roomB.position[1]) / 2
-                        local doorZ = (roomA.position[3] + roomB.position[3]) / 2
 
                         local pole = Instance.new("TrussPart")
                         pole.Name = "Pole_" .. roomA.id .. "_" .. roomB.id
@@ -333,24 +283,18 @@ function Demo.addClimbingAids(container, layouts, wallThickness)
                         pole.Material = Enum.Material.Metal
                         pole.Color = Color3.fromRGB(60, 60, 70)
                         pole.Parent = container
-                        poleCount = poleCount + 1
 
-                    elseif floorDiff >= 3 then
-                        -- Horizontal connection with height difference - add ladders
+                    elseif axis and math.abs(floorA - floorB) >= 3 then
+                        -- Horizontal with height diff - add ladders on both sides
                         local lowerFloor = math.min(floorA, floorB)
                         local higherFloor = math.max(floorA, floorB)
                         local ladderHeight = higherFloor - lowerFloor
 
-                        -- Find door center
-                        local doorX = (roomA.position[1] + roomB.position[1]) / 2
-                        local doorZ = (roomA.position[3] + roomB.position[3]) / 2
-
-                        -- Add ladder on both sides
                         for _, offset in ipairs({ -1.5, 1.5 }) do
                             local ladderPos
-                            if axis == 1 then  -- X wall
+                            if axis == 1 then
                                 ladderPos = Vector3.new(doorX + offset, lowerFloor + ladderHeight/2, doorZ)
-                            else  -- Z wall
+                            else
                                 ladderPos = Vector3.new(doorX, lowerFloor + ladderHeight/2, doorZ + offset)
                             end
 
@@ -362,22 +306,16 @@ function Demo.addClimbingAids(container, layouts, wallThickness)
                             ladder.Material = Enum.Material.Metal
                             ladder.Color = Color3.fromRGB(80, 80, 80)
                             ladder.Parent = container
-                            ladderCount = ladderCount + 1
                         end
                     end
                 end
             end
         end
     end
-
-    print(string.format("[Demo] Added %d ladders, %d poles", ladderCount, poleCount))
 end
 
 function Demo.moveSpawnToFirstRoom(layouts)
-    if not layouts or #layouts == 0 then
-        warn("[Demo] No layouts for spawn relocation!")
-        return
-    end
+    if not layouts or #layouts == 0 then return end
 
     local firstRoom = layouts[1]
     local pos = firstRoom.position
@@ -394,7 +332,7 @@ function Demo.moveSpawnToFirstRoom(layouts)
     if spawnLocation then
         spawnLocation.Position = spawnPos
         spawnLocation.Anchored = true
-        print("[Demo] Moved SpawnLocation to first room at", spawnPos)
+        print("[Demo] Moved SpawnLocation to", spawnPos)
     else
         spawnLocation = Instance.new("SpawnLocation")
         spawnLocation.Name = "SpawnLocation"
@@ -405,46 +343,7 @@ function Demo.moveSpawnToFirstRoom(layouts)
         spawnLocation.Material = Enum.Material.SmoothPlastic
         spawnLocation.Color = Color3.fromRGB(100, 100, 100)
         spawnLocation.Parent = workspace
-        print("[Demo] Created SpawnLocation in first room at", spawnPos)
-    end
-end
-
-function Demo.drawConnections(layouts, container)
-    local roomsById = {}
-    for _, layout in ipairs(layouts) do
-        roomsById[layout.id] = layout
-    end
-
-    local drawn = {}
-    for _, layout in ipairs(layouts) do
-        for _, connId in ipairs(layout.connections) do
-            local key = layout.id < connId and (layout.id .. "_" .. connId) or (connId .. "_" .. layout.id)
-
-            if not drawn[key] then
-                drawn[key] = true
-
-                local connLayout = roomsById[connId]
-                if connLayout then
-                    local fromVec = Vector3.new(layout.position[1], layout.position[2], layout.position[3])
-                    local toVec = Vector3.new(connLayout.position[1], connLayout.position[2], connLayout.position[3])
-
-                    local midpoint = (fromVec + toVec) / 2
-                    local length = (toVec - fromVec).Magnitude
-
-                    if length > 0.1 then
-                        local beam = Instance.new("Part")
-                        beam.Name = "Connection_" .. key
-                        beam.Size = Vector3.new(0.5, 0.5, length)
-                        beam.CFrame = CFrame.lookAt(midpoint, toVec)
-                        beam.Anchored = true
-                        beam.CanCollide = false
-                        beam.Material = Enum.Material.Neon
-                        beam.Color = Color3.fromRGB(0, 255, 150)
-                        beam.Parent = container
-                    end
-                end
-            end
-        end
+        print("[Demo] Created SpawnLocation at", spawnPos)
     end
 end
 

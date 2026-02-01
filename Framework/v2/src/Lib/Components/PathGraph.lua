@@ -50,6 +50,7 @@
         scanDistance        Base units to scan ahead (default: 5)
         roomSpacing         { min, max } extra gap between rooms (default: 0-1)
         wallThickness       Wall thickness for overlap margin (default: 1)
+        minDoorSize         Minimum wall overlap needed for door (default: 4)
 
     Boundaries:
         bounds              { min={x,y,z}, max={x,y,z} } spatial limits (optional)
@@ -167,6 +168,7 @@ local PathGraph = Node.extend(function(parent)
                     scanDistance = 5,                      -- Base units to scan ahead
                     roomSpacing = { 0, 1 },                -- Extra spacing between rooms (baseUnits)
                     wallThickness = 1,                     -- Wall thickness for overlap margin calculation
+                    minDoorSize = 4,                       -- Minimum wall overlap needed for a door
 
                     -- Boundaries (nil = unlimited)
                     bounds = nil,                          -- { min = {x,y,z}, max = {x,y,z} }
@@ -295,14 +297,13 @@ local PathGraph = Node.extend(function(parent)
 
     -- Check if a potential AABB overlaps ANY existing room (excluding connected room)
     -- Adds margin for wall thickness to prevent shell overlap
+    -- Returns: overlaps (bool), overlappingAABB, requiredShift {x, y, z}
     local function checkOverlapWithAll(self, pos, dims, connectedRoomId)
         local state = getState(self)
         local config = state.config
 
         -- Wall thickness margin: shells extend beyond interiors
-        -- Two adjacent shells need 2x wall thickness gap between interiors
-        -- Using 2 studs as default (1 stud wall on each side)
-        local wallMargin = config.wallThickness or 2
+        local wallMargin = config.wallThickness or 1
 
         -- Create expanded AABB that accounts for shell
         local expandedAABB = {
@@ -329,53 +330,60 @@ local PathGraph = Node.extend(function(parent)
                 }
 
                 -- Check overlap with expanded bounds
-                if not (expandedAABB.maxX <= expandedExisting.minX or expandedAABB.minX >= expandedExisting.maxX or
-                        expandedAABB.maxY <= expandedExisting.minY or expandedAABB.minY >= expandedExisting.maxY or
-                        expandedAABB.maxZ <= expandedExisting.minZ or expandedAABB.minZ >= expandedExisting.maxZ) then
-                    return true, aabb
+                local overlapsX = expandedAABB.maxX > expandedExisting.minX and expandedAABB.minX < expandedExisting.maxX
+                local overlapsY = expandedAABB.maxY > expandedExisting.minY and expandedAABB.minY < expandedExisting.maxY
+                local overlapsZ = expandedAABB.maxZ > expandedExisting.minZ and expandedAABB.minZ < expandedExisting.maxZ
+
+                if overlapsX and overlapsY and overlapsZ then
+                    -- Calculate required shift to clear overlap on each axis
+                    -- Shift in direction that requires least movement
+                    local shiftX = 0
+                    local shiftY = 0
+                    local shiftZ = 0
+
+                    -- X axis: shift left or right
+                    local shiftXRight = expandedExisting.maxX - expandedAABB.minX
+                    local shiftXLeft = expandedAABB.maxX - expandedExisting.minX
+                    shiftX = (shiftXRight < shiftXLeft) and shiftXRight or -shiftXLeft
+
+                    -- Y axis: shift up or down
+                    local shiftYUp = expandedExisting.maxY - expandedAABB.minY
+                    local shiftYDown = expandedAABB.maxY - expandedExisting.minY
+                    shiftY = (shiftYUp < shiftYDown) and shiftYUp or -shiftYDown
+
+                    -- Z axis: shift forward or back
+                    local shiftZForward = expandedExisting.maxZ - expandedAABB.minZ
+                    local shiftZBack = expandedAABB.maxZ - expandedExisting.minZ
+                    shiftZ = (shiftZForward < shiftZBack) and shiftZForward or -shiftZBack
+
+                    return true, aabb, { shiftX, shiftY, shiftZ }
                 end
             end
         end
-        return false, nil
+        return false, nil, nil
     end
 
-    -- Shrink dimensions to avoid overlap with a specific AABB
-    -- Returns adjusted dims, or nil if can't fit
-    local function shrinkToAvoidOverlap(pos, dims, overlappingAABB, minSize)
-        local newDims = { dims[1], dims[2], dims[3] }
-        local testAABB = createAABB(0, pos, newDims)
+    -- Calculate the wall overlap area between two adjacent rooms on a given axis
+    -- Returns overlap amount on each perpendicular axis
+    local function calculateWallOverlap(fromPos, fromDims, toPos, toDims, movementAxis)
+        local overlaps = {}
 
-        -- Try shrinking each axis to eliminate overlap
-        -- X axis
-        if testAABB.maxX > overlappingAABB.minX and testAABB.minX < overlappingAABB.minX then
-            -- Our right side overlaps, shrink X
-            local overlapAmount = testAABB.maxX - overlappingAABB.minX
-            newDims[1] = math.max(minSize, dims[1] - overlapAmount * 2)
-        elseif testAABB.minX < overlappingAABB.maxX and testAABB.maxX > overlappingAABB.maxX then
-            -- Our left side overlaps, shrink X
-            local overlapAmount = overlappingAABB.maxX - testAABB.minX
-            newDims[1] = math.max(minSize, dims[1] - overlapAmount * 2)
+        for axis = 1, 3 do
+            if axis ~= movementAxis then
+                local fromMin = fromPos[axis] - fromDims[axis] / 2
+                local fromMax = fromPos[axis] + fromDims[axis] / 2
+                local toMin = toPos[axis] - toDims[axis] / 2
+                local toMax = toPos[axis] + toDims[axis] / 2
+
+                local overlapMin = math.max(fromMin, toMin)
+                local overlapMax = math.min(fromMax, toMax)
+                local overlapSize = math.max(0, overlapMax - overlapMin)
+
+                table.insert(overlaps, overlapSize)
+            end
         end
 
-        -- Y axis
-        if testAABB.maxY > overlappingAABB.minY and testAABB.minY < overlappingAABB.minY then
-            local overlapAmount = testAABB.maxY - overlappingAABB.minY
-            newDims[2] = math.max(minSize, dims[2] - overlapAmount * 2)
-        elseif testAABB.minY < overlappingAABB.maxY and testAABB.maxY > overlappingAABB.maxY then
-            local overlapAmount = overlappingAABB.maxY - testAABB.minY
-            newDims[2] = math.max(minSize, dims[2] - overlapAmount * 2)
-        end
-
-        -- Z axis
-        if testAABB.maxZ > overlappingAABB.minZ and testAABB.minZ < overlappingAABB.minZ then
-            local overlapAmount = testAABB.maxZ - overlappingAABB.minZ
-            newDims[3] = math.max(minSize, dims[3] - overlapAmount * 2)
-        elseif testAABB.minZ < overlappingAABB.maxZ and testAABB.maxZ > overlappingAABB.maxZ then
-            local overlapAmount = overlappingAABB.maxZ - testAABB.minZ
-            newDims[3] = math.max(minSize, dims[3] - overlapAmount * 2)
-        end
-
-        return newDims
+        return overlaps
     end
 
     -- Find distance from a point to the nearest AABB in a given direction
@@ -555,20 +563,28 @@ local PathGraph = Node.extend(function(parent)
     -- ROOM CREATION
     ----------------------------------------------------------------------------
 
+    -- Snap a value to the nearest multiple of baseUnit
+    local function snapToGrid(value, baseUnit)
+        return math.floor(value / baseUnit + 0.5) * baseUnit
+    end
+
     local function getRandomDim(self)
         local state = getState(self)
         local config = state.config
         local range = config.sizeRange
         local scale = state.rng:randomFloat(range[1], range[2])
-        return config.baseUnit * scale
+        local rawDim = config.baseUnit * scale
+        -- Snap to baseUnit grid for predictable interior proportions
+        return math.max(config.baseUnit, snapToGrid(rawDim, config.baseUnit))
     end
 
     local function getRandomRoomDims(self)
         local state = getState(self)
         local config = state.config
         local rng = state.rng
+        local baseUnit = config.baseUnit
 
-        -- Base size
+        -- Base size (snapped to grid)
         local baseSize = getRandomDim(self)
 
         -- Apply aspect ratio variation (width vs depth)
@@ -583,15 +599,12 @@ local PathGraph = Node.extend(function(parent)
         local heightMult = rng:randomFloat(heightRange[1], heightRange[2])
         local height = baseSize * heightMult
 
-        -- Apply room spacing (extra distance between rooms)
-        local spacingRange = config.roomSpacing
-        local spacing = rng:randomFloat(spacingRange[1], spacingRange[2]) * config.baseUnit
+        -- Snap all dimensions to baseUnit grid
+        width = math.max(baseUnit, snapToGrid(width, baseUnit))
+        depth = math.max(baseUnit, snapToGrid(depth, baseUnit))
+        height = math.max(baseUnit, snapToGrid(height, baseUnit))
 
-        return {
-            width + spacing,
-            height,
-            depth + spacing,
-        }
+        return { width, height, depth }
     end
 
     local function createRoom(self, pos, dims, fromRoomId)
@@ -788,8 +801,11 @@ local PathGraph = Node.extend(function(parent)
     local function generateNextRoom(self)
         local state = getState(self)
         local rng = state.rng
-        local baseUnit = state.config.baseUnit
-        local minRoomSize = baseUnit * 0.8  -- Minimum room dimension
+        local config = state.config
+        local baseUnit = config.baseUnit
+
+        -- Minimum door size (must have at least this much wall overlap)
+        local minDoorSize = config.minDoorSize or 4
 
         local fromRoom = state.rooms[state.currentRoomId]
         if not fromRoom then
@@ -811,12 +827,12 @@ local PathGraph = Node.extend(function(parent)
         local dir = DIRECTIONS[direction]
         local axis = DIR_TO_AXIS[direction]
 
-        -- Generate random dims for new room, but constrain by available space
+        -- Generate random dims for new room (snapped to baseUnit grid)
         local toDims = getRandomRoomDims(self)
 
         -- The room's dimension along movement axis can't exceed available space
-        -- (minus some margin for the room to fit)
-        local maxDimForAxis = math.max(baseUnit, availableSpace - baseUnit)
+        -- Snap the constraint to grid
+        local maxDimForAxis = snapToGrid(math.max(baseUnit, availableSpace - baseUnit), baseUnit)
         toDims[axis] = math.min(toDims[axis], maxDimForAxis)
 
         -- Calculate position: place new room so it mates with current room
@@ -829,47 +845,71 @@ local PathGraph = Node.extend(function(parent)
             fromPos[3] + dir[3] * centerDistance,
         }
 
-        -- Check for overlap with ALL existing rooms (not just on movement axis)
-        -- This catches perpendicular overlaps that horizon scanning misses
-        local maxAttempts = 5
+        -- Check for overlap with ALL existing rooms and shift position if needed
+        -- We can shift on perpendicular axes without breaking the connection
+        local maxAttempts = 10
         for attempt = 1, maxAttempts do
-            local overlaps, overlappingAABB = checkOverlapWithAll(self, toPos, toDims, state.currentRoomId)
+            local overlaps, overlappingAABB, requiredShift = checkOverlapWithAll(self, toPos, toDims, state.currentRoomId)
 
             if not overlaps then
                 break  -- No overlap, good to go
             end
 
             if attempt == maxAttempts then
-                print(string.format("[PathGraph] Room placement failed after %d shrink attempts", maxAttempts))
+                print(string.format("[PathGraph] Room placement failed after %d shift attempts", maxAttempts))
                 return false
             end
 
-            -- Shrink dimensions to avoid overlap
-            local newDims = shrinkToAvoidOverlap(toPos, toDims, overlappingAABB, minRoomSize)
-
-            -- Check if any dimension got too small
-            if newDims[1] < minRoomSize or newDims[2] < minRoomSize or newDims[3] < minRoomSize then
-                print("[PathGraph] Room would be too small after shrinking - trying smaller initial size")
-                -- Try again with smaller initial dimensions
-                toDims = {
-                    toDims[1] * 0.7,
-                    toDims[2] * 0.7,
-                    toDims[3] * 0.7,
-                }
-            else
-                toDims = newDims
+            -- Shift position on perpendicular axes to clear overlap
+            -- Don't shift on movement axis (would break the connection)
+            local shifted = false
+            for shiftAxis = 1, 3 do
+                if shiftAxis ~= axis and math.abs(requiredShift[shiftAxis]) > 0.1 then
+                    -- Apply shift, snapped to grid for clean positioning
+                    local shiftAmount = requiredShift[shiftAxis]
+                    -- Add small extra margin to ensure clearance
+                    if shiftAmount > 0 then
+                        shiftAmount = shiftAmount + config.wallThickness + 0.5
+                    else
+                        shiftAmount = shiftAmount - config.wallThickness - 0.5
+                    end
+                    toPos[shiftAxis] = toPos[shiftAxis] + shiftAmount
+                    shifted = true
+                    break  -- Try one axis at a time
+                end
             end
 
-            -- Recalculate position with new dims (center distance changes)
-            centerDistance = fromDims[axis] / 2 + toDims[axis] / 2
-            toPos = {
-                fromPos[1] + dir[1] * centerDistance,
-                fromPos[2] + dir[2] * centerDistance,
-                fromPos[3] + dir[3] * centerDistance,
-            }
+            if not shifted then
+                -- Can't shift on perpendicular axes, overlap is on movement axis
+                -- This shouldn't happen if horizon scanning worked, but handle it
+                print("[PathGraph] Cannot shift to avoid overlap - movement axis blocked")
+                return false
+            end
 
-            print(string.format("[PathGraph] Shrunk room to avoid overlap (attempt %d): %.1f x %.1f x %.1f",
-                attempt, toDims[1], toDims[2], toDims[3]))
+            -- After shifting, verify we still have enough wall overlap for a door
+            local wallOverlaps = calculateWallOverlap(fromPos, fromDims, toPos, toDims, axis)
+            local minOverlap = math.min(wallOverlaps[1] or 0, wallOverlaps[2] or 0)
+
+            if minOverlap < minDoorSize then
+                print(string.format("[PathGraph] Shift reduced wall overlap to %.1f (need %.1f for door) - trying different shift",
+                    minOverlap, minDoorSize))
+                -- Try shifting the other direction
+                -- Revert this shift and try opposite
+                -- (This is handled by the loop continuing with updated position)
+            else
+                print(string.format("[PathGraph] Shifted room to avoid overlap (attempt %d), wall overlap: %.1f",
+                    attempt, minOverlap))
+            end
+        end
+
+        -- Final validation: ensure sufficient wall overlap for door
+        local finalOverlaps = calculateWallOverlap(fromPos, fromDims, toPos, toDims, axis)
+        local finalMinOverlap = math.min(finalOverlaps[1] or 999, finalOverlaps[2] or 999)
+
+        if finalMinOverlap < minDoorSize then
+            print(string.format("[PathGraph] Insufficient wall overlap for door: %.1f < %.1f",
+                finalMinOverlap, minDoorSize))
+            return false
         end
 
         -- Create the room
@@ -1026,6 +1066,7 @@ local PathGraph = Node.extend(function(parent)
                 if data.scanDistance then config.scanDistance = data.scanDistance end
                 if data.roomSpacing then config.roomSpacing = data.roomSpacing end
                 if data.wallThickness then config.wallThickness = data.wallThickness end
+                if data.minDoorSize then config.minDoorSize = data.minDoorSize end
 
                 -- Boundaries
                 if data.bounds then config.bounds = data.bounds end

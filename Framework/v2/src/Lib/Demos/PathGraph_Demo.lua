@@ -1,9 +1,6 @@
 --[[
     LibPureFiction Framework v2
-    PathGraph_Demo.lua - Incremental Path + Room Demo
-
-    Demonstrates the incremental architecture where PathGraph and RoomBlocker
-    work in lockstep, validating one segment at a time.
+    PathGraph_Demo.lua - Path + Room Volume Demo
 
     Usage:
     ```lua
@@ -37,24 +34,21 @@ function Demo.run(config)
     demoFolder.Name = "PathGraph_Demo"
     demoFolder.Parent = workspace
 
-    -- Get components
     local Lib = require(ReplicatedStorage:WaitForChild("Lib"))
     local PathGraph = Lib.Components.PathGraph
-    local RoomBlocker = Lib.Components.RoomBlocker
+    local Room = Lib.Components.Room
+
+    local rooms = {}
 
     ---------------------------------------------------------------------------
-    -- CREATE NODES
+    -- CREATE PATHGRAPH
     ---------------------------------------------------------------------------
 
     local pathGraph = PathGraph:new({ id = "Demo_PathGraph" })
     pathGraph.Sys.onInit(pathGraph)
 
-    local roomBlocker = RoomBlocker:new({ id = "Demo_RoomBlocker" })
-    roomBlocker.Sys.onInit(roomBlocker)
-
     local baseUnit = config.baseUnit or 15
 
-    -- Generate seed early so both PathGraph and RoomBlocker use the same one
     local seed = config.seed
     if not seed then
         local chars = "abcdefghijklmnopqrstuvwxyz0123456789"
@@ -65,64 +59,72 @@ function Demo.run(config)
         end
     end
 
-    -- Configure both with the same seed
     pathGraph.In.onConfigure(pathGraph, {
         baseUnit = baseUnit,
         seed = seed,
         spurCount = config.spurCount or { min = 2, max = 4 },
         maxSegmentsPerPath = config.maxSegments or 8,
-        verticalChance = config.verticalChance or 15,
-    })
-
-    roomBlocker.In.onConfigure(roomBlocker, {
-        baseUnit = baseUnit,
-        container = demoFolder,
-        seed = seed,
-        -- Size ranges for variation (multipliers of baseUnit)
-        roomSizeRange = config.roomSizeRange or { 1.2, 2.2 },
-        hallSizeRange = config.hallSizeRange or { 0.5, 1.0 },
-        heightRange = config.heightRange or { 1.5, 3.0 },
+        sizeRange = config.sizeRange or { 1.2, 2.5 },
+        scanDistance = config.scanDistance or 5,
     })
 
     ---------------------------------------------------------------------------
     -- WIRE SIGNALS
     ---------------------------------------------------------------------------
 
-    -- PathGraph -> RoomBlocker: segment
     local pgOriginalFire = pathGraph.Out.Fire
     pathGraph.Out.Fire = function(outSelf, signal, data)
-        if signal == "segment" then
-            print(string.format("[Demo] PathGraph -> segment %d->%d",
-                data.fromPointId, data.toPointId))
-            roomBlocker.In.onSegment(roomBlocker, data)
+        if signal == "roomLayout" then
+            print(string.format("[Demo] Room %d defined at (%.1f, %.1f, %.1f)",
+                data.id, data.position[1], data.position[2], data.position[3]))
+
+            -- Create blocking volume part for Room node
+            local blockPart = Instance.new("Part")
+            blockPart.Name = "Block_" .. data.id
+            blockPart.Size = Vector3.new(data.dims[1], data.dims[2], data.dims[3])
+            blockPart.Position = Vector3.new(data.position[1], data.position[2], data.position[3])
+            blockPart.Anchored = true
+            blockPart.CanCollide = true
+            blockPart.Material = Enum.Material.SmoothPlastic
+            blockPart.Transparency = 0.3
+            blockPart.Color = Color3.fromRGB(120, 120, 140)
+            blockPart.Parent = demoFolder
+
+            -- Create Room node from the blocking volume
+            local roomId = "Room_" .. data.id
+            local room = Room:new({ id = roomId })
+            room.Sys.onInit(room)
+
+            local roomOriginalFire = room.Out.Fire
+            room.Out.Fire = function(roomOutSelf, roomSignal, roomData)
+                if roomSignal == "ready" then
+                    print(string.format("[Demo] %s ready", roomId))
+                end
+                roomOriginalFire(roomOutSelf, roomSignal, roomData)
+            end
+
+            room.In.onConfigure(room, {
+                part = blockPart,
+                wallThickness = config.wallThickness or 1,
+            })
+            room.Sys.onStart(room)
+            table.insert(rooms, room)
+
         elseif signal == "pathComplete" then
             print(string.format("[Demo] Path %d complete", data.pathIndex))
+
         elseif signal == "complete" then
             print("==========================================")
             print("[Demo] GENERATION COMPLETE")
             print("  Seed:", data.seed)
-            print("  Total Points:", data.totalPoints)
-            print("  Total Segments:", data.totalSegments)
+            print("  Total Rooms:", data.totalRooms)
             print("==========================================")
 
-            -- Draw path visualization
-            Demo.drawPaths(pathGraph, demoFolder, baseUnit)
+            -- Draw connections between rooms
+            Demo.drawConnections(pathGraph, demoFolder)
         end
-        pgOriginalFire(outSelf, signal, data)
-    end
 
-    -- RoomBlocker -> PathGraph: segmentResult
-    local rbOriginalFire = roomBlocker.Out.Fire
-    roomBlocker.Out.Fire = function(outSelf, signal, data)
-        if signal == "segmentResult" then
-            if data.ok then
-                print("[Demo] RoomBlocker -> OK")
-            else
-                print(string.format("[Demo] RoomBlocker -> OVERLAP %.1f", data.overlapAmount))
-            end
-            pathGraph.In.onSegmentResult(pathGraph, data)
-        end
-        rbOriginalFire(outSelf, signal, data)
+        pgOriginalFire(outSelf, signal, data)
     end
 
     ---------------------------------------------------------------------------
@@ -130,13 +132,12 @@ function Demo.run(config)
     ---------------------------------------------------------------------------
 
     print("==========================================")
-    print("[Demo] Starting incremental path generation")
+    print("[Demo] Starting generation")
     print("  Seed:", seed)
     print("  BaseUnit:", baseUnit)
-    print("  VerticalChance:", config.verticalChance or 15, "%")
     print("==========================================")
 
-    local origin = config.position or Vector3.new(0, 5, 0)
+    local origin = config.position or Vector3.new(0, 20, 0)
 
     pathGraph.In.onGenerate(pathGraph, {
         start = { origin.X, origin.Y, origin.Z },
@@ -151,145 +152,82 @@ function Demo.run(config)
         if not parent then
             print("[Demo] Cleanup...")
             pathGraph.Sys.onStop(pathGraph)
-            roomBlocker.Sys.onStop(roomBlocker)
+            for _, room in ipairs(rooms) do
+                room.Sys.onStop(room)
+            end
         end
     end)
 
     return {
         pathGraph = pathGraph,
-        roomBlocker = roomBlocker,
+        rooms = rooms,
         folder = demoFolder,
     }
 end
 
---[[
-    Draw path visualization after generation is complete.
---]]
-function Demo.drawPaths(pathGraph, container, baseUnit)
-    local pathData = pathGraph:getPath()
+function Demo.drawConnections(pathGraph, container)
+    local roomData = pathGraph:getRooms()
+    if not roomData then return end
 
-    if not pathData or not pathData.segments then
-        print("[Demo] No path data to draw")
-        return
-    end
+    local drawn = {}
 
-    print("[Demo] Drawing", #pathData.segments, "path segments")
+    for roomId, room in pairs(roomData) do
+        for _, connId in ipairs(room.connections) do
+            -- Create unique key to avoid drawing twice
+            local key = roomId < connId and (roomId .. "_" .. connId) or (connId .. "_" .. roomId)
 
-    -- Direction colors
-    local DIR_COLORS = {
-        N = Color3.fromRGB(0, 255, 200),
-        S = Color3.fromRGB(255, 100, 150),
-        E = Color3.fromRGB(255, 200, 0),
-        W = Color3.fromRGB(150, 100, 255),
-        U = Color3.fromRGB(100, 255, 100),
-        D = Color3.fromRGB(255, 80, 80),
-    }
+            if not drawn[key] then
+                drawn[key] = true
 
-    local function getDirection(fromPos, toPos)
-        local dx = toPos[1] - fromPos[1]
-        local dy = toPos[2] - fromPos[2]
-        local dz = toPos[3] - fromPos[3]
-        local ax, ay, az = math.abs(dx), math.abs(dy), math.abs(dz)
+                local connRoom = roomData[connId]
+                if connRoom then
+                    local fromVec = Vector3.new(room.position[1], room.position[2], room.position[3])
+                    local toVec = Vector3.new(connRoom.position[1], connRoom.position[2], connRoom.position[3])
 
-        if ax >= ay and ax >= az then
-            return dx > 0 and "E" or "W"
-        elseif az >= ax and az >= ay then
-            return dz > 0 and "N" or "S"
-        else
-            return dy > 0 and "U" or "D"
-        end
-    end
+                    local midpoint = (fromVec + toVec) / 2
+                    local length = (toVec - fromVec).Magnitude
 
-    -- Draw segments
-    for _, seg in ipairs(pathData.segments) do
-        local fromPoint = pathData.points[seg.from]
-        local toPoint = pathData.points[seg.to]
-
-        if fromPoint and toPoint then
-            local fromPos = fromPoint.pos
-            local toPos = toPoint.pos
-
-            local fromVec = Vector3.new(fromPos[1], fromPos[2] + 2, fromPos[3])
-            local toVec = Vector3.new(toPos[1], toPos[2] + 2, toPos[3])
-
-            local dir = getDirection(fromPos, toPos)
-            local color = DIR_COLORS[dir] or Color3.new(1, 1, 1)
-
-            local midpoint = (fromVec + toVec) / 2
-            local delta = toVec - fromVec
-            local length = delta.Magnitude
-
-            if length > 0.1 then
-                local beam = Instance.new("Part")
-                beam.Name = "Segment_" .. seg.id
-                beam.Size = Vector3.new(0.4, 0.4, length)
-                beam.CFrame = CFrame.lookAt(midpoint, toVec)
-                beam.Anchored = true
-                beam.CanCollide = false
-                beam.Material = Enum.Material.Neon
-                beam.Color = color
-                beam.Parent = container
-
-                local glow = Instance.new("PointLight")
-                glow.Color = color
-                glow.Brightness = 0.3
-                glow.Range = 4
-                glow.Parent = beam
+                    if length > 0.1 then
+                        local beam = Instance.new("Part")
+                        beam.Name = "Connection_" .. key
+                        beam.Size = Vector3.new(0.5, 0.5, length)
+                        beam.CFrame = CFrame.lookAt(midpoint, toVec)
+                        beam.Anchored = true
+                        beam.CanCollide = false
+                        beam.Material = Enum.Material.Neon
+                        beam.Color = Color3.fromRGB(0, 255, 150)
+                        beam.Parent = container
+                    end
+                end
             end
         end
     end
 
-    -- Draw junction spheres
-    for pointId, point in pairs(pathData.points) do
-        local pos = point.pos
-        local worldPos = Vector3.new(pos[1], pos[2] + 2, pos[3])
-        local connCount = #point.connections
-
-        local size = 0.6 + (connCount - 1) * 0.3
-        size = math.min(size, 2)
-
-        local color
-        if pointId == pathData.start then
-            color = Color3.fromRGB(0, 255, 0)
-            size = 1.5
-        elseif connCount >= 3 then
-            color = Color3.fromRGB(255, 255, 255)
-        elseif connCount == 1 then
-            color = Color3.fromRGB(255, 100, 100)
-        else
-            color = Color3.fromRGB(150, 150, 200)
-            size = 0.5
-        end
+    -- Draw room center markers
+    for roomId, room in pairs(roomData) do
+        local worldPos = Vector3.new(room.position[1], room.position[2], room.position[3])
 
         local sphere = Instance.new("Part")
-        sphere.Name = "Point_" .. pointId
+        sphere.Name = "Center_" .. roomId
         sphere.Shape = Enum.PartType.Ball
-        sphere.Size = Vector3.new(size, size, size)
+        sphere.Size = Vector3.new(1.5, 1.5, 1.5)
         sphere.Position = worldPos
         sphere.Anchored = true
         sphere.CanCollide = false
         sphere.Material = Enum.Material.Neon
-        sphere.Color = color
-        sphere.Parent = container
 
-        -- Label for start
-        if pointId == pathData.start then
-            local billboard = Instance.new("BillboardGui")
-            billboard.Size = UDim2.new(0, 60, 0, 20)
-            billboard.StudsOffset = Vector3.new(0, size + 1, 0)
-            billboard.AlwaysOnTop = true
-            billboard.Parent = sphere
-
-            local label = Instance.new("TextLabel")
-            label.Size = UDim2.new(1, 0, 1, 0)
-            label.BackgroundTransparency = 0.3
-            label.BackgroundColor3 = Color3.new(0, 0, 0)
-            label.TextColor3 = color
-            label.TextScaled = true
-            label.Font = Enum.Font.GothamBold
-            label.Text = "START"
-            label.Parent = billboard
+        if roomId == 1 then
+            sphere.Color = Color3.fromRGB(0, 255, 0) -- Start room
+            sphere.Size = Vector3.new(2.5, 2.5, 2.5)
+        elseif #room.connections >= 3 then
+            sphere.Color = Color3.fromRGB(255, 255, 255) -- Junction
+        elseif #room.connections == 1 then
+            sphere.Color = Color3.fromRGB(255, 100, 100) -- Dead end
+        else
+            sphere.Color = Color3.fromRGB(150, 150, 200) -- Normal
         end
+
+        sphere.Parent = container
     end
 end
 

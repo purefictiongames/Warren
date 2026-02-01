@@ -1,6 +1,6 @@
 --[[
     LibPureFiction Framework v2
-    PathGraph.lua - Incremental Path Graph Generator
+    PathGraph.lua - Path & Room Volume Generator
 
     Copyright (c) 2025 Adam Stearns / Pure Fiction Records LLC
     All rights reserved.
@@ -9,19 +9,17 @@
     OVERVIEW
     ============================================================================
 
-    Generates paths incrementally, one segment at a time. Each segment is
-    validated by RoomBlocker before moving to the next.
+    Generates dungeon topology with room volumes. PathGraph owns both point
+    positions AND room dimensions. It scans the horizon before choosing
+    directions to avoid collisions by construction.
 
-    Architecture:
-    - All paths are the same - just segments from point to point
-    - The "main" path is simply the first one (starts from origin)
-    - "Spurs" are just paths that start from existing junction points
-    - Positions are calculated once and never recalculated
-    - On overlap: adjust current point, retry until OK
-
-    The math is simple recursive arithmetic:
-        Point[n].pos = Point[n-1].pos + direction * length * baseUnit
-        (adjusted for overlaps)
+    Flow:
+    1. Create point, pick room dims, store AABB
+    2. Scan all 6 directions for available space
+    3. Pick direction: clear horizon (random) > furthest distance > terminate
+    4. Place next point outside current room
+    5. Pick dims constrained by available space
+    6. Emit layout table for downstream Room creation
 
     ============================================================================
     SIGNALS
@@ -30,12 +28,11 @@
     IN (receives):
         onConfigure({ baseUnit, seed?, spurCount?, ... })
         onGenerate({ start, goals? })
-        onSegmentResult({ ok: bool, overlapAmount?: number })
 
     OUT (emits):
-        segment({ fromPointId, toPointId, fromPos, toPos, direction })
+        roomLayout({ id, position, dims, connections })
         pathComplete({ pathIndex })
-        complete({ seed, totalPoints, totalSegments })
+        complete({ seed, totalRooms, layouts })
 
 --]]
 
@@ -52,15 +49,16 @@ local PathGraph = Node.extend(function(parent)
 
     local instanceStates = {}
 
-    -- Direction vectors (unit movements)
     local DIRECTIONS = {
-        N = { 0, 0, 1 },   -- +Z
-        S = { 0, 0, -1 },  -- -Z
-        E = { 1, 0, 0 },   -- +X
-        W = { -1, 0, 0 },  -- -X
-        U = { 0, 1, 0 },   -- +Y
-        D = { 0, -1, 0 },  -- -Y
+        N = { 0, 0, 1 },
+        S = { 0, 0, -1 },
+        E = { 1, 0, 0 },
+        W = { -1, 0, 0 },
+        U = { 0, 1, 0 },
+        D = { 0, -1, 0 },
     }
+
+    local DIR_KEYS = { "N", "S", "E", "W", "U", "D" }
 
     local OPPOSITES = {
         N = "S", S = "N",
@@ -68,9 +66,12 @@ local PathGraph = Node.extend(function(parent)
         U = "D", D = "U",
     }
 
-    -- Direction lists for weighted selection
-    local DIR_HORIZONTAL = { "N", "S", "E", "W" }
-    local DIR_VERTICAL = { "U", "D" }
+    -- Maps direction to axis index: X=1, Y=2, Z=3
+    local DIR_TO_AXIS = {
+        E = 1, W = 1,
+        U = 2, D = 2,
+        N = 3, S = 3,
+    }
 
     local function getState(self)
         if not instanceStates[self.id] then
@@ -80,35 +81,26 @@ local PathGraph = Node.extend(function(parent)
                     seed = nil,
                     spurCount = { min = 2, max = 5 },
                     maxSegmentsPerPath = 10,
-                    verticalChance = 15, -- % chance to pick vertical direction
+                    sizeRange = { 1.2, 2.5 },
+                    scanDistance = 5, -- baseUnits to scan ahead
                 },
 
                 rng = nil,
                 seed = nil,
 
-                -- Points: { [id] = { pos, connections, built } }
-                points = {},
-                pointCounter = 0,
+                rooms = {},        -- id -> { position, dims, connections }
+                roomAABBs = {},    -- array of { id, minX, maxX, minY, maxY, minZ, maxZ }
+                roomCounter = 0,
 
-                -- Segments: { { id, fromId, toId, direction, length } }
-                segments = {},
-
-                -- Path tracking
-                paths = {},           -- { { startPointId, segmentIds } }
+                paths = {},
                 currentPathIndex = 0,
                 segmentsInCurrentPath = 0,
-
-                -- Current segment being validated
-                currentSegment = nil,
-                currentFromPointId = nil,
+                currentRoomId = nil,
                 lastDirection = nil,
 
-                -- Goal for pathfinding bias
                 goalPos = nil,
-
-                -- State
-                waitingForResponse = false,
-                startPointId = nil,
+                startRoomId = nil,
+                layouts = {},      -- collected layout tables for final output
             }
         end
         return instanceStates[self.id]
@@ -150,6 +142,11 @@ local PathGraph = Node.extend(function(parent)
             return min + (self:next() % (max - min + 1))
         end
 
+        function rng:randomFloat(min, max)
+            local val = self:next() / 0xFFFFFFFF
+            return min + val * (max - min)
+        end
+
         function rng:randomChoice(array)
             if #array == 0 then return nil end
             return array[self:randomInt(1, #array)]
@@ -177,31 +174,211 @@ local PathGraph = Node.extend(function(parent)
     end
 
     ----------------------------------------------------------------------------
-    -- POINT MANAGEMENT
+    -- AABB UTILITIES
     ----------------------------------------------------------------------------
 
-    local function createPoint(self, x, y, z)
-        local state = getState(self)
-        state.pointCounter = state.pointCounter + 1
-        local id = state.pointCounter
-
-        state.points[id] = {
-            pos = { x, y, z },
-            connections = {},
-            built = false,
+    local function createAABB(id, pos, dims)
+        return {
+            id = id,
+            minX = pos[1] - dims[1] / 2,
+            maxX = pos[1] + dims[1] / 2,
+            minY = pos[2] - dims[2] / 2,
+            maxY = pos[2] + dims[2] / 2,
+            minZ = pos[3] - dims[3] / 2,
+            maxZ = pos[3] + dims[3] / 2,
         }
+    end
+
+    local function aabbOverlaps(a, b)
+        if a.maxX <= b.minX or a.minX >= b.maxX then return false end
+        if a.maxY <= b.minY or a.minY >= b.maxY then return false end
+        if a.maxZ <= b.minZ or a.minZ >= b.maxZ then return false end
+        return true
+    end
+
+    -- Find distance from a point to the nearest AABB in a given direction
+    -- Returns distance to first obstacle, or scanDist if clear
+    local function scanDirection(self, fromPos, fromDims, direction, scanDist, excludeId)
+        local state = getState(self)
+        local dir = DIRECTIONS[direction]
+        local axis = DIR_TO_AXIS[direction]
+
+        -- Start scanning from the edge of the current room
+        local startOffset = fromDims[axis] / 2
+
+        local minDistance = scanDist
+
+        for _, aabb in ipairs(state.roomAABBs) do
+            if aabb.id ~= excludeId then
+                -- Check if this AABB is in our scan path
+                -- We need to see if a ray from fromPos in direction hits this AABB
+
+                local axisMin, axisMax
+                if axis == 1 then
+                    axisMin, axisMax = aabb.minX, aabb.maxX
+                elseif axis == 2 then
+                    axisMin, axisMax = aabb.minY, aabb.maxY
+                else
+                    axisMin, axisMax = aabb.minZ, aabb.maxZ
+                end
+
+                local fromAxisPos = fromPos[axis]
+                local dirSign = dir[axis] -- +1 or -1
+
+                -- Distance to the near edge of the AABB along this axis
+                local distToAABB
+                if dirSign > 0 then
+                    distToAABB = axisMin - fromAxisPos - startOffset
+                else
+                    distToAABB = fromAxisPos - startOffset - axisMax
+                end
+
+                -- Only consider if AABB is ahead of us
+                if distToAABB > 0 and distToAABB < minDistance then
+                    -- Check if we'd actually hit this AABB (overlaps on other axes)
+                    local wouldHit = true
+
+                    -- Check perpendicular axes
+                    for checkAxis = 1, 3 do
+                        if checkAxis ~= axis then
+                            local checkMin, checkMax
+                            if checkAxis == 1 then
+                                checkMin, checkMax = aabb.minX, aabb.maxX
+                            elseif checkAxis == 2 then
+                                checkMin, checkMax = aabb.minY, aabb.maxY
+                            else
+                                checkMin, checkMax = aabb.minZ, aabb.maxZ
+                            end
+
+                            local ourMin = fromPos[checkAxis] - fromDims[checkAxis] / 2
+                            local ourMax = fromPos[checkAxis] + fromDims[checkAxis] / 2
+
+                            if ourMax <= checkMin or ourMin >= checkMax then
+                                wouldHit = false
+                                break
+                            end
+                        end
+                    end
+
+                    if wouldHit then
+                        minDistance = distToAABB
+                    end
+                end
+            end
+        end
+
+        return minDistance
+    end
+
+    ----------------------------------------------------------------------------
+    -- ROOM CREATION
+    ----------------------------------------------------------------------------
+
+    local function getRandomDim(self)
+        local state = getState(self)
+        local config = state.config
+        local range = config.sizeRange
+        local scale = state.rng:randomFloat(range[1], range[2])
+        return config.baseUnit * scale
+    end
+
+    local function createRoom(self, pos, dims, fromRoomId)
+        local state = getState(self)
+        state.roomCounter = state.roomCounter + 1
+        local id = state.roomCounter
+
+        local room = {
+            position = { pos[1], pos[2], pos[3] },
+            dims = { dims[1], dims[2], dims[3] },
+            connections = {},
+        }
+
+        state.rooms[id] = room
+
+        local aabb = createAABB(id, pos, dims)
+        table.insert(state.roomAABBs, aabb)
+
+        -- Connect to previous room
+        if fromRoomId and state.rooms[fromRoomId] then
+            table.insert(room.connections, fromRoomId)
+            table.insert(state.rooms[fromRoomId].connections, id)
+        end
+
+        -- Create and emit layout table
+        local layout = {
+            id = id,
+            position = { pos[1], pos[2], pos[3] },
+            dims = { dims[1], dims[2], dims[3] },
+            connections = {},
+        }
+        for _, conn in ipairs(room.connections) do
+            table.insert(layout.connections, conn)
+        end
+
+        table.insert(state.layouts, layout)
+
+        print(string.format("[PathGraph] Room %d at (%.1f, %.1f, %.1f) dims (%.1f, %.1f, %.1f)",
+            id, pos[1], pos[2], pos[3], dims[1], dims[2], dims[3]))
+
+        self.Out:Fire("roomLayout", layout)
 
         return id
     end
 
-    local function connectPoints(self, fromId, toId)
-        local state = getState(self)
-        local fromPoint = state.points[fromId]
-        local toPoint = state.points[toId]
+    ----------------------------------------------------------------------------
+    -- DIRECTION SELECTION WITH HORIZON SCAN
+    ----------------------------------------------------------------------------
 
-        if fromPoint and toPoint then
-            table.insert(fromPoint.connections, toId)
-            table.insert(toPoint.connections, fromId)
+    local function pickDirectionWithScan(self, fromRoomId, lastDir)
+        local state = getState(self)
+        local rng = state.rng
+        local config = state.config
+        local baseUnit = config.baseUnit
+        local scanDist = config.scanDistance * baseUnit
+
+        local room = state.rooms[fromRoomId]
+        local fromPos = room.position
+        local fromDims = room.dims
+
+        -- Scan all directions
+        local scanResults = {}
+        for _, dirKey in ipairs(DIR_KEYS) do
+            -- Skip opposite of last direction
+            if not lastDir or dirKey ~= OPPOSITES[lastDir] then
+                local distance = scanDirection(self, fromPos, fromDims, dirKey, scanDist, fromRoomId)
+                table.insert(scanResults, { dir = dirKey, distance = distance })
+            end
+        end
+
+        if #scanResults == 0 then
+            return nil, 0
+        end
+
+        -- Separate into clear (full scan distance) and partially blocked
+        local clearDirs = {}
+        local blockedDirs = {}
+
+        for _, result in ipairs(scanResults) do
+            if result.distance >= scanDist then
+                table.insert(clearDirs, result)
+            elseif result.distance > baseUnit then
+                -- Only consider if there's at least 1 baseUnit of space
+                table.insert(blockedDirs, result)
+            end
+        end
+
+        -- Priority: clear > furthest blocked > nothing
+        if #clearDirs > 0 then
+            -- Pick random from clear directions
+            local pick = rng:randomChoice(clearDirs)
+            return pick.dir, pick.distance
+        elseif #blockedDirs > 0 then
+            -- Pick the one with most space
+            table.sort(blockedDirs, function(a, b) return a.distance > b.distance end)
+            return blockedDirs[1].dir, blockedDirs[1].distance
+        else
+            -- No valid direction
+            return nil, 0
         end
     end
 
@@ -209,317 +386,138 @@ local PathGraph = Node.extend(function(parent)
     -- SEGMENT GENERATION
     ----------------------------------------------------------------------------
 
-    --[[
-        Pick direction for next segment.
-        Prefers directions toward goal, avoids reversal.
-    --]]
-    local function pickDirection(self, fromPos, lastDir)
-        local state = getState(self)
-        local rng = state.rng
-        local goalPos = state.goalPos
-        local baseUnit = state.config.baseUnit
-        local verticalChance = state.config.verticalChance
-
-        -- Decide if this will be a vertical move
-        local useVertical = rng:randomInt(1, 100) <= verticalChance
-        local dirPool = useVertical and DIR_VERTICAL or DIR_HORIZONTAL
-
-        -- Build list of valid directions (no reversal)
-        local validDirs = {}
-        for _, dir in ipairs(dirPool) do
-            if not lastDir or dir ~= OPPOSITES[lastDir] then
-                table.insert(validDirs, dir)
-            end
-        end
-
-        -- If vertical pool is empty (e.g., last was U and we rolled vertical again),
-        -- fall back to horizontal
-        if #validDirs == 0 then
-            for _, dir in ipairs(DIR_HORIZONTAL) do
-                if not lastDir or dir ~= OPPOSITES[lastDir] then
-                    table.insert(validDirs, dir)
-                end
-            end
-        end
-
-        if #validDirs == 0 then
-            return nil
-        end
-
-        -- If horizontal and we have a goal, prefer directions toward it
-        if not useVertical and goalPos then
-            local dx = goalPos[1] - fromPos[1]
-            local dz = goalPos[3] - fromPos[3]
-
-            local preferredDirs = {}
-            if math.abs(dx) >= baseUnit then
-                table.insert(preferredDirs, dx > 0 and "E" or "W")
-            end
-            if math.abs(dz) >= baseUnit then
-                table.insert(preferredDirs, dz > 0 and "N" or "S")
-            end
-
-            -- Filter to valid directions
-            local biasedDirs = {}
-            for _, pref in ipairs(preferredDirs) do
-                for _, valid in ipairs(validDirs) do
-                    if pref == valid then
-                        table.insert(biasedDirs, pref)
-                        break
-                    end
-                end
-            end
-
-            -- 70% chance to pick biased direction
-            if #biasedDirs > 0 and rng:randomInt(1, 10) <= 7 then
-                return rng:randomChoice(biasedDirs)
-            end
-        end
-
-        return rng:randomChoice(validDirs)
-    end
-
-    --[[
-        Generate and send the next segment.
-    --]]
-    local function generateNextSegment(self)
+    local function generateNextRoom(self)
         local state = getState(self)
         local rng = state.rng
         local baseUnit = state.config.baseUnit
 
-        local fromPoint = state.points[state.currentFromPointId]
-        if not fromPoint then
-            print("[PathGraph] ERROR: No from point")
+        local fromRoom = state.rooms[state.currentRoomId]
+        if not fromRoom then
+            print("[PathGraph] ERROR: No current room")
             return false
         end
 
-        local fromPos = fromPoint.pos
+        local fromPos = fromRoom.position
+        local fromDims = fromRoom.dims
 
-        -- Pick direction
-        local direction = pickDirection(self, fromPos, state.lastDirection)
+        -- Pick direction with horizon scanning
+        local direction, availableSpace = pickDirectionWithScan(self, state.currentRoomId, state.lastDirection)
+
         if not direction then
-            print("[PathGraph] No valid direction available")
+            print("[PathGraph] No valid direction - path terminated")
             return false
         end
 
-        -- Pick length (2-4 base units)
-        local length = rng:randomInt(2, 4)
-
-        -- Calculate target position
         local dir = DIRECTIONS[direction]
-        local dist = length * baseUnit
+        local axis = DIR_TO_AXIS[direction]
+
+        -- Generate random dims for new room, but constrain by available space
+        local toDims = { getRandomDim(self), getRandomDim(self), getRandomDim(self) }
+
+        -- The room's dimension along movement axis can't exceed available space
+        -- (minus some margin for the room to fit)
+        local maxDimForAxis = math.max(baseUnit, availableSpace - baseUnit)
+        toDims[axis] = math.min(toDims[axis], maxDimForAxis)
+
+        -- Calculate position: place new room so it mates with current room
+        -- Distance from center to center = fromDim/2 + toDim/2 (they touch)
+        local centerDistance = fromDims[axis] / 2 + toDims[axis] / 2
+
         local toPos = {
-            fromPos[1] + dir[1] * dist,
-            fromPos[2] + dir[2] * dist,
-            fromPos[3] + dir[3] * dist,
+            fromPos[1] + dir[1] * centerDistance,
+            fromPos[2] + dir[2] * centerDistance,
+            fromPos[3] + dir[3] * centerDistance,
         }
 
-        -- Create the target point (position may be adjusted on overlap)
-        local toPointId = createPoint(self, toPos[1], toPos[2], toPos[3])
+        -- Create the room
+        local toRoomId = createRoom(self, toPos, toDims, state.currentRoomId)
 
-        -- Store current segment info for potential adjustment
-        state.currentSegment = {
-            fromPointId = state.currentFromPointId,
-            toPointId = toPointId,
-            direction = direction,
-            length = length,
-        }
-
-        state.waitingForResponse = true
-
-        -- Send to RoomBlocker
-        print(string.format("[PathGraph] Segment: %d -> %d, dir=%s, len=%d",
-            state.currentFromPointId, toPointId, direction, length))
-        print(string.format("  fromPos: %.1f, %.1f, %.1f", fromPos[1], fromPos[2], fromPos[3]))
-        print(string.format("  toPos: %.1f, %.1f, %.1f", toPos[1], toPos[2], toPos[3]))
-
-        self.Out:Fire("segment", {
-            fromPointId = state.currentFromPointId,
-            toPointId = toPointId,
-            fromPos = { fromPos[1], fromPos[2], fromPos[3] },
-            toPos = { toPos[1], toPos[2], toPos[3] },
-            direction = direction,
-        })
+        -- Update state
+        state.currentRoomId = toRoomId
+        state.lastDirection = direction
+        state.segmentsInCurrentPath = state.segmentsInCurrentPath + 1
 
         return true
     end
 
-    --[[
-        Resend current segment with adjusted position.
-    --]]
-    local function resendAdjustedSegment(self, adjustment)
-        local state = getState(self)
-        local seg = state.currentSegment
-        local baseUnit = state.config.baseUnit
+    ----------------------------------------------------------------------------
+    -- PATH MANAGEMENT
+    ----------------------------------------------------------------------------
 
-        local fromPoint = state.points[seg.fromPointId]
-        local toPoint = state.points[seg.toPointId]
-        local dir = DIRECTIONS[seg.direction]
-
-        -- Adjust the TO point position in the segment direction
-        local shiftAmount = adjustment + baseUnit -- Add buffer
-        toPoint.pos[1] = toPoint.pos[1] + dir[1] * shiftAmount
-        toPoint.pos[2] = toPoint.pos[2] + dir[2] * shiftAmount
-        toPoint.pos[3] = toPoint.pos[3] + dir[3] * shiftAmount
-
-        print(string.format("[PathGraph] Adjusted toPos by %.1f: %.1f, %.1f, %.1f",
-            shiftAmount, toPoint.pos[1], toPoint.pos[2], toPoint.pos[3]))
-
-        state.waitingForResponse = true
-
-        -- Resend with new position
-        self.Out:Fire("segment", {
-            fromPointId = seg.fromPointId,
-            toPointId = seg.toPointId,
-            fromPos = { fromPoint.pos[1], fromPoint.pos[2], fromPoint.pos[3] },
-            toPos = { toPoint.pos[1], toPoint.pos[2], toPoint.pos[3] },
-            direction = seg.direction,
-        })
-    end
-
-    --[[
-        Current segment was accepted. Finalize and move to next.
-    --]]
-    local function finalizeSegment(self)
-        local state = getState(self)
-        local seg = state.currentSegment
-
-        -- Connect points
-        connectPoints(self, seg.fromPointId, seg.toPointId)
-
-        -- Mark points as built
-        state.points[seg.fromPointId].built = true
-        state.points[seg.toPointId].built = true
-
-        -- Record segment
-        local segmentRecord = {
-            id = #state.segments + 1,
-            fromId = seg.fromPointId,
-            toId = seg.toPointId,
-            direction = seg.direction,
-        }
-        table.insert(state.segments, segmentRecord)
-
-        -- Add to current path
-        local currentPath = state.paths[state.currentPathIndex]
-        table.insert(currentPath.segmentIds, segmentRecord.id)
-
-        -- Update state for next segment
-        state.currentFromPointId = seg.toPointId
-        state.lastDirection = seg.direction
-        state.segmentsInCurrentPath = state.segmentsInCurrentPath + 1
-        state.currentSegment = nil
-    end
-
-    --[[
-        Start a new path from a junction point.
-    --]]
-    local function startNewPath(self, fromPointId)
+    local function startNewPath(self, fromRoomId)
         local state = getState(self)
 
         state.currentPathIndex = state.currentPathIndex + 1
         state.paths[state.currentPathIndex] = {
-            startPointId = fromPointId,
-            segmentIds = {},
+            startRoomId = fromRoomId,
+            roomIds = { fromRoomId },
         }
-        state.currentFromPointId = fromPointId
+        state.currentRoomId = fromRoomId
         state.lastDirection = nil
         state.segmentsInCurrentPath = 0
 
-        print(string.format("[PathGraph] Starting path %d from point %d",
-            state.currentPathIndex, fromPointId))
+        print(string.format("[PathGraph] Starting path %d from room %d",
+            state.currentPathIndex, fromRoomId))
     end
 
-    --[[
-        Find junction points that can spawn new paths.
-    --]]
     local function findJunctionCandidates(self)
         local state = getState(self)
         local candidates = {}
 
-        for pointId, point in pairs(state.points) do
-            -- Points with exactly 2 connections are corridor points - good for branching
-            -- Points with 1 connection are dead ends
-            -- Points with 3+ already have branches
-            if point.built and #point.connections == 2 and pointId ~= state.startPointId then
-                table.insert(candidates, pointId)
+        for roomId, room in pairs(state.rooms) do
+            -- Rooms with exactly 2 connections are good junction points
+            if #room.connections == 2 and roomId ~= state.startRoomId then
+                table.insert(candidates, roomId)
             end
         end
 
         return candidates
     end
 
-    --[[
-        Check if current path should end.
-    --]]
     local function shouldEndPath(self)
         local state = getState(self)
-        local maxSegs = state.config.maxSegmentsPerPath
-
-        -- End if we've hit max segments
-        if state.segmentsInCurrentPath >= maxSegs then
-            return true
-        end
-
-        -- For main path, also check if we're near goal
-        if state.currentPathIndex == 1 and state.goalPos then
-            local currentPoint = state.points[state.currentFromPointId]
-            local pos = currentPoint.pos
-            local goal = state.goalPos
-            local baseUnit = state.config.baseUnit
-
-            local dx = math.abs(goal[1] - pos[1])
-            local dz = math.abs(goal[3] - pos[3])
-
-            if dx < baseUnit * 2 and dz < baseUnit * 2 then
-                return true
-            end
-        end
-
-        return false
+        return state.segmentsInCurrentPath >= state.config.maxSegmentsPerPath
     end
 
-    --[[
-        Advance to next segment or next path.
-    --]]
     local function advance(self)
         local state = getState(self)
 
-        -- Check if current path should end
         if shouldEndPath(self) then
-            print(string.format("[PathGraph] Path %d complete with %d segments",
-                state.currentPathIndex, state.segmentsInCurrentPath))
+            print(string.format("[PathGraph] Path %d complete", state.currentPathIndex))
 
-            self.Out:Fire("pathComplete", {
-                pathIndex = state.currentPathIndex,
-            })
+            self.Out:Fire("pathComplete", { pathIndex = state.currentPathIndex })
 
-            -- Try to start a spur
             local candidates = findJunctionCandidates(self)
             local spurCount = state.rng:randomInt(
                 state.config.spurCount.min,
                 state.config.spurCount.max
             )
 
-            -- Only start more paths if we haven't exceeded spur count
-            -- (path 1 is main, paths 2+ are spurs)
             if state.currentPathIndex <= spurCount and #candidates > 0 then
                 local idx = state.rng:randomInt(1, #candidates)
-                local junctionId = candidates[idx]
-                startNewPath(self, junctionId)
-                generateNextSegment(self)
+                startNewPath(self, candidates[idx])
+                if not generateNextRoom(self) then
+                    -- Can't continue this spur, try another or finish
+                    advance(self)
+                else
+                    advance(self)
+                end
             else
-                -- All done
                 print("[PathGraph] Generation complete")
                 self.Out:Fire("complete", {
                     seed = state.seed,
-                    totalPoints = state.pointCounter,
-                    totalSegments = #state.segments,
+                    totalRooms = state.roomCounter,
+                    layouts = state.layouts,
                 })
             end
         else
-            -- Continue current path
-            generateNextSegment(self)
+            if not generateNextRoom(self) then
+                -- Path is blocked, end it early
+                state.segmentsInCurrentPath = state.config.maxSegmentsPerPath
+                advance(self)
+            else
+                advance(self)
+            end
         end
     end
 
@@ -536,8 +534,7 @@ local PathGraph = Node.extend(function(parent)
                 local _ = getState(self)
             end,
 
-            onStart = function(self)
-            end,
+            onStart = function(self) end,
 
             onStop = function(self)
                 cleanupState(self)
@@ -562,8 +559,11 @@ local PathGraph = Node.extend(function(parent)
                 if data.maxSegmentsPerPath then
                     config.maxSegmentsPerPath = data.maxSegmentsPerPath
                 end
-                if data.verticalChance then
-                    config.verticalChance = data.verticalChance
+                if data.sizeRange then
+                    config.sizeRange = data.sizeRange
+                end
+                if data.scanDistance then
+                    config.scanDistance = data.scanDistance
                 end
             end,
 
@@ -575,114 +575,46 @@ local PathGraph = Node.extend(function(parent)
                 -- Reset state
                 state.seed = config.seed or generateSeed()
                 state.rng = createRNG(state.seed)
-                state.points = {}
-                state.pointCounter = 0
-                state.segments = {}
+                state.rooms = {}
+                state.roomAABBs = {}
+                state.roomCounter = 0
                 state.paths = {}
                 state.currentPathIndex = 0
-                state.currentSegment = nil
-                state.currentFromPointId = nil
+                state.currentRoomId = nil
                 state.lastDirection = nil
-                state.waitingForResponse = false
+                state.layouts = {}
 
                 local startPos = data.start or { 0, 0, 0 }
                 state.goalPos = (data.goals and data.goals[1]) or { 150, 0, 150 }
 
                 print("[PathGraph] Generating with seed:", state.seed)
-                print(string.format("[PathGraph] Start: %.1f, %.1f, %.1f",
-                    startPos[1], startPos[2], startPos[3]))
-                print(string.format("[PathGraph] Goal: %.1f, %.1f, %.1f",
-                    state.goalPos[1], state.goalPos[2], state.goalPos[3]))
 
-                -- Create start point
-                state.startPointId = createPoint(self, startPos[1], startPos[2], startPos[3])
+                -- Create first room
+                local startDims = { getRandomDim(self), getRandomDim(self), getRandomDim(self) }
+                state.startRoomId = createRoom(self, startPos, startDims, nil)
 
-                -- Start first path
-                startNewPath(self, state.startPointId)
-                generateNextSegment(self)
-            end,
-
-            --[[
-                Handle response from RoomBlocker.
-            --]]
-            onSegmentResult = function(self, data)
-                local state = getState(self)
-
-                if not state.waitingForResponse then
-                    print("[PathGraph] WARNING: Unexpected segment result")
-                    return
-                end
-
-                state.waitingForResponse = false
-
-                if data.ok then
-                    -- Segment accepted - finalize and continue
-                    finalizeSegment(self)
-                    advance(self)
-                else
-                    -- Overlap - adjust and retry
-                    local overlapAmount = data.overlapAmount or state.config.baseUnit
-                    print(string.format("[PathGraph] Overlap of %.1f, adjusting...", overlapAmount))
-                    resendAdjustedSegment(self, overlapAmount)
-                end
+                -- Start main path
+                startNewPath(self, state.startRoomId)
+                advance(self)
             end,
         },
 
         Out = {
-            segment = {},
+            roomLayout = {},
             pathComplete = {},
             complete = {},
         },
 
-        ------------------------------------------------------------------------
-        -- PUBLIC QUERY METHODS
-        ------------------------------------------------------------------------
-
-        getPoints = function(self)
-            local state = getState(self)
-            return state.points
+        getRooms = function(self)
+            return getState(self).rooms
         end,
 
-        getSegments = function(self)
-            local state = getState(self)
-            return state.segments
-        end,
-
-        getPath = function(self)
-            local state = getState(self)
-
-            local output = {
-                points = {},
-                segments = {},
-                start = state.startPointId,
-                goals = {}, -- Could track goal points if needed
-                seed = state.seed,
-            }
-
-            for id, point in pairs(state.points) do
-                output.points[id] = {
-                    pos = { point.pos[1], point.pos[2], point.pos[3] },
-                    connections = {},
-                }
-                for _, conn in ipairs(point.connections) do
-                    table.insert(output.points[id].connections, conn)
-                end
-            end
-
-            for _, seg in ipairs(state.segments) do
-                table.insert(output.segments, {
-                    id = seg.id,
-                    from = seg.fromId,
-                    to = seg.toId,
-                })
-            end
-
-            return output
+        getLayouts = function(self)
+            return getState(self).layouts
         end,
 
         getSeed = function(self)
-            local state = getState(self)
-            return state.seed
+            return getState(self).seed
         end,
     }
 end)

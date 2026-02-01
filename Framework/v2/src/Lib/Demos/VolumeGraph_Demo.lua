@@ -145,6 +145,9 @@ function Demo.run(config)
 
             -- Add lights to rooms
             Demo.addLights(demoFolder, data.layouts)
+
+            -- Move spawn point into first room
+            Demo.moveSpawnToFirstRoom(data.layouts)
         end
 
         vgOriginalFire(outSelf, signal, data)
@@ -235,6 +238,42 @@ function Demo.drawConnections(layouts, container)
                 end
             end
         end
+    end
+end
+
+function Demo.moveSpawnToFirstRoom(layouts)
+    if #layouts == 0 then return end
+
+    local firstRoom = layouts[1]
+    local pos = firstRoom.position
+    local dims = firstRoom.dims
+
+    -- Calculate spawn position: center of room, at floor level
+    local spawnPos = Vector3.new(
+        pos[1],
+        pos[2] - dims[2] / 2 + 3,  -- Floor level + small offset
+        pos[3]
+    )
+
+    -- Find existing SpawnLocation
+    local spawnLocation = workspace:FindFirstChildOfClass("SpawnLocation")
+
+    if spawnLocation then
+        spawnLocation.Position = spawnPos
+        spawnLocation.Anchored = true
+        print("[Demo] Moved SpawnLocation to first room at", spawnPos)
+    else
+        -- Create one if it doesn't exist
+        spawnLocation = Instance.new("SpawnLocation")
+        spawnLocation.Name = "SpawnLocation"
+        spawnLocation.Size = Vector3.new(6, 1, 6)
+        spawnLocation.Position = spawnPos
+        spawnLocation.Anchored = true
+        spawnLocation.CanCollide = true
+        spawnLocation.Material = Enum.Material.SmoothPlastic
+        spawnLocation.Color = Color3.fromRGB(100, 100, 100)
+        spawnLocation.Parent = workspace
+        print("[Demo] Created SpawnLocation in first room at", spawnPos)
     end
 end
 

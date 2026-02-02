@@ -34,6 +34,41 @@
     manager:startFirstRegion()
     ```
 
+    ============================================================================
+    FUTURE: Persistent Layout Storage
+    ============================================================================
+
+    Layouts can be serialized and stored per-player in DataStore for persistence.
+    This would allow players to return to previously explored regions.
+
+    Size estimates (per layout, ~12 rooms):
+    - Uncompressed JSON: ~4.5-5 KB
+    - DataStore auto-compresses internally, so no manual gzip needed
+    - 4MB DataStore limit = 800+ regions per player (more than enough)
+
+    Proposed DataStore structure:
+    ```lua
+    {
+        regions = {
+            ["region_1"] = { version, seed, rooms, doors, trusses, lights, pads, spawn, config },
+            ["region_2"] = { ... },
+        },
+        padLinks = {
+            ["region_1_pad_1"] = { regionId = "region_2", padId = "pad_1" },
+            ...
+        },
+        currentRegion = "region_5",
+        regionCount = 5,
+    }
+    ```
+
+    Implementation notes:
+    - Store full layouts (not just seeds) to preserve exact geometry
+    - This protects against algorithm changes breaking old saves
+    - Enables future player modifications to their dungeons
+    - Load existing layouts on player join, generate new as needed
+    - Save on region creation and periodically
+
 --]]
 
 local Players = game:GetService("Players")

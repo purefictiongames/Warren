@@ -39,6 +39,7 @@
 local Players = game:GetService("Players")
 local Node = require(script.Parent.Parent.Node)
 local Layout = require(script.Parent.Layout)
+local JumpPad = require(script.Parent.JumpPad)
 
 --------------------------------------------------------------------------------
 -- REGION MANAGER NODE
@@ -76,12 +77,8 @@ local RegionManager = Node.extend(function(parent)
                 regions = {},
                 activeRegionId = nil,
                 regionCount = 0,
-                -- Teleport connections
-                touchConnections = {},
-                -- Player pad state (track who is on which pad, require exit before reactivation)
-                playerPadState = {},
-                -- Pending teleport (wait for build completion)
-                pendingTeleport = nil,
+                -- JumpPad instance IDs (for IPC.despawn)
+                jumpPadIds = {},
             }
         end
         return instanceStates[self.id]
@@ -89,8 +86,12 @@ local RegionManager = Node.extend(function(parent)
 
     local function cleanupState(self)
         local state = getState(self)
-        for _, conn in pairs(state.touchConnections) do
-            conn:Disconnect()
+        -- Despawn all JumpPad instances via IPC
+        local IPC = self._System and self._System.IPC
+        if IPC then
+            for _, padId in ipairs(state.jumpPadIds) do
+                IPC.despawn(padId)
+            end
         end
         instanceStates[self.id] = nil
     end
@@ -103,6 +104,32 @@ local RegionManager = Node.extend(function(parent)
         return os.time() + math.random(1, 100000)
     end
 
+    -- Color palette for different regions (earthy/stone tones)
+    local REGION_COLORS = {
+        { 140, 110, 90 },   -- Warm brown (default)
+        { 120, 130, 140 },  -- Cool grey-blue
+        { 150, 120, 100 },  -- Terracotta
+        { 100, 120, 100 },  -- Mossy green
+        { 130, 100, 120 },  -- Dusty purple
+        { 140, 140, 120 },  -- Sandstone
+        { 110, 100, 90 },   -- Dark earth
+        { 150, 140, 130 },  -- Light tan
+        { 100, 110, 130 },  -- Slate blue
+        { 130, 120, 110 },  -- Neutral stone
+    }
+
+    local function getRegionColor(regionNum)
+        -- Cycle through palette, with slight random variation
+        local baseColor = REGION_COLORS[((regionNum - 1) % #REGION_COLORS) + 1]
+        -- Add small random variation (+/- 10) for uniqueness
+        local variation = 10
+        return {
+            math.clamp(baseColor[1] + math.random(-variation, variation), 50, 200),
+            math.clamp(baseColor[2] + math.random(-variation, variation), 50, 200),
+            math.clamp(baseColor[3] + math.random(-variation, variation), 50, 200),
+        }
+    end
+
     local function generateLayout(self, seed, regionNum)
         local state = getState(self)
         local config = state.config
@@ -111,6 +138,9 @@ local RegionManager = Node.extend(function(parent)
         local regionOffset = (regionNum - 1) * 2000
         local origin = config.origin or { 0, 20, 0 }
         local offsetOrigin = { origin[1] + regionOffset, origin[2], origin[3] }
+
+        -- Get unique color for this region
+        local regionColor = getRegionColor(regionNum)
 
         -- Generate layout using Layout.Builder
         local layout = Layout.generate({
@@ -127,7 +157,7 @@ local RegionManager = Node.extend(function(parent)
             loopCount = config.loopCount,
             scaleRange = config.scaleRange,
             material = config.material,
-            color = config.color,
+            color = regionColor,
             roomsPerPad = config.roomsPerPad,
         })
 
@@ -157,88 +187,85 @@ local RegionManager = Node.extend(function(parent)
     end
 
     ----------------------------------------------------------------------------
-    -- PAD TOUCH HANDLING
+    -- JUMPPAD MANAGEMENT
     ----------------------------------------------------------------------------
 
-    local setupPadTouchHandler  -- Forward declaration
-
-    local function setupAllPadHandlers(self, regionId)
+    local function createJumpPadsForRegion(self, regionId, container)
         local state = getState(self)
         local region = state.regions[regionId]
+        local IPC = self._System and self._System.IPC
 
-        if not region or not region.pads then return end
+        if not region or not region.layout or not region.layout.pads then return end
+        if not IPC then
+            warn("[RegionManager] IPC not available for JumpPad creation")
+            return
+        end
 
-        for padId, padData in pairs(region.pads) do
-            setupPadTouchHandler(self, regionId, padId, padData.part)
+        -- Destroy any existing Parts created by LayoutInstantiator for pads
+        -- (JumpPad will create its own geometry)
+        if region.pads then
+            for _, padData in pairs(region.pads) do
+                if padData.part then
+                    padData.part:Destroy()
+                end
+            end
+        end
+
+        region.jumpPadNodes = {}
+
+        for _, padData in ipairs(region.layout.pads) do
+            local qualifiedPadId = regionId .. "_" .. padData.id
+
+            -- Create JumpPad via IPC (handles wiring automatically)
+            local jumpPad = IPC.createInstance("JumpPad", {
+                id = qualifiedPadId,
+                attributes = {
+                    PadId = padData.id,
+                    RegionId = regionId,
+                    PositionX = padData.position[1],
+                    PositionY = padData.position[2],
+                    PositionZ = padData.position[3],
+                    Container = container,
+                },
+            })
+
+            if jumpPad then
+                -- Store references
+                table.insert(state.jumpPadIds, qualifiedPadId)
+                region.jumpPadNodes[padData.id] = jumpPad
+            end
         end
     end
 
-    setupPadTouchHandler = function(self, regionId, padId, padPart)
+    local function destroyJumpPadsForRegion(self, regionId)
         local state = getState(self)
+        local region = state.regions[regionId]
+        local IPC = self._System and self._System.IPC
 
-        if not padPart then return end
+        if not IPC then return end
 
-        -- Create qualified pad ID (region + pad) to avoid cross-region conflicts
-        local qualifiedPadId = regionId .. "_" .. padId
+        -- Despawn JumpPads for this region via IPC
+        local prefix = regionId .. "_"
+        local indicesToRemove = {}
 
-        -- Touch started - player enters pad
-        local touchConnection = padPart.Touched:Connect(function(hit)
-            local player = Players:GetPlayerFromCharacter(hit.Parent)
-            if not player then return end
-
-            local playerId = player.UserId
-            local playerState = state.playerPadState[playerId]
-
-            -- Initialize player state if needed
-            if not playerState then
-                state.playerPadState[playerId] = { onPad = nil, canActivate = true }
-                playerState = state.playerPadState[playerId]
+        for i, padId in ipairs(state.jumpPadIds) do
+            if string.sub(padId, 1, #prefix) == prefix then
+                IPC.despawn(padId)
+                table.insert(indicesToRemove, 1, i)  -- Insert at front for reverse iteration
             end
+        end
 
-            -- Track that player is on this pad (with region qualifier)
-            playerState.onPad = qualifiedPadId
+        -- Remove from list (iterate in reverse to preserve indices)
+        for _, idx in ipairs(indicesToRemove) do
+            table.remove(state.jumpPadIds, idx)
+        end
 
-            -- Check if player can activate (must have exited pad since last teleport)
-            if not playerState.canActivate then
-                return
-            end
-
-            -- Debounce - prevent multiple triggers
-            if padPart:GetAttribute("Teleporting") then return end
-            padPart:SetAttribute("Teleporting", true)
-
-            -- Mark player as unable to activate until they exit
-            playerState.canActivate = false
-
-            task.defer(function()
-                handlePadTouch(self, regionId, padId, player)
-                task.wait(0.5)
-                if padPart and padPart.Parent then
-                    padPart:SetAttribute("Teleporting", false)
-                end
-            end)
-        end)
-
-        -- Touch ended - player exits pad
-        local touchEndConnection = padPart.TouchEnded:Connect(function(hit)
-            local player = Players:GetPlayerFromCharacter(hit.Parent)
-            if not player then return end
-
-            local playerId = player.UserId
-            local playerState = state.playerPadState[playerId]
-
-            -- Only re-enable activation if player is exiting THIS specific pad
-            if playerState and playerState.onPad == qualifiedPadId then
-                playerState.onPad = nil
-                playerState.canActivate = true
-            end
-        end)
-
-        state.touchConnections[regionId .. "_" .. padId .. "_touch"] = touchConnection
-        state.touchConnections[regionId .. "_" .. padId .. "_touchend"] = touchEndConnection
+        if region then
+            region.jumpPadNodes = nil
+        end
     end
 
-    function handlePadTouch(self, regionId, padId, player)
+    function handleJumpRequest(self, regionId, padId, player)
         local state = getState(self)
         local region = state.regions[regionId]
 
@@ -314,8 +341,8 @@ local RegionManager = Node.extend(function(parent)
         -- Instantiate
         local result = instantiateLayout(self, newRegionId, layout)
 
-        -- Setup pad touch handlers
-        setupAllPadHandlers(self, newRegionId)
+        -- Create JumpPad nodes for this region
+        createJumpPadsForRegion(self, newRegionId, result.container)
 
         -- Link first pad back to source
         local firstPadId = getFirstPadId(state.regions[newRegionId])
@@ -323,17 +350,13 @@ local RegionManager = Node.extend(function(parent)
             linkPads(self, sourceRegionId, sourcePadId, newRegionId, firstPadId)
         end
 
-        -- Prepare teleport (disable activation before moving)
-        local playerId = player.UserId
-        if not state.playerPadState[playerId] then
-            state.playerPadState[playerId] = { onPad = nil, canActivate = false }
+        -- Teleport to first pad in new region (the entry point)
+        if firstPadId then
+            teleportPlayerToPad(self, newRegionId, firstPadId, player)
         else
-            state.playerPadState[playerId].onPad = nil
-            state.playerPadState[playerId].canActivate = false
+            -- Fallback to spawn if no pad
+            teleportPlayerToSpawn(self, newRegionId, player)
         end
-
-        -- Teleport to spawn in new region
-        teleportPlayerToSpawn(self, newRegionId, player)
 
         -- Set as active
         state.regions[newRegionId].isActive = true
@@ -369,33 +392,14 @@ local RegionManager = Node.extend(function(parent)
             oldContainer:Destroy()
         end
 
-        -- Disconnect old touch handlers for this region
-        local prefix = targetRegionId .. "_"
-        local keysToRemove = {}
-        for key, conn in pairs(state.touchConnections) do
-            if string.sub(key, 1, #prefix) == prefix then
-                conn:Disconnect()
-                table.insert(keysToRemove, key)
-            end
-        end
-        for _, key in ipairs(keysToRemove) do
-            state.touchConnections[key] = nil
-        end
+        -- Destroy old JumpPads for this region
+        destroyJumpPadsForRegion(self, targetRegionId)
 
         -- Reinstantiate from stored layout (no regeneration!)
         local result = instantiateLayout(self, targetRegionId, targetRegion.layout)
 
-        -- Setup pad touch handlers
-        setupAllPadHandlers(self, targetRegionId)
-
-        -- Prepare teleport
-        local playerId = player.UserId
-        if not state.playerPadState[playerId] then
-            state.playerPadState[playerId] = { onPad = nil, canActivate = false }
-        else
-            state.playerPadState[playerId].onPad = nil
-            state.playerPadState[playerId].canActivate = false
-        end
+        -- Create JumpPad nodes for this region
+        createJumpPadsForRegion(self, targetRegionId, result.container)
 
         -- Teleport to target pad
         teleportPlayerToPad(self, targetRegionId, targetPadId, player)
@@ -418,18 +422,8 @@ local RegionManager = Node.extend(function(parent)
 
         if not region then return end
 
-        -- Disconnect touch handlers for this region
-        local prefix = regionId .. "_"
-        local keysToRemove = {}
-        for key, conn in pairs(state.touchConnections) do
-            if string.sub(key, 1, #prefix) == prefix then
-                conn:Disconnect()
-                table.insert(keysToRemove, key)
-            end
-        end
-        for _, key in ipairs(keysToRemove) do
-            state.touchConnections[key] = nil
-        end
+        -- Destroy JumpPad nodes for this region
+        destroyJumpPadsForRegion(self, regionId)
 
         -- Destroy container
         if region.container then
@@ -489,18 +483,19 @@ local RegionManager = Node.extend(function(parent)
         local hrp = character:FindFirstChild("HumanoidRootPart")
         if not hrp then return end
 
-        -- Try runtime pad reference first
-        if region and region.pads and region.pads[padId] then
-            local pad = region.pads[padId]
-            if pad.part and pad.part.Parent then
-                hrp.CFrame = pad.part.CFrame + Vector3.new(0, 3, 0)
-                return
-            elseif pad.position then
-                hrp.CFrame = CFrame.new(
-                    pad.position[1],
-                    pad.position[2] + 3,
-                    pad.position[3]
-                )
+        -- Get JumpPad instance via IPC and set this player to spawnIn mode
+        local qualifiedPadId = regionId .. "_" .. padId
+        local IPC = self._System and self._System.IPC
+        local jumpPad = IPC and IPC.getInstance(qualifiedPadId)
+
+        if jumpPad then
+            -- Set this player to spawnIn mode (won't fire until they walk off and back on)
+            jumpPad:setModeForPlayer(player, "spawnIn")
+
+            -- Try JumpPad node position first
+            local position = jumpPad:getPosition()
+            if position then
+                hrp.CFrame = CFrame.new(position) + Vector3.new(0, 3, 0)
                 return
             end
         end
@@ -551,6 +546,29 @@ local RegionManager = Node.extend(function(parent)
             end,
         },
 
+        In = {
+            --[[
+                Handle jump request from JumpPad (routed via IPC wiring).
+
+                @param data table:
+                    player: Player - The player who triggered the jump
+                    padId: string - The pad ID (local to region)
+                    regionId: string - The region ID
+                    position: Vector3 - The pad position
+            --]]
+            onJumpRequested = function(self, data)
+                if not data or not data.regionId or not data.padId or not data.player then
+                    warn("[RegionManager] Invalid jumpRequested data")
+                    return
+                end
+                handleJumpRequest(self, data.regionId, data.padId, data.player)
+            end,
+        },
+
+        Out = {
+            -- Reserved for future signals (e.g., regionLoaded, regionUnloaded)
+        },
+
         -- Configuration
         configure = function(self, config)
             local state = getState(self)
@@ -590,10 +608,10 @@ local RegionManager = Node.extend(function(parent)
             }
 
             -- Instantiate
-            instantiateLayout(self, regionId, layout)
+            local result = instantiateLayout(self, regionId, layout)
 
-            -- Setup pad touch handlers
-            setupAllPadHandlers(self, regionId)
+            -- Create JumpPad nodes for this region
+            createJumpPadsForRegion(self, regionId, result.container)
 
             state.activeRegionId = regionId
 

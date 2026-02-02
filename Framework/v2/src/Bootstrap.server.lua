@@ -97,6 +97,10 @@ local Game = require(ReplicatedStorage:WaitForChild("Game"))
 --   Asset.register(require(Lib.Dispenser))
 --   Asset.register(require(Lib.Evaluator))
 
+-- Register dungeon nodes with IPC
+IPC.registerNode(Lib.Components.JumpPad)
+IPC.registerNode(Lib.Components.RegionManager)
+
 -- Register Game-level nodes (game-specific implementations)
 -- Example:
 --   Asset.register(Game.MarshmallowBag)
@@ -114,13 +118,13 @@ Asset.buildInheritanceTree()
 -- Define run modes with wiring configurations.
 -- Each mode specifies which nodes are active and how they're connected.
 
--- Example:
--- IPC.defineMode("Playing", {
---     nodes = { "MarshmallowBag", "Camper" },
---     wiring = {
---         MarshmallowBag = { "Camper" },
---     },
--- })
+-- Dungeon mode: JumpPad signals route to RegionManager
+IPC.defineMode("Dungeon", {
+    nodes = { "JumpPad", "RegionManager" },
+    wiring = {
+        JumpPad = { "RegionManager" },
+    },
+})
 
 --------------------------------------------------------------------------------
 -- IPC INITIALIZATION
@@ -128,6 +132,9 @@ Asset.buildInheritanceTree()
 
 -- Initialize IPC (calls onInit on all registered instances)
 IPC.init()
+
+-- Switch to Dungeon mode (enables wiring)
+IPC.switchMode("Dungeon")
 
 -- Start IPC (enables routing, calls onStart on all instances)
 IPC.start()
@@ -173,15 +180,12 @@ local function startInfiniteDungeon()
     Lighting.FogColor = Color3.fromRGB(0, 0, 0)
     Lighting.GlobalShadows = false  -- Disable shadows for performance
 
-    local RegionManager = Lib.Components.RegionManager
-
-    -- Create region manager
-    local regionManager = RegionManager:new({
+    -- Create region manager via IPC (handles init/start automatically)
+    local regionManager = IPC.createInstance("RegionManager", {
         id = "InfiniteDungeon",
     })
-    regionManager.Sys.onInit(regionManager)
 
-    -- Store globally for cleanup
+    -- Store globally for debugging (IPC handles lifecycle)
     _G.RegionManager = regionManager
 
     -- Configure
@@ -316,10 +320,8 @@ end
 game:BindToClose(function()
     Debug.info("Bootstrap", "Server shutting down...")
 
-    -- Stop region manager (handles all dungeon cleanup)
-    if _G.RegionManager then
-        _G.RegionManager.Sys.onStop(_G.RegionManager)
-    end
+    -- Despawn region manager via IPC (handles all dungeon cleanup)
+    IPC.despawn("InfiniteDungeon")
 
     Lib.System.stopAll()
     Log.shutdown()

@@ -237,6 +237,9 @@ local Zone = Node.extend(function(parent)
 
     --[[
         Private: Handle an entity entering the zone.
+
+        Child nodes can override onEntityEnter(self, data) to customize behavior.
+        If not overridden, fires entityEntered signal.
     --]]
     local function handleEnter(self, entity)
         local state = getState(self)
@@ -254,13 +257,22 @@ local Zone = Node.extend(function(parent)
         -- Track entity
         state.entitiesInZone[entity] = true
 
-        -- Fire signal
+        -- Build data payload
         local data = buildEntityData(self, entity)
-        self.Out:Fire("entityEntered", data)
+
+        -- Call hook if defined by child node, otherwise fire signal
+        if self.onEntityEnter then
+            self:onEntityEnter(data)
+        else
+            self.Out:Fire("entityEntered", data)
+        end
     end
 
     --[[
         Private: Handle an entity exiting the zone.
+
+        Child nodes can override onEntityExit(self, data) to customize behavior.
+        If not overridden, fires entityExited signal.
     --]]
     local function handleExit(self, entity)
         local state = getState(self)
@@ -273,12 +285,19 @@ local Zone = Node.extend(function(parent)
         -- Untrack entity
         state.entitiesInZone[entity] = nil
 
-        -- Fire signal
-        self.Out:Fire("entityExited", {
+        -- Build data payload
+        local data = {
             entity = entity,
             entityId = entity:GetAttribute("NodeId") or entity.Name,
             zoneId = self.id,
-        })
+        }
+
+        -- Call hook if defined by child node, otherwise fire signal
+        if self.onEntityExit then
+            self:onEntityExit(data)
+        else
+            self.Out:Fire("entityExited", data)
+        end
     end
 
     --[[

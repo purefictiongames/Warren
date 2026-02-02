@@ -238,6 +238,73 @@ local function startInfiniteDungeon()
     end
 
     Debug.info("Bootstrap", "Infinite dungeon ready")
+
+    -- Safety net: check if player spawns outside room volumes and relocate
+    local Players = game:GetService("Players")
+    local layout = region and region.layout
+
+    local function isInsideAnyRoom(position)
+        if not layout then return false end
+        for _, room in pairs(layout.rooms) do
+            local minX = room.position[1] - room.dims[1] / 2
+            local maxX = room.position[1] + room.dims[1] / 2
+            local minY = room.position[2] - room.dims[2] / 2
+            local maxY = room.position[2] + room.dims[2] / 2
+            local minZ = room.position[3] - room.dims[3] / 2
+            local maxZ = room.position[3] + room.dims[3] / 2
+
+            if position.X >= minX and position.X <= maxX and
+               position.Y >= minY and position.Y <= maxY and
+               position.Z >= minZ and position.Z <= maxZ then
+                return true
+            end
+        end
+        return false
+    end
+
+    local function onCharacterAdded(character)
+        -- Wait for character to fully load and settle
+        task.wait(0.5)
+
+        local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+        if not humanoidRootPart then return end
+
+        local pos = humanoidRootPart.Position
+        if not isInsideAnyRoom(pos) then
+            -- Player spawned outside - teleport to room 1 center
+            local room1 = layout and layout.rooms[1]
+            if room1 then
+                local targetPos = Vector3.new(
+                    room1.position[1],
+                    room1.position[2] - room1.dims[2] / 2 + 3,  -- Floor + 3
+                    room1.position[3]
+                )
+                humanoidRootPart.CFrame = CFrame.new(targetPos)
+                Debug.info("Bootstrap", string.format(
+                    "Player spawned outside rooms at (%.1f, %.1f, %.1f), relocated to (%.1f, %.1f, %.1f)",
+                    pos.X, pos.Y, pos.Z,
+                    targetPos.X, targetPos.Y, targetPos.Z
+                ))
+            end
+        else
+            Debug.info("Bootstrap", string.format(
+                "Player spawned inside room at (%.1f, %.1f, %.1f)",
+                pos.X, pos.Y, pos.Z
+            ))
+        end
+    end
+
+    local function onPlayerAdded(player)
+        if player.Character then
+            onCharacterAdded(player.Character)
+        end
+        player.CharacterAdded:Connect(onCharacterAdded)
+    end
+
+    Players.PlayerAdded:Connect(onPlayerAdded)
+    for _, player in ipairs(Players:GetPlayers()) do
+        onPlayerAdded(player)
+    end
 end
 
 --------------------------------------------------------------------------------

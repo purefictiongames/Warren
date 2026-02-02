@@ -114,6 +114,9 @@ local RegionManager = Node.extend(function(parent)
                 regionCount = 0,
                 -- JumpPad instance IDs (for IPC.despawn)
                 jumpPadIds = {},
+                -- Per-player pending transitions (for async flow)
+                -- { [Player] = { regionId, padId, isNewRegion, sourceRegionId, sourcePadId } }
+                pendingTransitions = {},
             }
         end
         return instanceStates[self.id]
@@ -129,6 +132,30 @@ local RegionManager = Node.extend(function(parent)
             end
         end
         instanceStates[self.id] = nil
+    end
+
+    ----------------------------------------------------------------------------
+    -- PLAYER ANCHORING (for transition safety)
+    ----------------------------------------------------------------------------
+
+    local function anchorPlayer(player)
+        local character = player.Character
+        if not character then return end
+
+        local hrp = character:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            hrp.Anchored = true
+        end
+    end
+
+    local function unanchorPlayer(player)
+        local character = player.Character
+        if not character then return end
+
+        local hrp = character:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            hrp.Anchored = false
+        end
     end
 
     ----------------------------------------------------------------------------
@@ -306,16 +333,47 @@ local RegionManager = Node.extend(function(parent)
 
         if not region then return end
 
+        -- Check if player already has a pending transition
+        if state.pendingTransitions[player] then
+            return
+        end
+
         local padLinks = region.padLinks or {}
         local padLink = padLinks[padId]
 
+        -- Determine target info
+        local targetRegionId, targetPadId, isNewRegion
         if padLink then
-            -- Pad is linked - teleport to existing region
-            teleportToRegion(self, padLink.regionId, padLink.padId, player)
+            -- Pad is linked - will teleport to existing region
+            targetRegionId = padLink.regionId
+            targetPadId = padLink.padId
+            isNewRegion = false
         else
-            -- Pad is unlinked - generate new region
-            createNewRegion(self, regionId, padId, player)
+            -- Pad is unlinked - will generate new region
+            targetRegionId = nil  -- Will be generated later
+            targetPadId = nil
+            isNewRegion = true
         end
+
+        -- Store pending transition data
+        state.pendingTransitions[player] = {
+            sourceRegionId = regionId,
+            sourcePadId = padId,
+            targetRegionId = targetRegionId,
+            targetPadId = targetPadId,
+            isNewRegion = isNewRegion,
+        }
+
+        -- Anchor player to prevent movement/physics during transition
+        anchorPlayer(player)
+
+        -- Fire transition start signal to client (routed via IPC wiring)
+        self.Out:Fire("transitionStart", {
+            _targetPlayer = player,
+            player = player,
+            regionId = targetRegionId or "new",
+            padId = targetPadId,
+        })
     end
 
     ----------------------------------------------------------------------------
@@ -479,6 +537,133 @@ local RegionManager = Node.extend(function(parent)
     end
 
     ----------------------------------------------------------------------------
+    -- ASYNC REGION OPERATIONS (for screen transition flow)
+    ----------------------------------------------------------------------------
+
+    --[[
+        Create a new region without teleporting (async flow).
+        Called after client fade out is complete.
+        Returns the new region ID.
+    --]]
+    function createNewRegionAsync(self, sourceRegionId, sourcePadId, player)
+        local state = getState(self)
+
+        -- Generate new region
+        state.regionCount = state.regionCount + 1
+        local newRegionId = "region_" .. state.regionCount
+        local newSeed = generateSeed()
+        local regionNum = state.regionCount
+
+        -- Generate layout
+        local layout = generateLayout(self, newSeed, regionNum)
+
+        -- Store region with layout
+        state.regions[newRegionId] = {
+            id = newRegionId,
+            layout = layout,
+            padLinks = {},
+            isActive = false,
+            container = nil,
+            pads = nil,
+            spawnPoint = nil,
+            spawnPosition = nil,
+        }
+
+        -- Instantiate
+        local result = instantiateLayout(self, newRegionId, layout)
+
+        -- Create JumpPad nodes for this region
+        createJumpPadsForRegion(self, newRegionId, result.container)
+
+        -- Link first pad back to source
+        local firstPadId = getFirstPadId(state.regions[newRegionId])
+        if firstPadId and sourcePadId then
+            linkPads(self, sourceRegionId, sourcePadId, newRegionId, firstPadId)
+        end
+
+        -- Teleport player to first pad (they're anchored so this just sets position)
+        if firstPadId then
+            teleportPlayerToPad(self, newRegionId, firstPadId, player)
+        else
+            teleportPlayerToSpawn(self, newRegionId, player)
+        end
+
+        -- Re-anchor at new position to ensure they stay put until transition completes
+        anchorPlayer(player)
+
+        -- Set as active
+        state.regions[newRegionId].isActive = true
+        local oldActiveId = state.activeRegionId
+        state.activeRegionId = newRegionId
+
+        -- Update pending transition with actual target info
+        local pending = state.pendingTransitions[player]
+        if pending then
+            pending.targetRegionId = newRegionId
+            pending.targetPadId = firstPadId
+        end
+
+        -- Unload old region
+        if oldActiveId then
+            task.defer(function()
+                unloadRegion(self, oldActiveId)
+            end)
+        end
+
+        return newRegionId
+    end
+
+    --[[
+        Teleport to existing region without player teleport call (async flow).
+        Called after client fade out is complete.
+    --]]
+    function teleportToRegionAsync(self, targetRegionId, targetPadId, player)
+        local state = getState(self)
+        local targetRegion = state.regions[targetRegionId]
+
+        if not targetRegion then return end
+
+        -- Track old region for unloading
+        local oldActiveId = state.activeRegionId
+
+        -- Destroy any leftover container
+        if targetRegion.container then
+            targetRegion.container:Destroy()
+            targetRegion.container = nil
+        end
+        local oldContainer = workspace:FindFirstChild("Region_" .. targetRegionId)
+        if oldContainer then
+            oldContainer:Destroy()
+        end
+
+        -- Destroy old JumpPads for this region
+        destroyJumpPadsForRegion(self, targetRegionId)
+
+        -- Reinstantiate from stored layout (no regeneration!)
+        local result = instantiateLayout(self, targetRegionId, targetRegion.layout)
+
+        -- Create JumpPad nodes for this region
+        createJumpPadsForRegion(self, targetRegionId, result.container)
+
+        -- Teleport player to target pad (they're anchored so this just sets position)
+        teleportPlayerToPad(self, targetRegionId, targetPadId, player)
+
+        -- Re-anchor at new position to ensure they stay put until transition completes
+        anchorPlayer(player)
+
+        -- Set as active
+        targetRegion.isActive = true
+        state.activeRegionId = targetRegionId
+
+        -- Unload old region
+        if oldActiveId and oldActiveId ~= targetRegionId then
+            task.defer(function()
+                unloadRegion(self, oldActiveId)
+            end)
+        end
+    end
+
+    ----------------------------------------------------------------------------
     -- TELEPORTATION
     ----------------------------------------------------------------------------
 
@@ -598,10 +783,98 @@ local RegionManager = Node.extend(function(parent)
                 end
                 handleJumpRequest(self, data.regionId, data.padId, data.player)
             end,
+
+            --[[
+                Handle fade out complete signal from client ScreenTransition.
+                Screen is now black - safe to load/build and teleport.
+
+                @param data table:
+                    player: Player - The player who completed fade out
+            --]]
+            onFadeOutComplete = function(self, data)
+                if not data or not data.player then
+                    warn("[RegionManager] Invalid fadeOutComplete data")
+                    return
+                end
+
+                local state = getState(self)
+                local player = data.player
+                local pending = state.pendingTransitions[player]
+
+                if not pending then
+                    warn("[RegionManager] No pending transition for player:", player.Name)
+                    return
+                end
+
+                local System = self._System
+                if System and System.Debug then
+                    System.Debug.info("RegionManager", "Fade complete for", player.Name, "- loading region")
+                end
+
+                local container
+                if pending.isNewRegion then
+                    -- Generate new region
+                    local newRegionId = createNewRegionAsync(self, pending.sourceRegionId, pending.sourcePadId, player)
+                    local newRegion = state.regions[newRegionId]
+                    container = newRegion and newRegion.container
+                else
+                    -- Load existing region
+                    teleportToRegionAsync(self, pending.targetRegionId, pending.targetPadId, player)
+                    local targetRegion = state.regions[pending.targetRegionId]
+                    container = targetRegion and targetRegion.container
+                end
+
+                -- Fire loading complete to client with container for preloading
+                self.Out:Fire("loadingComplete", {
+                    _targetPlayer = player,
+                    player = player,
+                    container = container,
+                })
+            end,
+
+            --[[
+                Handle transition complete signal from client ScreenTransition.
+                Player can now move freely.
+
+                @param data table:
+                    player: Player - The player who completed the transition
+            --]]
+            onTransitionComplete = function(self, data)
+                if not data or not data.player then
+                    warn("[RegionManager] Invalid transitionComplete data")
+                    return
+                end
+
+                local state = getState(self)
+                local player = data.player
+
+                local System = self._System
+                if System and System.Debug then
+                    System.Debug.info("RegionManager", "Fade-in complete for", player.Name, "- ending transition")
+                end
+
+                -- Signal client to re-enable controls
+                self.Out:Fire("transitionEnd", {
+                    _targetPlayer = player,
+                    player = player,
+                })
+
+                -- Unanchor player
+                unanchorPlayer(player)
+
+                -- Clear pending transition
+                state.pendingTransitions[player] = nil
+
+                if System and System.Debug then
+                    System.Debug.info("RegionManager", "Transition complete for", player.Name)
+                end
+            end,
         },
 
         Out = {
-            -- Reserved for future signals (e.g., regionLoaded, regionUnloaded)
+            transitionStart = {},
+            loadingComplete = {},
+            transitionEnd = {},
         },
 
         -- Configuration

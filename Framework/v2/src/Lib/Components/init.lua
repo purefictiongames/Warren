@@ -46,6 +46,9 @@ Components.Zone = require(script.Zone)
 Components.Checkpoint = require(script.Checkpoint)
 Components.JumpPad = require(script.JumpPad)
 
+-- Screen Transitions
+Components.ScreenTransition = require(script.ScreenTransition)
+
 -- Pool Management
 Components.NodePool = require(script.NodePool)
 

@@ -1159,10 +1159,15 @@ System.IPC = (function()
     local nodesByClass = {}      -- { className → { instanceId, ... } }
     local modeConfigs = {}       -- { modeName → config }
     local currentMode = nil      -- Current active mode name
-    local messageCounter = 0     -- Linear message ID counter
-    local seenMessages = {}      -- { msgId → { nodeId → true } }
+    local messageCounter = 0     -- Linear message ID counter (prefixed with domain)
+    local seenMessages = {}      -- { "S:1" | "C:1" → { nodeId → true } }
     local isInitialized = false
     local isStarted = false
+
+    -- Message ID domain prefix (like area codes for phone numbers)
+    -- Local messages: "S:1", "S:2" (server) or "C:1", "C:2" (client)
+    -- Cross-domain messages retain their origin prefix when received
+    local MESSAGE_DOMAIN_PREFIX = System.isServer and "S:" or "C:"
 
     -- Cross-domain routing state
     local crossDomainRemote = nil           -- RemoteEvent for client/server signals
@@ -1386,7 +1391,7 @@ System.IPC = (function()
         @param targetId string - Target instance ID
         @param signal string - Signal name
         @param data table - Signal payload
-        @param msgId number - Message ID for cycle detection
+        @param msgId string - Message ID for cycle detection (e.g., "S:1", "C:2")
         @return boolean - True if dispatched successfully
     --]]
     local function dispatchToTarget(targetId, signal, data, msgId)
@@ -1724,14 +1729,15 @@ System.IPC = (function()
     --[[
         Get a unique message ID.
 
-        This is a blocking call that returns a linear integer.
-        Used for message ordering and cycle detection.
+        Returns a domain-prefixed ID (e.g., "S:1" for server, "C:1" for client).
+        This prevents cross-domain message ID collisions, like area codes for
+        phone numbers or domestic vs international mail.
 
-        @return number - Unique message ID
+        @return string - Unique message ID with domain prefix
     --]]
     function IPC.getMessageId()
         messageCounter = messageCounter + 1
-        return messageCounter
+        return MESSAGE_DOMAIN_PREFIX .. messageCounter
     end
 
     --[[
@@ -1908,7 +1914,11 @@ System.IPC = (function()
         local wiring = resolveWiring(currentMode)
         local targetClasses = wiring[sourceClass] or {}
 
-        System.Debug.trace("IPC", "Cross-domain signal from", sourceClass, ":", signal, "to", #targetClasses, "target classes")
+        -- Use the original msgId from the sending domain
+        -- With prefixed IDs (e.g., "S:1" vs "C:1"), there's no collision risk
+        local msgId = data._msgId
+
+        System.Debug.trace("IPC", "Cross-domain signal from", sourceClass, ":", signal, "msgId:", msgId, "to", #targetClasses, "target classes")
 
         -- Dispatch to all instances of target classes in this context
         for _, targetClass in ipairs(targetClasses) do
@@ -1919,7 +1929,7 @@ System.IPC = (function()
             if targetDomain == currentDomain or targetDomain == "shared" then
                 local classInstances = nodesByClass[targetClass] or {}
                 for _, instanceId in ipairs(classInstances) do
-                    dispatchToTarget(instanceId, signal, data, data._msgId)
+                    dispatchToTarget(instanceId, signal, data, msgId)
                 end
             end
         end
@@ -2004,9 +2014,18 @@ System.IPC = (function()
             System.Debug.trace("IPC", "Sent cross-domain to server:", sourceClass, signal)
             return true
         elseif targetDomain == "client" and System.isServer then
-            -- Server sending to all clients
-            crossDomainRemote:FireAllClients(sourceClass, signal, data)
-            System.Debug.trace("IPC", "Sent cross-domain to clients:", sourceClass, signal)
+            -- Server sending to client(s)
+            -- Check for player-specific targeting via _targetPlayer in data
+            local targetPlayer = data and data._targetPlayer
+            if targetPlayer and typeof(targetPlayer) == "Instance" and targetPlayer:IsA("Player") then
+                -- Send to specific player
+                crossDomainRemote:FireClient(targetPlayer, sourceClass, signal, data)
+                System.Debug.trace("IPC", "Sent cross-domain to player:", targetPlayer.Name, sourceClass, signal)
+            else
+                -- Broadcast to all clients
+                crossDomainRemote:FireAllClients(sourceClass, signal, data)
+                System.Debug.trace("IPC", "Sent cross-domain to all clients:", sourceClass, signal)
+            end
             return true
         end
 

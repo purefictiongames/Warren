@@ -69,15 +69,44 @@ Log.init()
 -- Initialize IPC subsystem
 local IPC = Lib.System.IPC
 
--- NOTE: Register client-domain nodes and define modes here before IPC.init()
--- Client nodes handle UI, visual effects, and local player interaction
--- Example:
---   local UINode = Lib.Node.extend({ name = "UINode", domain = "client", ... })
---   IPC.registerNode(UINode)
---   IPC.createInstance("UINode", { id = "ui1" })
+--------------------------------------------------------------------------------
+-- NODE REGISTRATION
+--------------------------------------------------------------------------------
+-- Register client-domain nodes and define modes here before IPC.init()
+
+-- Register ScreenTransition for screen fade effects during teleportation
+IPC.registerNode(Lib.Components.ScreenTransition)
+
+-- Also register server-side nodes for wiring resolution (they won't create instances)
+IPC.registerNode(Lib.Components.JumpPad)
+IPC.registerNode(Lib.Components.RegionManager)
+
+--------------------------------------------------------------------------------
+-- MODE DEFINITION
+--------------------------------------------------------------------------------
+-- Define same modes as server for cross-domain wiring to work
+
+IPC.defineMode("Dungeon", {
+    nodes = { "JumpPad", "RegionManager", "ScreenTransition" },
+    wiring = {
+        JumpPad = { "RegionManager" },
+        RegionManager = { "ScreenTransition" },
+        ScreenTransition = { "RegionManager" },
+    },
+})
+
+--------------------------------------------------------------------------------
+-- INSTANCE CREATION
+--------------------------------------------------------------------------------
+
+-- Create ScreenTransition instance (one per client)
+IPC.createInstance("ScreenTransition", { id = "ScreenTransition_Local" })
 
 -- Initialize IPC (calls onInit on all registered client instances)
 IPC.init()
+
+-- Switch to Dungeon mode (must match server)
+IPC.switchMode("Dungeon")
 
 -- Start IPC (enables routing, calls onStart on all instances)
 IPC.start()

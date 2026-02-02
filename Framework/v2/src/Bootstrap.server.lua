@@ -100,6 +100,7 @@ local Game = require(ReplicatedStorage:WaitForChild("Game"))
 -- Register dungeon nodes with IPC
 IPC.registerNode(Lib.Components.JumpPad)
 IPC.registerNode(Lib.Components.RegionManager)
+IPC.registerNode(Lib.Components.ScreenTransition)  -- Client-side, but registered for wiring
 
 -- Register Game-level nodes (game-specific implementations)
 -- Example:
@@ -118,11 +119,16 @@ Asset.buildInheritanceTree()
 -- Define run modes with wiring configurations.
 -- Each mode specifies which nodes are active and how they're connected.
 
--- Dungeon mode: JumpPad signals route to RegionManager
+-- Dungeon mode: JumpPad signals route to RegionManager, screen transitions cross client/server
 IPC.defineMode("Dungeon", {
-    nodes = { "JumpPad", "RegionManager" },
+    nodes = { "JumpPad", "RegionManager", "ScreenTransition" },
     wiring = {
+        -- Server-side: JumpPad → RegionManager
         JumpPad = { "RegionManager" },
+        -- Cross-domain: RegionManager (server) → ScreenTransition (client)
+        RegionManager = { "ScreenTransition" },
+        -- Cross-domain: ScreenTransition (client) → RegionManager (server)
+        ScreenTransition = { "RegionManager" },
     },
 })
 

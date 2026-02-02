@@ -149,6 +149,101 @@ IPC.start()
 -- Lib.System.Store.init()
 
 --------------------------------------------------------------------------------
+-- INFINITE DUNGEON SYSTEM
+--------------------------------------------------------------------------------
+-- Manages infinite dungeon with region-based generation and teleportation
+--
+-- TODO: This is a temporary hack. Should be its own script in ServerScriptService.
+-- See: src/Game/DungeonServer/_ServerScriptService/DungeonStartup.server.lua
+--
+-- KNOWN ISSUES:
+-- [ ] Lighting is slow to load on first play. Bootstrap should wait for all
+--     lighting and shaders to complete before showing environment to player.
+--     Consider using a loading screen or ContentProvider:PreloadAsync().
+--------------------------------------------------------------------------------
+
+local function startInfiniteDungeon()
+    -- Set dark/nighttime lighting
+    local Lighting = game:GetService("Lighting")
+    Lighting.ClockTime = 0  -- Midnight
+    Lighting.Brightness = 0  -- No ambient light
+    Lighting.OutdoorAmbient = Color3.fromRGB(0, 0, 0)
+    Lighting.Ambient = Color3.fromRGB(20, 20, 25)  -- Slight ambient for visibility
+    Lighting.FogEnd = 1000
+    Lighting.FogColor = Color3.fromRGB(0, 0, 0)
+    Lighting.GlobalShadows = false  -- Disable shadows for performance
+
+    local RegionManager = Lib.Components.RegionManager
+
+    -- Create region manager
+    local regionManager = RegionManager:new({
+        id = "InfiniteDungeon",
+    })
+    regionManager.Sys.onInit(regionManager)
+
+    -- Store globally for cleanup
+    _G.RegionManager = regionManager
+
+    -- Configure
+    -- Note: material/color use serializable formats (string/array) for DataStore compatibility
+    regionManager:configure({
+        baseUnit = 5,
+        wallThickness = 1,
+        doorSize = 12,
+        floorThreshold = 6.5,  -- Height diff before truss is placed
+        mainPathLength = 8,
+        spurCount = 4,
+        loopCount = 1,
+        verticalChance = 30,
+        minVerticalRatio = 0.2,
+        scaleRange = {
+            min = 4,
+            max = 12,
+            minY = 4,
+            maxY = 8,
+        },
+        material = "Brick",  -- String for serialization
+        color = { 140, 110, 90 },  -- RGB array for serialization
+        roomsPerPad = 25,  -- Teleport pad every 25 rooms (+ 1 minimum)
+        origin = { 0, 20, 0 },
+    })
+
+    -- Start first region (deletes baseplate automatically)
+    Debug.info("Bootstrap", "Starting infinite dungeon...")
+    local regionId = regionManager:startFirstRegion()
+
+    -- Log layout info for debugging
+    local region = regionManager:getRegion(regionId)
+    if region and region.layout then
+        local layout = region.layout
+        local roomCount = 0
+        for _ in pairs(layout.rooms) do roomCount = roomCount + 1 end
+
+        Debug.info("Bootstrap", string.format(
+            "Layout generated: %d rooms, %d doors, %d trusses, %d lights, %d pads",
+            roomCount,
+            #layout.doors,
+            #layout.trusses,
+            #layout.lights,
+            #layout.pads
+        ))
+
+        if layout.spawn then
+            local pos = layout.spawn.position
+            Debug.info("Bootstrap", string.format(
+                "Spawn at (%.1f, %.1f, %.1f) in room %d",
+                pos[1], pos[2], pos[3], layout.spawn.roomId
+            ))
+        end
+    end
+
+    Debug.info("Bootstrap", "Infinite dungeon ready")
+end
+
+-- Start immediately (not deferred) so spawn exists before players can spawn
+startInfiniteDungeon()
+
+--------------------------------------------------------------------------------
 -- CLEANUP ON SHUTDOWN
 --------------------------------------------------------------------------------
 -- Ensure all nodes are properly stopped when the game closes.
@@ -156,6 +251,12 @@ IPC.start()
 
 game:BindToClose(function()
     Debug.info("Bootstrap", "Server shutting down...")
+
+    -- Stop region manager (handles all dungeon cleanup)
+    if _G.RegionManager then
+        _G.RegionManager.Sys.onStop(_G.RegionManager)
+    end
+
     Lib.System.stopAll()
     Log.shutdown()
     Debug.info("Bootstrap", "Server shutdown complete")

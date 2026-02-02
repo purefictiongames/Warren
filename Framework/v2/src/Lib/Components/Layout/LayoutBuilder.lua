@@ -477,11 +477,19 @@ local function planTrusses(rooms, doors, config)
 
         if roomA and roomB then
         if door.axis == 2 then
-            -- Ceiling hole - truss from lower room floor to ceiling, at one edge of hole
-            local lowerRoom = roomA.position[2] < roomB.position[2] and roomA or roomB
-            local floorY = lowerRoom.position[2] - lowerRoom.dims[2] / 2
-            local ceilingY = lowerRoom.position[2] + lowerRoom.dims[2] / 2
-            local trussHeight = ceilingY - floorY
+            -- Ceiling hole - truss from lower room floor to upper room floor
+            local lowerRoom, upperRoom
+            if roomA.position[2] < roomB.position[2] then
+                lowerRoom = roomA
+                upperRoom = roomB
+            else
+                lowerRoom = roomB
+                upperRoom = roomA
+            end
+
+            local lowerFloor = lowerRoom.position[2] - lowerRoom.dims[2] / 2
+            local upperFloor = upperRoom.position[2] - upperRoom.dims[2] / 2
+            local trussHeight = upperFloor - lowerFloor
 
             -- Place at -X edge of hole, inside the box
             local trussX = door.center[1] - door.width / 2 + 1  -- +1 for truss half-width
@@ -489,13 +497,14 @@ local function planTrusses(rooms, doors, config)
             table.insert(trusses, {
                 id = trussId,
                 doorId = door.id,
-                position = { trussX, floorY + trussHeight / 2, door.center[3] },
+                position = { trussX, lowerFloor + trussHeight / 2, door.center[3] },
                 size = { 2, trussHeight, 2 },
                 type = "ceiling",
             })
             trussId = trussId + 1
 
-            print(string.format("[Truss] Ceiling: door %d, height=%.1f", door.id, trussHeight))
+            print(string.format("[Truss] Ceiling: door %d, lowerFloor=%.1f, upperFloor=%.1f, height=%.1f",
+                door.id, lowerFloor, upperFloor, trussHeight))
         else
             -- Wall hole - check both sides independently
             local roomsToCheck = {
@@ -645,7 +654,7 @@ local function planPads(ctx)
 
     local padCount = 1 + math.floor(roomCount / config.roomsPerPad)
 
-    -- Select rooms for pads (avoid room 1 which has spawn)
+    -- Select rooms for pads (start from room 2, room 1 is spawn)
     local step = math.max(1, math.floor((roomCount - 1) / padCount))
     local roomId = 2
     local padNum = 1
@@ -674,6 +683,7 @@ local function planPads(ctx)
                         id = "pad_" .. padNum,
                         roomId = roomId,
                         position = safePos,
+                        isSpawn = false,
                     })
                     print(string.format("[LayoutBuilder] Placed pad_%d in room %d at (%.1f, %.1f, %.1f)",
                         padNum, roomId, safePos[1], safePos[2], safePos[3]))
@@ -694,6 +704,7 @@ local function planPads(ctx)
                                     id = "pad_" .. padNum,
                                     roomId = roomId,
                                     position = safePos,
+                                    isSpawn = false,
                                 })
                                 print(string.format("[LayoutBuilder] Placed pad_%d in fallback room %d at (%.1f, %.1f, %.1f)",
                                     padNum, roomId, safePos[1], safePos[2], safePos[3]))
@@ -708,54 +719,6 @@ local function planPads(ctx)
     end
 
     return pads
-end
-
---------------------------------------------------------------------------------
--- SPAWN PLANNING
---------------------------------------------------------------------------------
-
-local function planSpawn(ctx)
-    local rooms = ctx:getRooms()
-    local doors = ctx:getDoors()
-
-    -- Build list of rooms that have floor holes
-    local roomsWithFloorHoles = {}
-    for _, door in ipairs(doors) do
-        if door.axis == 2 then
-            -- Vertical door - upper room has floor hole
-            local roomA = rooms[door.fromRoom]
-            local roomB = rooms[door.toRoom]
-            if roomA and roomB then
-                if roomA.position[2] > roomB.position[2] then
-                    roomsWithFloorHoles[door.fromRoom] = true
-                else
-                    roomsWithFloorHoles[door.toRoom] = true
-                end
-            end
-        end
-    end
-
-    -- Find first room without a floor hole, starting from room 1
-    for id = 1, 100 do
-        local room = rooms[id]
-        if room and not roomsWithFloorHoles[id] then
-            return {
-                position = { room.position[1], room.position[2] - room.dims[2] / 2, room.position[3] },
-                roomId = id,
-            }
-        end
-    end
-
-    -- Fallback: room 1
-    local room = rooms[1]
-    if room then
-        return {
-            position = { room.position[1], room.position[2] - room.dims[2] / 2, room.position[3] },
-            roomId = 1,
-        }
-    end
-
-    return nil
 end
 
 --------------------------------------------------------------------------------
@@ -802,8 +765,17 @@ function LayoutBuilder.generate(config)
     -- Plan teleport pads (reads rooms, doors, trusses for safe positioning)
     ctx:setPads(planPads(ctx))
 
-    -- Plan spawn point LAST (reads everything to find safe position)
-    ctx:setSpawn(planSpawn(ctx))
+    -- Set spawn at room 1's floor level + 3 studs
+    local room1 = ctx:getRoom(1)
+    if room1 then
+        local floorY = room1.position[2] - room1.dims[2] / 2 + 3
+        ctx:setSpawn({
+            position = { room1.position[1], floorY, room1.position[3] },
+            roomId = 1,
+        })
+        print(string.format("[LayoutBuilder] Spawn at room 1 floor: (%.1f, %.1f, %.1f)",
+            room1.position[1], floorY, room1.position[3]))
+    end
 
     -- Export to layout format
     local layout = ctx:toLayout()

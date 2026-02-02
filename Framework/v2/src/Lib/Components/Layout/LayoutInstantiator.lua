@@ -276,7 +276,6 @@ local function createPad(pad, roomContainers)
     part.Color = Color3.fromRGB(180, 50, 255)
     part.Parent = roomContainer
 
-    -- Set attributes for identification
     part:SetAttribute("TeleportPad", true)
     part:SetAttribute("PadId", pad.id)
     part:SetAttribute("RoomId", pad.roomId)
@@ -284,18 +283,7 @@ local function createPad(pad, roomContainers)
     return part
 end
 
---------------------------------------------------------------------------------
--- SPAWN CREATION
---------------------------------------------------------------------------------
-
-local function createSpawn(spawn, roomContainers, regionId, mainContainer)
-    local roomContainer = roomContainers[spawn.roomId]
-    if not roomContainer then
-        -- Fallback to main container, then workspace
-        roomContainer = mainContainer or workspace
-        warn("[LayoutInstantiator] Room container not found for spawn, using fallback")
-    end
-
+local function createSpawn(spawn, container, regionId)
     local spawnPoint = Instance.new("SpawnLocation")
     spawnPoint.Name = "Spawn_" .. (regionId or "default")
     spawnPoint.Size = Vector3.new(6, 1, 6)
@@ -304,10 +292,14 @@ local function createSpawn(spawn, roomContainers, regionId, mainContainer)
     spawnPoint.CanCollide = false
     spawnPoint.Neutral = true
     spawnPoint.Transparency = 1
-    spawnPoint.Parent = roomContainer
+    spawnPoint.Parent = container
+
+    print(string.format("[LayoutInstantiator] Spawn at (%.1f, %.1f, %.1f)",
+        spawn.position[1], spawn.position[2], spawn.position[3]))
 
     return spawnPoint
 end
+
 
 --------------------------------------------------------------------------------
 -- PUBLIC API
@@ -315,6 +307,14 @@ end
 
 function LayoutInstantiator.instantiate(layout, options)
     options = options or {}
+
+    -- Delete any existing SpawnLocation parts in workspace
+    for _, child in ipairs(workspace:GetChildren()) do
+        if child:IsA("SpawnLocation") then
+            print("[LayoutInstantiator] Removing existing SpawnLocation: " .. child.Name)
+            child:Destroy()
+        end
+    end
 
     -- Create or use container
     local container
@@ -367,10 +367,10 @@ function LayoutInstantiator.instantiate(layout, options)
         }
     end
 
-    -- Create spawn point
+    -- Create spawn at room 1 center
     local spawnPoint = nil
     if layout.spawn then
-        spawnPoint = createSpawn(layout.spawn, roomContainers, options.regionId, container)
+        spawnPoint = createSpawn(layout.spawn, container, options.regionId)
     end
 
     return {

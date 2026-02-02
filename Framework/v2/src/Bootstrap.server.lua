@@ -240,9 +240,6 @@ local function startInfiniteDungeon()
     Debug.info("Bootstrap", "Infinite dungeon ready")
 end
 
--- Start immediately (not deferred) so spawn exists before players can spawn
-startInfiniteDungeon()
-
 --------------------------------------------------------------------------------
 -- CLEANUP ON SHUTDOWN
 --------------------------------------------------------------------------------
@@ -263,3 +260,6 @@ game:BindToClose(function()
 end)
 
 Debug.info("Bootstrap", "Server ready")
+
+-- Start dungeon AFTER bootstrap complete (all systems initialized)
+startInfiniteDungeon()

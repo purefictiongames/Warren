@@ -1711,12 +1711,53 @@ local RegionManager = Node.extend(function(parent)
             return success
         end,
 
-        -- Admin: Clear save data by UserId (for Studio CLI)
-        -- Usage: regionManager:adminClearSaveData(12345678)
-        adminClearSaveData = function(self, userId)
+        -- TODO: These admin functions are currently accessed via _G.RegionManager in
+        -- Studio CLI. This is hacky but works for development testing. Later, integrate
+        -- into a proper system:
+        -- - Options screen UI for players to manage their save data
+        -- - Multiple save slots (RPG-style)
+        -- - Admin panel for moderators/devs
+        -- See: Bootstrap.server.lua where _G.RegionManager is assigned
+
+        -- Admin: Clear save data (for Studio CLI)
+        -- Usage:
+        --   regionManager:adminClearSaveData()           -- current player
+        --   regionManager:adminClearSaveData("Username") -- by username
+        --   regionManager:adminClearSaveData(12345678)   -- by UserId
+        adminClearSaveData = function(self, playerOrId)
             local store = getDataStore()
             if not store then
                 warn("[RegionManager] DataStore not available")
+                return false
+            end
+
+            -- Resolve to UserId
+            local userId
+            if playerOrId == nil then
+                -- No arg: use first player in game
+                local players = Players:GetPlayers()
+                if #players == 0 then
+                    warn("[RegionManager] No players in game")
+                    return false
+                end
+                userId = players[1].UserId
+            elseif type(playerOrId) == "number" then
+                -- Direct UserId
+                userId = playerOrId
+            elseif type(playerOrId) == "string" then
+                -- Username lookup
+                local player = Players:FindFirstChild(playerOrId)
+                if player then
+                    userId = player.UserId
+                else
+                    warn("[RegionManager] Player not found:", playerOrId)
+                    return false
+                end
+            elseif typeof(playerOrId) == "Instance" and playerOrId:IsA("Player") then
+                -- Player object
+                userId = playerOrId.UserId
+            else
+                warn("[RegionManager] Invalid argument type")
                 return false
             end
 
@@ -1735,11 +1776,40 @@ local RegionManager = Node.extend(function(parent)
         end,
 
         -- Admin: Dump raw save data to output (for debugging serialization issues)
-        -- Usage: regionManager:adminDumpRawData(12345678)
-        adminDumpRawData = function(self, userId)
+        -- Usage:
+        --   regionManager:adminDumpRawData()           -- current player
+        --   regionManager:adminDumpRawData("Username") -- by username
+        --   regionManager:adminDumpRawData(12345678)   -- by UserId
+        adminDumpRawData = function(self, playerOrId)
             local store = getDataStore()
             if not store then
                 warn("[RegionManager] DataStore not available")
+                return nil
+            end
+
+            -- Resolve to UserId
+            local userId
+            if playerOrId == nil then
+                local players = Players:GetPlayers()
+                if #players == 0 then
+                    warn("[RegionManager] No players in game")
+                    return nil
+                end
+                userId = players[1].UserId
+            elseif type(playerOrId) == "number" then
+                userId = playerOrId
+            elseif type(playerOrId) == "string" then
+                local player = Players:FindFirstChild(playerOrId)
+                if player then
+                    userId = player.UserId
+                else
+                    warn("[RegionManager] Player not found:", playerOrId)
+                    return nil
+                end
+            elseif typeof(playerOrId) == "Instance" and playerOrId:IsA("Player") then
+                userId = playerOrId.UserId
+            else
+                warn("[RegionManager] Invalid argument type")
                 return nil
             end
 
@@ -1777,12 +1847,41 @@ local RegionManager = Node.extend(function(parent)
             end
         end,
 
-        -- Admin: View save data for a UserId (for debugging)
-        -- Usage: regionManager:adminViewSaveData(12345678)
-        adminViewSaveData = function(self, userId)
+        -- Admin: View save data (for debugging)
+        -- Usage:
+        --   regionManager:adminViewSaveData()           -- current player
+        --   regionManager:adminViewSaveData("Username") -- by username
+        --   regionManager:adminViewSaveData(12345678)   -- by UserId
+        adminViewSaveData = function(self, playerOrId)
             local store = getDataStore()
             if not store then
                 warn("[RegionManager] DataStore not available")
+                return nil
+            end
+
+            -- Resolve to UserId
+            local userId
+            if playerOrId == nil then
+                local players = Players:GetPlayers()
+                if #players == 0 then
+                    warn("[RegionManager] No players in game")
+                    return nil
+                end
+                userId = players[1].UserId
+            elseif type(playerOrId) == "number" then
+                userId = playerOrId
+            elseif type(playerOrId) == "string" then
+                local player = Players:FindFirstChild(playerOrId)
+                if player then
+                    userId = player.UserId
+                else
+                    warn("[RegionManager] Player not found:", playerOrId)
+                    return nil
+                end
+            elseif typeof(playerOrId) == "Instance" and playerOrId:IsA("Player") then
+                userId = playerOrId.UserId
+            else
+                warn("[RegionManager] Invalid argument type")
                 return nil
             end
 

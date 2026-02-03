@@ -306,6 +306,15 @@ function LayoutContext:toLayout()
         doorSize = self.config.doorSize or 12,
     }
 
+    -- Store domain-specific seeds for future regeneration
+    -- Each domain can be regenerated independently
+    layout.seeds = self.config.seeds or {
+        rooms = layout.seed,
+        doors = layout.seed + 10000,
+        trusses = layout.seed + 20000,
+        lights = layout.seed + 30000,
+    }
+
     layout.rooms = self.rooms
     layout.doors = self.doors
     layout.trusses = self.trusses

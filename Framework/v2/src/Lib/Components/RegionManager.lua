@@ -11,16 +11,16 @@
 
     RegionManager handles the infinite dungeon system by managing map regions:
     - Generates layouts from seeds (via Layout.Builder)
-    - Stores complete layouts (not just seeds) for reliable reload
+    - Stores seeds (not full layouts) for deterministic regeneration
     - Instantiates layouts into parts (via Layout.Instantiator)
     - Manages two-way teleport links between pads
     - Swaps regions in/out of workspace (only one loaded at a time)
 
     Architecture:
-    - Each region stores a complete Layout table (source of truth)
-    - Layout contains all geometry data: rooms, doors, trusses, lights, pads, spawn
-    - Loading a region = instantiate from stored layout (no regeneration)
-    - Cross-region pad links stored separately (not part of layout)
+    - Each region stores a seed + metadata (NOT the full layout)
+    - Layouts are regenerated deterministically from seeds on load
+    - This eliminates serialization issues and reduces save data size
+    - Cross-region pad links stored separately (runtime connections)
 
     ============================================================================
     USAGE
@@ -70,19 +70,28 @@
             - From MiniMap when it needs current map data
 
     ============================================================================
-    PERSISTENCE
+    PERSISTENCE (Seed-Based)
     ============================================================================
 
     Dungeon data is saved per-player in DataStore (DungeonData_v1).
-    - Saves: regions (layouts + padLinks), regionCount, activeRegionId,
-      unlinkedPadCount, visitedRooms
-    - Loads on startFirstRegion(player) - resumes from last active region
-    - Saves automatically on new region creation
 
-    Size estimates (per layout, ~12 rooms):
-    - Uncompressed JSON: ~4.5-5 KB
-    - DataStore auto-compresses internally
-    - 4MB DataStore limit = 800+ regions per player
+    IMPORTANT: Layouts are NOT stored directly. Instead, we store seeds and
+    regenerate layouts deterministically on load. This eliminates serialization
+    issues and dramatically reduces save data size.
+
+    Saved per region:
+    - seed: number - Regenerates all geometry deterministically
+    - regionNum: number - For color palette
+    - padCount: number - Number of pads (1=spur, 2=corridor, 3-5=hub)
+    - mapType: string - For branching decisions
+    - padLinks: table - Runtime connections to other regions
+
+    Also saved:
+    - regionCount, activeRegionId, unlinkedPadCount, visitedRooms
+
+    Size estimates:
+    - ~100 bytes per region (vs 4-5KB for full layout)
+    - 4MB DataStore limit = 40,000+ regions per player
 
 --]]
 
@@ -143,12 +152,9 @@ local RegionManager = Node.extend(function(parent)
                     material = "Brick",
                     color = { 140, 110, 90 },
                     origin = { 0, 20, 0 },
-                    -- Map type thresholds (based on unlinked pad count)
-                    mapTypeThresholds = {
-                        spurAllowed = 5,     -- Allow spurs if unlinked >= 5
-                        forceHub = 2,        -- Force hub if unlinked <= 2
-                    },
-                    hubPadRange = { min = 3, max = 5 },
+                    -- Map type distribution (deterministic pattern)
+                    hubInterval = 4,         -- Guarantee a hub every N regions
+                    hubPadRange = { min = 3, max = 4 },  -- Pads in hub regions
                 },
                 -- Region tracking
                 -- Each region stores: id, layout, padLinks, isActive, container, pads, spawnPoint
@@ -190,6 +196,126 @@ local RegionManager = Node.extend(function(parent)
     ----------------------------------------------------------------------------
 
     --[[
+        Recursively normalizes numeric array keys that may have become strings
+        after DataStore deserialization. Handles Vec3 arrays like position/dims.
+    --]]
+    local function normalizeArrayKeys(tbl)
+        if type(tbl) ~= "table" then return tbl end
+
+        local normalized = {}
+        local hasStringNumericKeys = false
+
+        for key, value in pairs(tbl) do
+            local numKey = tonumber(key)
+            if numKey and type(key) == "string" then
+                hasStringNumericKeys = true
+            end
+
+            local newKey = numKey or key
+            local newValue = normalizeArrayKeys(value)  -- Recurse
+            normalized[newKey] = newValue
+        end
+
+        return normalized
+    end
+
+    --[[
+        Normalizes a layout after loading from DataStore.
+        DataStore serialization can convert numeric table keys to strings.
+        This recursively converts them back for consistent lookups.
+    --]]
+    local function normalizeLayout(layout)
+        if not layout then return layout end
+
+        -- Recursively normalize the entire layout structure
+        -- This handles rooms table keys AND position/dims Vec3 arrays
+        return normalizeArrayKeys(layout)
+    end
+
+    --[[
+        Validates a layout and logs any issues found.
+        Call after loading to diagnose missing room problems.
+    --]]
+    local function validateLayout(layout, regionId)
+        if not layout then
+            warn("[RegionManager] Layout is nil for", regionId)
+            return false
+        end
+
+        local issues = {}
+
+        -- Check rooms
+        if not layout.rooms then
+            table.insert(issues, "No rooms table")
+        else
+            local roomCount = 0
+            for roomId, room in pairs(layout.rooms) do
+                roomCount = roomCount + 1
+
+                -- Check position array
+                if not room.position then
+                    table.insert(issues, "Room " .. tostring(roomId) .. ": missing position")
+                elseif not room.position[1] or not room.position[2] or not room.position[3] then
+                    table.insert(issues, "Room " .. tostring(roomId) .. ": invalid position array, keys: " ..
+                        table.concat({next(room.position)}, ","))
+                end
+
+                -- Check dims array
+                if not room.dims then
+                    table.insert(issues, "Room " .. tostring(roomId) .. ": missing dims")
+                elseif not room.dims[1] or not room.dims[2] or not room.dims[3] then
+                    table.insert(issues, "Room " .. tostring(roomId) .. ": invalid dims array")
+                end
+            end
+
+            if roomCount == 0 then
+                table.insert(issues, "Rooms table is empty")
+            end
+        end
+
+        -- Check doors reference valid rooms
+        if layout.doors then
+            for i, door in ipairs(layout.doors) do
+                if layout.rooms and not layout.rooms[door.fromRoom] then
+                    table.insert(issues, "Door " .. i .. ": fromRoom " .. tostring(door.fromRoom) .. " not found")
+                end
+                if layout.rooms and not layout.rooms[door.toRoom] then
+                    table.insert(issues, "Door " .. i .. ": toRoom " .. tostring(door.toRoom) .. " not found")
+                end
+            end
+        end
+
+        if #issues > 0 then
+            warn("[RegionManager] Layout validation issues for", regionId .. ":")
+            for _, issue in ipairs(issues) do
+                warn("  -", issue)
+            end
+            return false
+        end
+
+        return true
+    end
+
+    --[[
+        Normalizes visited rooms data after loading from DataStore.
+        Converts string keys back to numbers.
+    --]]
+    local function normalizeVisitedRooms(visitedData)
+        if not visitedData then return {} end
+
+        local normalized = {}
+        for regionKey, roomSet in pairs(visitedData) do
+            local numRegionKey = tonumber(regionKey) or regionKey
+            normalized[numRegionKey] = {}
+            for roomKey, value in pairs(roomSet) do
+                local numRoomKey = tonumber(roomKey) or roomKey
+                normalized[numRegionKey][numRoomKey] = value
+            end
+        end
+        return normalized
+    end
+
+    --[[
         Saves dungeon data for a player to DataStore.
         Stores: regions (layouts + padLinks), regionCount, activeRegionId,
         unlinkedPadCount, and visitedRooms.
@@ -201,12 +327,20 @@ local RegionManager = Node.extend(function(parent)
         local state = getState(self)
         local key = "player_" .. player.UserId
 
-        -- Build save data (only persistent fields, no runtime refs)
+        -- Build save data (seed-based - store seeds, not full layouts)
+        -- Layouts are regenerated deterministically from seeds on load
         local regionsToSave = {}
         for regionId, region in pairs(state.regions) do
+            local layout = region.layout
             regionsToSave[regionId] = {
                 id = region.id,
-                layout = region.layout,
+                -- Seeds & params to regenerate layout (NOT the full layout)
+                seed = layout and layout.seed,
+                seeds = layout and layout.seeds,  -- Domain-specific seeds
+                regionNum = layout and layout.regionNum,
+                padCount = layout and layout.pads and #layout.pads or 2,
+                mapType = region.mapType,
+                -- Runtime connections (can't be regenerated)
                 padLinks = region.padLinks,
             }
         end
@@ -269,13 +403,40 @@ local RegionManager = Node.extend(function(parent)
         state.activeRegionId = data.activeRegionId
         state.unlinkedPadCount = data.unlinkedPadCount or 0
 
-        -- Restore regions
+        -- Restore regions (regenerate layouts from seeds - no serialization issues!)
         state.regions = {}
         if data.regions then
             for regionId, savedRegion in pairs(data.regions) do
+                local layout = nil
+
+                -- Regenerate layout from seed (deterministic)
+                if savedRegion.seed and savedRegion.regionNum then
+                    layout = generateLayout(
+                        self,
+                        savedRegion.seed,
+                        savedRegion.regionNum,
+                        savedRegion.padCount or 2
+                    )
+
+                    local System = self._System
+                    if System and System.Debug then
+                        System.Debug.info("RegionManager", "Regenerated", regionId,
+                            "from seed", savedRegion.seed)
+                    end
+                else
+                    -- Legacy: try to use stored layout (old save format)
+                    if savedRegion.layout then
+                        layout = normalizeLayout(savedRegion.layout)
+                        validateLayout(layout, regionId)
+                        warn("[RegionManager] Using legacy layout for", regionId,
+                            "- consider clearing save data")
+                    end
+                end
+
                 state.regions[regionId] = {
                     id = savedRegion.id,
-                    layout = savedRegion.layout,
+                    layout = layout,
+                    mapType = savedRegion.mapType,
                     padLinks = savedRegion.padLinks or {},
                     isActive = false,
                     container = nil,
@@ -286,9 +447,9 @@ local RegionManager = Node.extend(function(parent)
             end
         end
 
-        -- Restore visited rooms for this player
+        -- Restore visited rooms for this player (normalize keys)
         if data.visitedRooms then
-            state.visitedRooms[player] = data.visitedRooms
+            state.visitedRooms[player] = normalizeVisitedRooms(data.visitedRooms)
         end
 
         local System = self._System
@@ -355,53 +516,72 @@ local RegionManager = Node.extend(function(parent)
     -- MAP TYPE DETERMINATION
     ----------------------------------------------------------------------------
     -- Map types: spur (1 pad), corridor (2 pads), hub (3-5 pads)
-    -- Selection based on current unlinked pad count to ensure infinite expansion
+    --
+    -- Deterministic pattern ensures variety:
+    -- - Hubs guaranteed every N regions (hubInterval config)
+    -- - Spurs only spawn from hubs (never block main path)
+    -- - Corridors fill the gaps
+    --
+    -- Pad roles:
+    -- - pad_1 is ALWAYS the back-link to parent region
+    -- - Remaining pads are forward links to new regions
+    -- - Spurs have only pad_1 (dead end)
 
     local MAP_TYPES = {
-        SPUR = "spur",         -- 1 pad, dead end
-        CORRIDOR = "corridor", -- 2 pads, linear progression
-        HUB = "hub",           -- 3-5 pads, branch point
+        SPUR = "spur",         -- 1 pad, dead end (back-link only)
+        CORRIDOR = "corridor", -- 2 pads (1 back + 1 forward)
+        HUB = "hub",           -- 3-5 pads (1 back + 2-4 forward)
     }
 
-    local function determineMapType(self, isFirstRegion)
+    --[[
+        Determines map type for a new region.
+
+        @param self: RegionManager instance
+        @param isFirstRegion: boolean - true if this is region 1
+        @param sourceMapType: string - type of the source region (nil for first)
+        @return mapType, padCount
+    --]]
+    local function determineMapType(self, isFirstRegion, sourceMapType)
         local state = getState(self)
         local config = state.config
-        local unlinked = state.unlinkedPadCount
-        local thresholds = config.mapTypeThresholds
+        local regionNum = state.regionCount + 1  -- The region we're about to create
 
-        -- First region is always a corridor (need at least 1 pad for expansion)
+        -- First region is always a corridor
         if isFirstRegion then
             return MAP_TYPES.CORRIDOR, 2
         end
 
-        -- Safety: force hub if running low on unlinked pads
-        if unlinked <= thresholds.forceHub then
-            local hubRange = config.hubPadRange
+        -- Hub interval: guarantee a hub every N regions
+        local hubInterval = config.hubInterval or 4
+
+        -- Check if this should be a guaranteed hub
+        if regionNum % hubInterval == 0 then
+            local hubRange = config.hubPadRange or { min = 3, max = 4 }
             local padCount = math.random(hubRange.min, hubRange.max)
             return MAP_TYPES.HUB, padCount
         end
 
-        -- Allow spurs only if we have plenty of unlinked pads
-        if unlinked >= thresholds.spurAllowed then
-            -- Weighted random: 20% spur, 50% corridor, 30% hub
+        -- Spurs can ONLY spawn from hubs (to avoid blocking main path)
+        if sourceMapType == MAP_TYPES.HUB then
+            -- From a hub: 25% chance of spur, 50% corridor, 25% hub
             local roll = math.random(100)
-            if roll <= 20 then
+            if roll <= 25 then
                 return MAP_TYPES.SPUR, 1
-            elseif roll <= 70 then
+            elseif roll <= 75 then
                 return MAP_TYPES.CORRIDOR, 2
             else
-                local hubRange = config.hubPadRange
+                local hubRange = config.hubPadRange or { min = 3, max = 4 }
                 local padCount = math.random(hubRange.min, hubRange.max)
                 return MAP_TYPES.HUB, padCount
             end
         end
 
-        -- Default: corridor or hub (no spurs when unlinked is moderate)
+        -- From a corridor: 70% corridor, 30% hub (no spurs)
         local roll = math.random(100)
-        if roll <= 60 then
+        if roll <= 70 then
             return MAP_TYPES.CORRIDOR, 2
         else
-            local hubRange = config.hubPadRange
+            local hubRange = config.hubPadRange or { min = 3, max = 4 }
             local padCount = math.random(hubRange.min, hubRange.max)
             return MAP_TYPES.HUB, padCount
         end
@@ -874,22 +1054,27 @@ local RegionManager = Node.extend(function(parent)
     function createNewRegionAsync(self, sourceRegionId, sourcePadId, player)
         local state = getState(self)
 
+        -- Get source region's map type for deterministic type selection
+        local sourceRegion = state.regions[sourceRegionId]
+        local sourceMapType = sourceRegion and sourceRegion.mapType or nil
+
         -- Generate new region
         state.regionCount = state.regionCount + 1
         local newRegionId = "region_" .. state.regionCount
         local newSeed = generateSeed()
         local regionNum = state.regionCount
 
-        -- Determine map type based on current unlinked pad count
-        local mapType, padCount = determineMapType(self, false)
+        -- Determine map type based on source and position in tree
+        local mapType, padCount = determineMapType(self, false, sourceMapType)
 
         -- Generate layout with determined pad count
         local layout = generateLayout(self, newSeed, regionNum, padCount)
 
-        -- Store region with layout
+        -- Store region with layout and map type
         state.regions[newRegionId] = {
             id = newRegionId,
             layout = layout,
+            mapType = mapType,  -- Store for future branching decisions
             padLinks = {},
             isActive = false,
             container = nil,
@@ -1387,10 +1572,11 @@ local RegionManager = Node.extend(function(parent)
             -- Generate layout
             local layout = generateLayout(self, seed, 1, padCount)
 
-            -- Store region with layout
+            -- Store region with layout and map type
             state.regions[regionId] = {
                 id = regionId,
                 layout = layout,
+                mapType = mapType,  -- Store for future branching decisions
                 padLinks = {},
                 isActive = true,
                 container = nil,
@@ -1523,6 +1709,124 @@ local RegionManager = Node.extend(function(parent)
             end
 
             return success
+        end,
+
+        -- Admin: Clear save data by UserId (for Studio CLI)
+        -- Usage: regionManager:adminClearSaveData(12345678)
+        adminClearSaveData = function(self, userId)
+            local store = getDataStore()
+            if not store then
+                warn("[RegionManager] DataStore not available")
+                return false
+            end
+
+            local key = "player_" .. tostring(userId)
+            local success, err = pcall(function()
+                store:RemoveAsync(key)
+            end)
+
+            if success then
+                print("[RegionManager] Admin: Cleared save data for UserId:", userId)
+            else
+                warn("[RegionManager] Admin: Failed to clear data for UserId:", userId, "-", err)
+            end
+
+            return success
+        end,
+
+        -- Admin: Dump raw save data to output (for debugging serialization issues)
+        -- Usage: regionManager:adminDumpRawData(12345678)
+        adminDumpRawData = function(self, userId)
+            local store = getDataStore()
+            if not store then
+                warn("[RegionManager] DataStore not available")
+                return nil
+            end
+
+            local key = "player_" .. tostring(userId)
+            local success, data = pcall(function()
+                return store:GetAsync(key)
+            end)
+
+            if success and data then
+                -- Dump structure to help diagnose issues
+                print("[RegionManager] === RAW DATA DUMP for UserId", userId, "===")
+
+                if data.regions then
+                    for regionId, region in pairs(data.regions) do
+                        print("Region:", regionId)
+                        if region.layout and region.layout.rooms then
+                            print("  Rooms table type:", type(region.layout.rooms))
+                            for roomKey, room in pairs(region.layout.rooms) do
+                                local keyType = type(roomKey)
+                                local posType = room.position and type(room.position) or "nil"
+                                local pos1Type = room.position and room.position[1] and "num" or
+                                    (room.position and room.position["1"] and "str" or "missing")
+                                print(string.format("    Room key=%s(%s) pos=%s pos[1]=%s",
+                                    tostring(roomKey), keyType, posType, pos1Type))
+                            end
+                        end
+                    end
+                end
+
+                print("[RegionManager] === END RAW DATA DUMP ===")
+                return data
+            else
+                warn("[RegionManager] Failed to get data:", data)
+                return nil
+            end
+        end,
+
+        -- Admin: View save data for a UserId (for debugging)
+        -- Usage: regionManager:adminViewSaveData(12345678)
+        adminViewSaveData = function(self, userId)
+            local store = getDataStore()
+            if not store then
+                warn("[RegionManager] DataStore not available")
+                return nil
+            end
+
+            local key = "player_" .. tostring(userId)
+            local success, data = pcall(function()
+                return store:GetAsync(key)
+            end)
+
+            if success then
+                if data then
+                    print("[RegionManager] Admin: Save data for UserId", userId)
+                    print("  - Version:", data.version)
+                    print("  - Region count:", data.regionCount)
+                    print("  - Active region:", data.activeRegionId)
+                    print("  - Unlinked pads:", data.unlinkedPadCount)
+                    if data.regions then
+                        for regionId, region in pairs(data.regions) do
+                            -- New seed-based format
+                            if region.seed then
+                                print(string.format("  - %s: seed=%d, padCount=%d, type=%s",
+                                    regionId,
+                                    region.seed,
+                                    region.padCount or 0,
+                                    region.mapType or "unknown"))
+                            -- Legacy full-layout format
+                            elseif region.layout then
+                                local roomCount = 0
+                                if region.layout.rooms then
+                                    for _ in pairs(region.layout.rooms) do
+                                        roomCount = roomCount + 1
+                                    end
+                                end
+                                print("  - " .. regionId .. ": (legacy) " .. roomCount .. " rooms")
+                            end
+                        end
+                    end
+                else
+                    print("[RegionManager] Admin: No save data for UserId:", userId)
+                end
+                return data
+            else
+                warn("[RegionManager] Admin: Failed to read data for UserId:", userId, "-", data)
+                return nil
+            end
         end,
     }
 end)

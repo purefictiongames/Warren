@@ -204,7 +204,8 @@ local function planRooms(config)
     local rooms = {}
     local roomOrder = {}  -- Track order for parent relationships
 
-    math.randomseed(config.seed)
+    -- Use domain-specific seed for rooms
+    math.randomseed(config.seeds and config.seeds.rooms or config.seed)
 
     local roomId = 1
     local verticalCount = 0
@@ -726,10 +727,59 @@ end
 -- PUBLIC API
 --------------------------------------------------------------------------------
 
+--[[
+    Converts a string to a numeric seed using a simple hash.
+    Same string always produces the same seed.
+
+    Examples:
+        "BeverlyMansion" → 1234567890
+        "tutorial_1" → 9876543210
+--]]
+local function stringToSeed(str)
+    if type(str) == "number" then
+        return str  -- Already a number
+    end
+    if type(str) ~= "string" then
+        return 0
+    end
+
+    -- DJB2 hash algorithm - fast and good distribution
+    local hash = 5381
+    for i = 1, #str do
+        local char = string.byte(str, i)
+        hash = ((hash * 33) + char) % 2147483647  -- Keep in 32-bit range
+    end
+    return hash
+end
+
+--[[
+    Generates domain-specific seeds from a master seed.
+    Each domain gets a unique seed derived from the master.
+    This allows each planning phase to have independent randomness.
+
+    Master seed can be a number or string (strings are hashed).
+--]]
+local function generateSeeds(masterSeed)
+    -- Convert string to number if needed
+    if type(masterSeed) == "string" then
+        masterSeed = stringToSeed(masterSeed)
+    end
+    -- Use the master seed to generate domain seeds
+    -- Each domain gets a different offset to ensure unique sequences
+    return {
+        rooms = masterSeed,                    -- Room positions, sizes, connectivity
+        doors = masterSeed + 10000,            -- Future: door styles, sizes
+        trusses = masterSeed + 20000,          -- Future: truss variations
+        lights = masterSeed + 30000,           -- Future: light placement
+    }
+end
+
 function LayoutBuilder.generate(config)
     -- Merge with defaults
+    local masterSeed = config.seed or os.time()
     local cfg = {
-        seed = config.seed or os.time(),
+        seed = masterSeed,
+        seeds = generateSeeds(masterSeed),     -- Domain-specific seeds
         regionNum = config.regionNum or 1,
         origin = config.origin or { 0, 20, 0 },
         baseUnit = config.baseUnit or 5,

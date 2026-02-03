@@ -14,10 +14,14 @@
     scaled down (1:100) to create a greybox model of the map.
 
     The map shows:
-    - Current room (green)
+    - Player marker (golden pin) - current physical location
+    - Selected room (blue) - cursor for room navigation
     - Visited rooms (orange)
     - Adjacent unexplored rooms (grey)
     - Hidden: non-adjacent unexplored rooms
+
+    Portal info is displayed for the selected room, showing destination area
+    or "???" for unexplored portals.
 
     ============================================================================
     CONTROLS
@@ -25,12 +29,11 @@
 
     Gamepad:
     - Back/Select: Toggle map open/close
-    - Left Stick: Pan
     - Right Stick: Rotate
     - L1/R1: Zoom out/in
+    - L2/R2: Navigate rooms (previous/next)
 
     Touch:
-    - Drag: Pan
     - Pinch: Zoom
     - Two-finger rotate: Rotate
 
@@ -46,8 +49,9 @@
             - Requests current map data from RegionManager
 
     IN (receives):
-        onMapData({ layout, visitedRooms, currentRoom })
+        onMapData({ layout, visitedRooms, currentRoom, padLinks, stats })
             - Receives map data in response to requestMapData
+            - padLinks: { [padId] = { regionId, padId } } for portal destinations
 
         onShowMap()
             - Opens the map screen
@@ -71,10 +75,11 @@ local Node = require(script.Parent.Parent.Node)
 local SCALE = 1 / 100  -- World to minimap scale
 local ROOM_TRANSPARENCY = 0.5
 local COLORS = {
-    current = Color3.fromRGB(80, 180, 80),   -- Green
+    selected = Color3.fromRGB(80, 140, 220), -- Blue (selected room on map)
     visited = Color3.fromRGB(200, 140, 60),  -- Orange
     adjacent = Color3.fromRGB(80, 80, 90),   -- Grey
     padMarker = Color3.fromRGB(180, 0, 255), -- Neon purple
+    playerMarker = Color3.fromRGB(255, 200, 60), -- Golden yellow
 }
 
 --------------------------------------------------------------------------------
@@ -92,9 +97,14 @@ local MiniMap = Node.extend(function(parent)
     local openMap
     local closeMap
     local buildModel
+    local createPlayerMarker
+    local updatePlayerMarker
     local updateRoomColors
+    local selectRoom
+    local navigateRoom
     local updateCamera
     local updateStats
+    local updatePortalInfo
     local startInputHandling
     local stopInputHandling
     local handleGamepadInput
@@ -124,6 +134,16 @@ local MiniMap = Node.extend(function(parent)
                 stats = nil,
                 -- Room part references (for color updates)
                 roomParts = {},  -- { [roomId] = Part }
+                -- Player marker (shows current physical location)
+                playerMarker = nil,
+                -- Selected room for navigation (highlighted blue)
+                selectedRoom = nil,
+                -- Sorted room IDs for L2/R2 navigation
+                sortedRoomIds = {},
+                -- Pad links for portal destination info
+                padLinks = {},
+                -- Layout center position (for positioning markers)
+                layoutCenter = { x = 0, y = 0, z = 0 },
                 -- Camera state
                 cameraDistance = 5,  -- Distance from target (scaled)
                 cameraYaw = 0,       -- Horizontal rotation (degrees)
@@ -153,6 +173,8 @@ local MiniMap = Node.extend(function(parent)
             ContextActionService:UnbindAction("MiniMapRotate")
             ContextActionService:UnbindAction("MiniMapZoomIn")
             ContextActionService:UnbindAction("MiniMapZoomOut")
+            ContextActionService:UnbindAction("MiniMapPrevRoom")
+            ContextActionService:UnbindAction("MiniMapNextRoom")
             ContextActionService:UnbindAction("MiniMapClose")
             -- Destroy UI
             if state.screenGui then
@@ -403,6 +425,16 @@ local MiniMap = Node.extend(function(parent)
         local centerY = (minY + maxY) / 2
         local centerZ = (minZ + maxZ) / 2
 
+        -- Store center for player marker positioning
+        state.layoutCenter = { x = centerX, y = centerY, z = centerZ }
+
+        -- Build sorted room IDs for L2/R2 navigation
+        state.sortedRoomIds = {}
+        for roomId, _ in pairs(layout.rooms) do
+            table.insert(state.sortedRoomIds, roomId)
+        end
+        table.sort(state.sortedRoomIds)
+
         -- Create scaled room parts
         for roomId, room in pairs(layout.rooms) do
             local isVisited = state.visitedRooms[roomId]
@@ -432,8 +464,11 @@ local MiniMap = Node.extend(function(parent)
             part.Size = Vector3.new(scaledW, scaledH, scaledD)
 
             -- Color based on state
-            if isCurrent then
-                part.Color = COLORS.current
+            -- Selected room is blue, visited is orange, adjacent is grey
+            -- Current room no longer gets special color (player marker shows location)
+            local isSelected = roomId == state.selectedRoom
+            if isSelected then
+                part.Color = COLORS.selected
             elseif isVisited then
                 part.Color = COLORS.visited
             else
@@ -505,6 +540,116 @@ local MiniMap = Node.extend(function(parent)
             maxExtent = math.max(maxExtent, dist + math.max(room.dims[1], room.dims[3]) / 2)
         end
         state.cameraDistance = maxExtent * SCALE * 2
+
+        -- Create player marker at current room
+        createPlayerMarker(self)
+    end
+
+    --[[
+        Creates the player location marker - a golden downward-pointing pin
+        that hovers above the player's current room position.
+    --]]
+    createPlayerMarker = function(self)
+        local state = getState(self)
+        local layout = state.layout
+
+        if not layout or not layout.rooms then return end
+
+        -- Remove existing marker
+        if state.playerMarker then
+            state.playerMarker:Destroy()
+            state.playerMarker = nil
+        end
+
+        local currentRoom = layout.rooms[state.currentRoom]
+        if not currentRoom then return end
+
+        local center = state.layoutCenter
+
+        -- Scale position
+        local scaledX = (currentRoom.position[1] - center.x) * SCALE
+        local scaledY = (currentRoom.position[2] - center.y) * SCALE
+        local scaledZ = (currentRoom.position[3] - center.z) * SCALE
+        local roomHeight = currentRoom.dims[2] * SCALE
+
+        -- Position marker above the room
+        local markerPos = Vector3.new(scaledX, scaledY + roomHeight / 2 + 0.15, scaledZ)
+
+        -- Create marker container (Model to hold multiple parts)
+        local marker = Instance.new("Model")
+        marker.Name = "PlayerMarker"
+
+        -- Pin head (sphere on top)
+        local head = Instance.new("Part")
+        head.Name = "Head"
+        head.Shape = Enum.PartType.Ball
+        head.Anchored = true
+        head.CanCollide = false
+        head.Size = Vector3.new(0.08, 0.08, 0.08)
+        head.Color = COLORS.playerMarker
+        head.Material = Enum.Material.Neon
+        head.Position = markerPos + Vector3.new(0, 0.06, 0)
+        head.Parent = marker
+
+        -- Pin shaft (wedge pointing down)
+        local shaft = Instance.new("WedgePart")
+        shaft.Name = "Shaft"
+        shaft.Anchored = true
+        shaft.CanCollide = false
+        shaft.Size = Vector3.new(0.04, 0.12, 0.06)
+        shaft.Color = COLORS.playerMarker
+        shaft.Material = Enum.Material.Neon
+        -- Rotate wedge so it points downward (tip at bottom)
+        shaft.CFrame = CFrame.new(markerPos) * CFrame.Angles(math.rad(180), 0, 0)
+        shaft.Parent = marker
+
+        -- Glow effect
+        local light = Instance.new("PointLight")
+        light.Color = COLORS.playerMarker
+        light.Brightness = 3
+        light.Range = 0.4
+        light.Parent = head
+
+        marker.Parent = state.worldModel
+        state.playerMarker = marker
+    end
+
+    --[[
+        Updates the player marker position when currentRoom changes.
+    --]]
+    updatePlayerMarker = function(self)
+        local state = getState(self)
+        local layout = state.layout
+
+        if not layout or not layout.rooms then return end
+        if not state.playerMarker then
+            createPlayerMarker(self)
+            return
+        end
+
+        local currentRoom = layout.rooms[state.currentRoom]
+        if not currentRoom then return end
+
+        local center = state.layoutCenter
+
+        -- Scale position
+        local scaledX = (currentRoom.position[1] - center.x) * SCALE
+        local scaledY = (currentRoom.position[2] - center.y) * SCALE
+        local scaledZ = (currentRoom.position[3] - center.z) * SCALE
+        local roomHeight = currentRoom.dims[2] * SCALE
+
+        local markerPos = Vector3.new(scaledX, scaledY + roomHeight / 2 + 0.15, scaledZ)
+
+        -- Update positions of marker parts
+        local head = state.playerMarker:FindFirstChild("Head")
+        local shaft = state.playerMarker:FindFirstChild("Shaft")
+
+        if head then
+            head.Position = markerPos + Vector3.new(0, 0.06, 0)
+        end
+        if shaft then
+            shaft.CFrame = CFrame.new(markerPos) * CFrame.Angles(math.rad(180), 0, 0)
+        end
     end
 
     updateRoomColors = function(self)
@@ -529,10 +674,10 @@ local MiniMap = Node.extend(function(parent)
 
         for roomId, part in pairs(state.roomParts) do
             local isVisited = state.visitedRooms[roomId]
-            local isCurrent = roomId == state.currentRoom
+            local isSelected = roomId == state.selectedRoom
 
-            if isCurrent then
-                part.Color = COLORS.current
+            if isSelected then
+                part.Color = COLORS.selected
             elseif isVisited then
                 part.Color = COLORS.visited
             else
@@ -566,6 +711,116 @@ local MiniMap = Node.extend(function(parent)
             s.discoveredPortals, s.totalPortals,
             s.completion
         )
+
+        state.statsLabel.Text = statsText
+    end
+
+    --[[
+        Selects a room on the minimap (highlights it blue and shows info).
+    --]]
+    selectRoom = function(self, roomId)
+        local state = getState(self)
+
+        if not state.layout or not state.layout.rooms then return end
+        if not state.layout.rooms[roomId] then return end
+
+        state.selectedRoom = roomId
+        updateRoomColors(self)
+        updatePortalInfo(self)
+    end
+
+    --[[
+        Navigates to next/previous visited room in numerical order.
+        Skips unexplored rooms. Wraps around at list ends.
+        @param direction: 1 for next, -1 for previous
+    --]]
+    navigateRoom = function(self, direction)
+        local state = getState(self)
+
+        if not state.sortedRoomIds or #state.sortedRoomIds == 0 then return end
+
+        -- Find current index
+        local currentIndex = 1
+        for i, roomId in ipairs(state.sortedRoomIds) do
+            if roomId == state.selectedRoom then
+                currentIndex = i
+                break
+            end
+        end
+
+        -- Search for next visited room in direction, with wrapping
+        local totalRooms = #state.sortedRoomIds
+        local searchIndex = currentIndex
+
+        for _ = 1, totalRooms do
+            -- Move in direction with wrapping
+            searchIndex = searchIndex + direction
+            if searchIndex < 1 then
+                searchIndex = totalRooms
+            elseif searchIndex > totalRooms then
+                searchIndex = 1
+            end
+
+            local candidateRoomId = state.sortedRoomIds[searchIndex]
+
+            -- Only select if visited
+            if state.visitedRooms[candidateRoomId] then
+                selectRoom(self, candidateRoomId)
+                return
+            end
+        end
+
+        -- No other visited rooms found, stay on current
+    end
+
+    --[[
+        Updates the portal info display for the selected room.
+        Shows destination area for any portals in the room.
+    --]]
+    updatePortalInfo = function(self)
+        local state = getState(self)
+
+        if not state.statsLabel then return end
+        if not state.layout then return end
+
+        -- Start with base stats
+        local s = state.stats
+        local statsText = ""
+        if s then
+            statsText = string.format(
+                "ROOMS: %d / %d\nPORTALS: %d / %d\n\nCOMPLETION: %d%%",
+                s.exploredRooms, s.totalRooms,
+                s.discoveredPortals, s.totalPortals,
+                s.completion
+            )
+        end
+
+        -- Check if selected room has a portal
+        if state.layout.pads and state.selectedRoom then
+            for _, pad in ipairs(state.layout.pads) do
+                if pad.roomId == state.selectedRoom then
+                    -- Found a portal in this room
+                    local padLink = state.padLinks[pad.id]
+                    local destText
+
+                    if padLink and padLink.regionId then
+                        -- Extract region number from regionId (e.g., "region_3" -> 3)
+                        local regionNum = tonumber(string.match(padLink.regionId, "region_(%d+)"))
+                        if regionNum then
+                            destText = "Area " .. regionNum
+                        else
+                            destText = padLink.regionId
+                        end
+                    else
+                        -- Unlinked portal
+                        destText = "???"
+                    end
+
+                    statsText = statsText .. "\n\nPORTAL: " .. destText
+                    break  -- Only show first portal (rooms typically have 1)
+                end
+            end
+        end
 
         state.statsLabel.Text = statsText
     end
@@ -680,6 +935,32 @@ local MiniMap = Node.extend(function(parent)
             Enum.KeyCode.ButtonR1
         )
 
+        -- L2: Navigate to previous room
+        ContextActionService:BindAction(
+            "MiniMapPrevRoom",
+            function(actionName, inputState, inputObject)
+                if inputState == Enum.UserInputState.Begin then
+                    navigateRoom(self, -1)
+                end
+                return Enum.ContextActionResult.Sink
+            end,
+            false,
+            Enum.KeyCode.ButtonL2
+        )
+
+        -- R2: Navigate to next room
+        ContextActionService:BindAction(
+            "MiniMapNextRoom",
+            function(actionName, inputState, inputObject)
+                if inputState == Enum.UserInputState.Begin then
+                    navigateRoom(self, 1)
+                end
+                return Enum.ContextActionResult.Sink
+            end,
+            false,
+            Enum.KeyCode.ButtonR2
+        )
+
         ContextActionService:BindAction(
             "MiniMapClose",
             function(actionName, inputState, inputObject)
@@ -698,6 +979,8 @@ local MiniMap = Node.extend(function(parent)
         ContextActionService:UnbindAction("MiniMapRotate")
         ContextActionService:UnbindAction("MiniMapZoomIn")
         ContextActionService:UnbindAction("MiniMapZoomOut")
+        ContextActionService:UnbindAction("MiniMapPrevRoom")
+        ContextActionService:UnbindAction("MiniMapNextRoom")
         ContextActionService:UnbindAction("MiniMapClose")
     end
 
@@ -743,6 +1026,7 @@ local MiniMap = Node.extend(function(parent)
                     layout: table - The Layout table
                     visitedRooms: table - Set of visited room IDs
                     currentRoom: number - Current room ID
+                    padLinks: table - { [padId] = { regionId, padId } } for portal destinations
             --]]
             onMapData = function(self, data)
                 if not data then return end
@@ -758,12 +1042,17 @@ local MiniMap = Node.extend(function(parent)
                 state.visitedRooms = data.visitedRooms or {}
                 state.currentRoom = data.currentRoom
                 state.stats = data.stats
+                state.padLinks = data.padLinks or {}
 
-                -- Clear old room parts
+                -- Set selected room to current room on map open
+                state.selectedRoom = data.currentRoom
+
+                -- Clear old room parts and player marker
                 if state.worldModel then
                     state.worldModel:ClearAllChildren()
                 end
                 state.roomParts = {}
+                state.playerMarker = nil
 
                 -- Reset camera for new data
                 state.cameraPanX = 0
@@ -771,10 +1060,10 @@ local MiniMap = Node.extend(function(parent)
                 state.cameraYaw = 0
                 state.cameraPitch = 45
 
-                -- Build the model and update stats
+                -- Build the model and update display
                 buildModel(self)
                 updateCamera(self)
-                updateStats(self)
+                updatePortalInfo(self)
             end,
 
             --[[

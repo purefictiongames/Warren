@@ -1187,6 +1187,7 @@ local RegionManager = Node.extend(function(parent)
                     layout = layout,
                     visitedRooms = visitedRooms,
                     currentRoom = currentRoom,
+                    padLinks = activeRegion.padLinks or {},
                     stats = {
                         totalRooms = totalRooms,
                         exploredRooms = exploredRooms,

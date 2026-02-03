@@ -196,7 +196,9 @@ local function startInfiniteDungeon()
     })
 
     -- Store globally for debugging (IPC handles lifecycle)
+    -- Note: Both _G and shared for command bar compatibility in different Studio contexts
     _G.RegionManager = regionManager
+    shared.RegionManager = regionManager
 
     -- Configure
     -- Note: material/color use serializable formats (string/array) for DataStore compatibility
@@ -218,12 +220,9 @@ local function startInfiniteDungeon()
         },
         material = "Brick",  -- String for serialization
         color = { 140, 110, 90 },  -- RGB array for serialization
-        -- Map type config (controls pad counts for infinite expansion)
-        mapTypeThresholds = {
-            spurAllowed = 5,     -- Allow spurs if unlinked >= 5
-            forceHub = 2,        -- Force hub if unlinked <= 2
-        },
-        hubPadRange = { min = 3, max = 5 },
+        -- Map type distribution (deterministic pattern)
+        hubInterval = 4,          -- Guarantee a hub every N regions
+        hubPadRange = { min = 3, max = 4 },  -- Pads in hub regions
         origin = { 0, 20, 0 },
     })
 

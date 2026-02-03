@@ -72,6 +72,10 @@ Lib.GeometrySpec = require(script.GeometrySpec)
 -- Standalone map layouts (used with Factory.geometry)
 Lib.Layouts = require(script.Layouts)
 
+-- Admin utilities (SaveData management, etc.)
+-- Can be required directly in edit mode: require(game.ReplicatedStorage.Lib.Admin.SaveDataAdmin)
+Lib.Admin = require(script.Admin)
+
 -- Test suite is NOT auto-loaded to avoid circular dependency
 -- Access via: require(game.ReplicatedStorage.Lib.Tests)
 

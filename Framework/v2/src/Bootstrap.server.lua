@@ -227,40 +227,49 @@ local function startInfiniteDungeon()
         origin = { 0, 20, 0 },
     })
 
-    -- Start first region (deletes baseplate automatically)
-    Debug.info("Bootstrap", "Starting infinite dungeon...")
-    local regionId = regionManager:startFirstRegion()
+    -- Wait for first player to load/create dungeon
+    local Players = game:GetService("Players")
+    local dungeonOwner = nil  -- First player to join owns the dungeon
+    local dungeonReady = false
+    local layout = nil
 
-    -- Log layout info for debugging
-    local region = regionManager:getRegion(regionId)
-    if region and region.layout then
-        local layout = region.layout
-        local roomCount = 0
-        for _ in pairs(layout.rooms) do roomCount = roomCount + 1 end
+    local function startDungeonForPlayer(player)
+        if dungeonReady then return end
+        dungeonReady = true
+        dungeonOwner = player
 
-        Debug.info("Bootstrap", string.format(
-            "Layout generated: %d rooms, %d doors, %d trusses, %d lights, %d pads",
-            roomCount,
-            #layout.doors,
-            #layout.trusses,
-            #layout.lights,
-            #layout.pads
-        ))
+        Debug.info("Bootstrap", "Starting dungeon for", player.Name)
+        local regionId = regionManager:startFirstRegion(player)
 
-        if layout.spawn then
-            local pos = layout.spawn.position
+        -- Log layout info for debugging
+        local region = regionManager:getRegion(regionId)
+        if region and region.layout then
+            layout = region.layout
+            local roomCount = 0
+            for _ in pairs(layout.rooms) do roomCount = roomCount + 1 end
+
             Debug.info("Bootstrap", string.format(
-                "Spawn at (%.1f, %.1f, %.1f) in room %d",
-                pos[1], pos[2], pos[3], layout.spawn.roomId
+                "Layout: %d rooms, %d doors, %d trusses, %d lights, %d pads",
+                roomCount,
+                #layout.doors,
+                #layout.trusses,
+                #layout.lights,
+                #layout.pads
             ))
+
+            if layout.spawn then
+                local pos = layout.spawn.position
+                Debug.info("Bootstrap", string.format(
+                    "Spawn at (%.1f, %.1f, %.1f) in room %d",
+                    pos[1], pos[2], pos[3], layout.spawn.roomId
+                ))
+            end
         end
+
+        Debug.info("Bootstrap", "Dungeon ready for", player.Name)
     end
 
-    Debug.info("Bootstrap", "Infinite dungeon ready")
-
     -- Safety net: check if player spawns outside room volumes and relocate
-    local Players = game:GetService("Players")
-    local layout = region and region.layout
 
     local function isInsideAnyRoom(position)
         if not layout then return false end
@@ -317,6 +326,11 @@ local function startInfiniteDungeon()
     end
 
     local function onPlayerAdded(player)
+        -- First player starts/loads the dungeon
+        if not dungeonReady then
+            startDungeonForPlayer(player)
+        end
+
         if player.Character then
             onCharacterAdded(player.Character, player)
         end
@@ -324,6 +338,14 @@ local function startInfiniteDungeon()
             onCharacterAdded(character, player)
         end)
     end
+
+    -- Save dungeon data when owner leaves
+    Players.PlayerRemoving:Connect(function(player)
+        if player == dungeonOwner then
+            Debug.info("Bootstrap", "Dungeon owner leaving, saving data...")
+            regionManager:saveData(player)
+        end
+    end)
 
     Players.PlayerAdded:Connect(onPlayerAdded)
     for _, player in ipairs(Players:GetPlayers()) do

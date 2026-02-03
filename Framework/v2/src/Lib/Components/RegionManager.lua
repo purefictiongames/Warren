@@ -70,46 +70,49 @@
             - From MiniMap when it needs current map data
 
     ============================================================================
-    FUTURE: Persistent Layout Storage
+    PERSISTENCE
     ============================================================================
 
-    Layouts can be serialized and stored per-player in DataStore for persistence.
-    This would allow players to return to previously explored regions.
+    Dungeon data is saved per-player in DataStore (DungeonData_v1).
+    - Saves: regions (layouts + padLinks), regionCount, activeRegionId,
+      unlinkedPadCount, visitedRooms
+    - Loads on startFirstRegion(player) - resumes from last active region
+    - Saves automatically on new region creation
 
     Size estimates (per layout, ~12 rooms):
     - Uncompressed JSON: ~4.5-5 KB
-    - DataStore auto-compresses internally, so no manual gzip needed
-    - 4MB DataStore limit = 800+ regions per player (more than enough)
-
-    Proposed DataStore structure:
-    ```lua
-    {
-        regions = {
-            ["region_1"] = { version, seed, rooms, doors, trusses, lights, pads, spawn, config },
-            ["region_2"] = { ... },
-        },
-        padLinks = {
-            ["region_1_pad_1"] = { regionId = "region_2", padId = "pad_1" },
-            ...
-        },
-        currentRegion = "region_5",
-        regionCount = 5,
-    }
-    ```
-
-    Implementation notes:
-    - Store full layouts (not just seeds) to preserve exact geometry
-    - This protects against algorithm changes breaking old saves
-    - Enables future player modifications to their dungeons
-    - Load existing layouts on player join, generate new as needed
-    - Save on region creation and periodically
+    - DataStore auto-compresses internally
+    - 4MB DataStore limit = 800+ regions per player
 
 --]]
 
 local Players = game:GetService("Players")
+local DataStoreService = game:GetService("DataStoreService")
 local Node = require(script.Parent.Parent.Node)
 local Layout = require(script.Parent.Layout)
 local JumpPad = require(script.Parent.JumpPad)
+
+--------------------------------------------------------------------------------
+-- DATA STORE
+--------------------------------------------------------------------------------
+
+local DATASTORE_NAME = "DungeonData_v1"
+local dungeonStore = nil
+
+-- Initialize DataStore (deferred to avoid errors in Studio without API access)
+local function getDataStore()
+    if not dungeonStore then
+        local success, store = pcall(function()
+            return DataStoreService:GetDataStore(DATASTORE_NAME)
+        end)
+        if success then
+            dungeonStore = store
+        else
+            warn("[RegionManager] DataStore not available:", store)
+        end
+    end
+    return dungeonStore
+end
 
 --------------------------------------------------------------------------------
 -- REGION MANAGER NODE
@@ -180,6 +183,121 @@ local RegionManager = Node.extend(function(parent)
             end
         end
         instanceStates[self.id] = nil
+    end
+
+    ----------------------------------------------------------------------------
+    -- DATA PERSISTENCE
+    ----------------------------------------------------------------------------
+
+    --[[
+        Saves dungeon data for a player to DataStore.
+        Stores: regions (layouts + padLinks), regionCount, activeRegionId,
+        unlinkedPadCount, and visitedRooms.
+    --]]
+    local function savePlayerData(self, player)
+        local store = getDataStore()
+        if not store then return false end
+
+        local state = getState(self)
+        local key = "player_" .. player.UserId
+
+        -- Build save data (only persistent fields, no runtime refs)
+        local regionsToSave = {}
+        for regionId, region in pairs(state.regions) do
+            regionsToSave[regionId] = {
+                id = region.id,
+                layout = region.layout,
+                padLinks = region.padLinks,
+            }
+        end
+
+        -- Get visited rooms for this player
+        local playerVisited = state.visitedRooms[player] or {}
+
+        local saveData = {
+            version = 1,
+            regions = regionsToSave,
+            regionCount = state.regionCount,
+            activeRegionId = state.activeRegionId,
+            unlinkedPadCount = state.unlinkedPadCount,
+            visitedRooms = playerVisited,
+        }
+
+        local success, err = pcall(function()
+            store:SetAsync(key, saveData)
+        end)
+
+        if success then
+            local System = self._System
+            if System and System.Debug then
+                System.Debug.info("RegionManager", "Saved data for", player.Name)
+            end
+        else
+            warn("[RegionManager] Failed to save data for", player.Name, ":", err)
+        end
+
+        return success
+    end
+
+    --[[
+        Loads dungeon data for a player from DataStore.
+        Returns true if data was found and loaded, false otherwise.
+    --]]
+    local function loadPlayerData(self, player)
+        local store = getDataStore()
+        if not store then return false end
+
+        local state = getState(self)
+        local key = "player_" .. player.UserId
+
+        local success, data = pcall(function()
+            return store:GetAsync(key)
+        end)
+
+        if not success then
+            warn("[RegionManager] Failed to load data for", player.Name, ":", data)
+            return false
+        end
+
+        if not data then
+            -- No saved data exists
+            return false
+        end
+
+        -- Restore state from saved data
+        state.regionCount = data.regionCount or 0
+        state.activeRegionId = data.activeRegionId
+        state.unlinkedPadCount = data.unlinkedPadCount or 0
+
+        -- Restore regions
+        state.regions = {}
+        if data.regions then
+            for regionId, savedRegion in pairs(data.regions) do
+                state.regions[regionId] = {
+                    id = savedRegion.id,
+                    layout = savedRegion.layout,
+                    padLinks = savedRegion.padLinks or {},
+                    isActive = false,
+                    container = nil,
+                    pads = nil,
+                    spawnPoint = nil,
+                    spawnPosition = nil,
+                }
+            end
+        end
+
+        -- Restore visited rooms for this player
+        if data.visitedRooms then
+            state.visitedRooms[player] = data.visitedRooms
+        end
+
+        local System = self._System
+        if System and System.Debug then
+            System.Debug.info("RegionManager", "Loaded data for", player.Name,
+                "- regions:", state.regionCount)
+        end
+
+        return true
     end
 
     ----------------------------------------------------------------------------
@@ -828,6 +946,13 @@ local RegionManager = Node.extend(function(parent)
             end)
         end
 
+        -- Save after creating new region
+        if player then
+            task.defer(function()
+                savePlayerData(self, player)
+            end)
+        end
+
         return newRegionId
     end
 
@@ -1216,8 +1341,8 @@ local RegionManager = Node.extend(function(parent)
             end
         end,
 
-        -- Start the first region
-        startFirstRegion = function(self)
+        -- Start the dungeon for a player (loads existing or creates new)
+        startFirstRegion = function(self, player)
             local state = getState(self)
 
             -- Delete baseplate
@@ -1226,7 +1351,32 @@ local RegionManager = Node.extend(function(parent)
                 baseplate:Destroy()
             end
 
-            -- Create first region
+            -- Try to load existing save data
+            if player and loadPlayerData(self, player) and state.activeRegionId then
+                -- Data loaded successfully - instantiate the active region
+                local activeRegion = state.regions[state.activeRegionId]
+                if activeRegion and activeRegion.layout then
+                    local result = instantiateLayout(self, state.activeRegionId, activeRegion.layout)
+
+                    -- Create JumpPad nodes for this region
+                    createJumpPadsForRegion(self, state.activeRegionId, result.container)
+
+                    -- Create Zone nodes for room detection
+                    createZonesForRegion(self, state.activeRegionId, result.roomZones)
+
+                    activeRegion.isActive = true
+
+                    local System = self._System
+                    if System and System.Debug then
+                        System.Debug.info("RegionManager", "Resumed from save - region:",
+                            state.activeRegionId, "total regions:", state.regionCount)
+                    end
+
+                    return state.activeRegionId
+                end
+            end
+
+            -- No save data - create first region
             state.regionCount = 1
             local regionId = "region_1"
             local seed = generateSeed()
@@ -1263,6 +1413,13 @@ local RegionManager = Node.extend(function(parent)
             state.unlinkedPadCount = initialPadCount
 
             state.activeRegionId = regionId
+
+            -- Save initial state
+            if player then
+                task.defer(function()
+                    savePlayerData(self, player)
+                end)
+            end
 
             return regionId
         end,
@@ -1339,6 +1496,33 @@ local RegionManager = Node.extend(function(parent)
                 -- Fire area info to client
                 fireAreaInfo(self, player, regionNum, roomNum)
             end
+        end,
+
+        -- Manually save player data (e.g., on player leaving)
+        saveData = function(self, player)
+            return savePlayerData(self, player)
+        end,
+
+        -- Clear save data for a player (for testing/reset)
+        clearSaveData = function(self, player)
+            local store = getDataStore()
+            if not store then return false end
+
+            local key = "player_" .. player.UserId
+            local success, err = pcall(function()
+                store:RemoveAsync(key)
+            end)
+
+            if success then
+                local System = self._System
+                if System and System.Debug then
+                    System.Debug.info("RegionManager", "Cleared save data for", player.Name)
+                end
+            else
+                warn("[RegionManager] Failed to clear data for", player.Name, ":", err)
+            end
+
+            return success
         end,
     }
 end)

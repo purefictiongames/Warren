@@ -101,6 +101,7 @@ local Game = require(ReplicatedStorage:WaitForChild("Game"))
 IPC.registerNode(Lib.Components.JumpPad)
 IPC.registerNode(Lib.Components.RegionManager)
 IPC.registerNode(Lib.Components.ScreenTransition)  -- Client-side, but registered for wiring
+IPC.registerNode(Lib.Components.AreaHUD)           -- Client-side, but registered for wiring
 
 -- Register Game-level nodes (game-specific implementations)
 -- Example:
@@ -121,12 +122,12 @@ Asset.buildInheritanceTree()
 
 -- Dungeon mode: JumpPad signals route to RegionManager, screen transitions cross client/server
 IPC.defineMode("Dungeon", {
-    nodes = { "JumpPad", "RegionManager", "ScreenTransition" },
+    nodes = { "JumpPad", "RegionManager", "ScreenTransition", "AreaHUD" },
     wiring = {
         -- Server-side: JumpPad → RegionManager
         JumpPad = { "RegionManager" },
-        -- Cross-domain: RegionManager (server) → ScreenTransition (client)
-        RegionManager = { "ScreenTransition" },
+        -- Cross-domain: RegionManager (server) → ScreenTransition, AreaHUD (client)
+        RegionManager = { "ScreenTransition", "AreaHUD" },
         -- Cross-domain: ScreenTransition (client) → RegionManager (server)
         ScreenTransition = { "RegionManager" },
     },
@@ -214,7 +215,12 @@ local function startInfiniteDungeon()
         },
         material = "Brick",  -- String for serialization
         color = { 140, 110, 90 },  -- RGB array for serialization
-        roomsPerPad = 25,  -- Teleport pad every 25 rooms (+ 1 minimum)
+        -- Map type config (controls pad counts for infinite expansion)
+        mapTypeThresholds = {
+            spurAllowed = 5,     -- Allow spurs if unlinked >= 5
+            forceHub = 2,        -- Force hub if unlinked <= 2
+        },
+        hubPadRange = { min = 3, max = 5 },
         origin = { 0, 20, 0 },
     })
 
@@ -272,7 +278,7 @@ local function startInfiniteDungeon()
         return false
     end
 
-    local function onCharacterAdded(character)
+    local function onCharacterAdded(character, player)
         -- Wait for character to fully load and settle
         task.wait(0.5)
 
@@ -302,13 +308,18 @@ local function startInfiniteDungeon()
                 pos.X, pos.Y, pos.Z
             ))
         end
+
+        -- Send initial area info to client (room 1 on spawn)
+        regionManager:sendInitialAreaInfo(player, 1)
     end
 
     local function onPlayerAdded(player)
         if player.Character then
-            onCharacterAdded(player.Character)
+            onCharacterAdded(player.Character, player)
         end
-        player.CharacterAdded:Connect(onCharacterAdded)
+        player.CharacterAdded:Connect(function(character)
+            onCharacterAdded(character, player)
+        end)
     end
 
     Players.PlayerAdded:Connect(onPlayerAdded)

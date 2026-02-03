@@ -298,6 +298,7 @@ function LayoutContext:toLayout()
 
     local layout = LayoutSchema.createEmpty()
     layout.seed = self.config.seed or 0
+    layout.regionNum = self.config.regionNum or 1
     layout.config = {
         wallThickness = self.config.wallThickness or 1,
         material = self.config.material or "Brick",

@@ -652,7 +652,8 @@ local function planPads(ctx)
     local config = ctx:getConfig()
     local roomCount = ctx:getRoomCount()
 
-    local padCount = 1 + math.floor(roomCount / config.roomsPerPad)
+    -- Use direct padCount if provided, otherwise calculate from roomsPerPad
+    local padCount = config.padCount or (1 + math.floor(roomCount / config.roomsPerPad))
 
     -- Select rooms for pads (start from room 2, room 1 is spawn)
     local step = math.max(1, math.floor((roomCount - 1) / padCount))
@@ -729,6 +730,7 @@ function LayoutBuilder.generate(config)
     -- Merge with defaults
     local cfg = {
         seed = config.seed or os.time(),
+        regionNum = config.regionNum or 1,
         origin = config.origin or { 0, 20, 0 },
         baseUnit = config.baseUnit or 5,
         wallThickness = config.wallThickness or 1,
@@ -742,6 +744,7 @@ function LayoutBuilder.generate(config)
         scaleRange = config.scaleRange or { min = 4, max = 12, minY = 4, maxY = 8 },
         material = config.material or "Brick",
         color = config.color or { 140, 110, 90 },
+        padCount = config.padCount,  -- Direct pad count (overrides roomsPerPad if set)
         roomsPerPad = config.roomsPerPad or 25,
     }
 

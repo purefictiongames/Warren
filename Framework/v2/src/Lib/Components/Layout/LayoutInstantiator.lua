@@ -326,6 +326,9 @@ function LayoutInstantiator.instantiate(layout, options)
         container.Parent = workspace
     end
 
+    -- Store region metadata on container
+    container:SetAttribute("RegionNum", layout.regionNum or 1)
+
     local config = layout.config or {
         wallThickness = 1,
         material = "Brick",
@@ -335,10 +338,25 @@ function LayoutInstantiator.instantiate(layout, options)
     local roomContainers = {}
     local pads = {}
 
-    -- Build all room shells
+    -- Build all room shells and zone parts
+    local roomZones = {}
     for id, room in pairs(layout.rooms) do
         local roomContainer, walls = buildShell(room, config, container)
         roomContainers[id] = roomContainer
+
+        -- Create invisible zone part for player detection
+        local zonePart = Instance.new("Part")
+        zonePart.Name = "RoomZone_" .. id
+        zonePart.Size = Vector3.new(room.dims[1], room.dims[2], room.dims[3])
+        zonePart.Position = Vector3.new(room.position[1], room.position[2], room.position[3])
+        zonePart.Anchored = true
+        zonePart.CanCollide = false
+        zonePart.Transparency = 1
+        zonePart.Parent = roomContainer
+        zonePart:SetAttribute("RoomId", id)
+        zonePart:SetAttribute("RegionNum", layout.regionNum or 1)
+
+        roomZones[id] = zonePart
     end
 
     -- Cut all doors
@@ -376,6 +394,7 @@ function LayoutInstantiator.instantiate(layout, options)
     return {
         container = container,
         roomContainers = roomContainers,
+        roomZones = roomZones,
         spawnPoint = spawnPoint,
         spawnPosition = layout.spawn and layout.spawn.position,
         pads = pads,

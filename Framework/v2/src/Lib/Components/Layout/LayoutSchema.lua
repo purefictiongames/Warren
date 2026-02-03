@@ -94,6 +94,7 @@ LayoutSchema.VERSION = 1
     Layout = {
         version: number,
         seed: number,
+        regionNum: number,           -- Region/area number (1, 2, 3...)
         rooms: { [number]: Room },
         doors: { Door },
         trusses: { Truss },
@@ -113,6 +114,7 @@ function LayoutSchema.createEmpty()
     return {
         version = LayoutSchema.VERSION,
         seed = 0,
+        regionNum = 1,
         rooms = {},
         doors = {},
         trusses = {},

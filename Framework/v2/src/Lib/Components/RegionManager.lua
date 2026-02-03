@@ -104,8 +104,13 @@ local RegionManager = Node.extend(function(parent)
                     scaleRange = { min = 4, max = 12, minY = 4, maxY = 8 },
                     material = "Brick",
                     color = { 140, 110, 90 },
-                    roomsPerPad = 25,
                     origin = { 0, 20, 0 },
+                    -- Map type thresholds (based on unlinked pad count)
+                    mapTypeThresholds = {
+                        spurAllowed = 5,     -- Allow spurs if unlinked >= 5
+                        forceHub = 2,        -- Force hub if unlinked <= 2
+                    },
+                    hubPadRange = { min = 3, max = 5 },
                 },
                 -- Region tracking
                 -- Each region stores: id, layout, padLinks, isActive, container, pads, spawnPoint
@@ -114,9 +119,14 @@ local RegionManager = Node.extend(function(parent)
                 regionCount = 0,
                 -- JumpPad instance IDs (for IPC.despawn)
                 jumpPadIds = {},
+                -- Per-player current room tracking
+                -- { [Player] = { regionNum, roomNum } }
+                playerRooms = {},
                 -- Per-player pending transitions (for async flow)
                 -- { [Player] = { regionId, padId, isNewRegion, sourceRegionId, sourcePadId } }
                 pendingTransitions = {},
+                -- Global unlinked pad count for infinite expansion
+                unlinkedPadCount = 0,
             }
         end
         return instanceStates[self.id]
@@ -166,33 +176,82 @@ local RegionManager = Node.extend(function(parent)
         return os.time() + math.random(1, 100000)
     end
 
-    -- Color palette for different regions (earthy/stone tones)
+    -- Color palette for different regions (distinct, varied tones)
     local REGION_COLORS = {
-        { 140, 110, 90 },   -- Warm brown (default)
-        { 120, 130, 140 },  -- Cool grey-blue
+        { 140, 100, 80 },   -- Warm brown
+        { 80, 100, 140 },   -- Steel blue
+        { 160, 90, 90 },    -- Brick red
+        { 80, 130, 100 },   -- Forest green
+        { 130, 100, 150 },  -- Violet
+        { 170, 140, 90 },   -- Gold/tan
+        { 100, 140, 140 },  -- Teal
         { 150, 120, 100 },  -- Terracotta
-        { 100, 120, 100 },  -- Mossy green
-        { 130, 100, 120 },  -- Dusty purple
-        { 140, 140, 120 },  -- Sandstone
-        { 110, 100, 90 },   -- Dark earth
-        { 150, 140, 130 },  -- Light tan
-        { 100, 110, 130 },  -- Slate blue
-        { 130, 120, 110 },  -- Neutral stone
+        { 90, 90, 120 },    -- Slate
+        { 140, 130, 100 },  -- Sandstone
     }
 
     local function getRegionColor(regionNum)
-        -- Cycle through palette, with slight random variation
-        local baseColor = REGION_COLORS[((regionNum - 1) % #REGION_COLORS) + 1]
-        -- Add small random variation (+/- 10) for uniqueness
-        local variation = 10
-        return {
-            math.clamp(baseColor[1] + math.random(-variation, variation), 50, 200),
-            math.clamp(baseColor[2] + math.random(-variation, variation), 50, 200),
-            math.clamp(baseColor[3] + math.random(-variation, variation), 50, 200),
-        }
+        -- Cycle through palette (no randomization)
+        return REGION_COLORS[((regionNum - 1) % #REGION_COLORS) + 1]
     end
 
-    local function generateLayout(self, seed, regionNum)
+    ----------------------------------------------------------------------------
+    -- MAP TYPE DETERMINATION
+    ----------------------------------------------------------------------------
+    -- Map types: spur (1 pad), corridor (2 pads), hub (3-5 pads)
+    -- Selection based on current unlinked pad count to ensure infinite expansion
+
+    local MAP_TYPES = {
+        SPUR = "spur",         -- 1 pad, dead end
+        CORRIDOR = "corridor", -- 2 pads, linear progression
+        HUB = "hub",           -- 3-5 pads, branch point
+    }
+
+    local function determineMapType(self, isFirstRegion)
+        local state = getState(self)
+        local config = state.config
+        local unlinked = state.unlinkedPadCount
+        local thresholds = config.mapTypeThresholds
+
+        -- First region is always a corridor (need at least 1 pad for expansion)
+        if isFirstRegion then
+            return MAP_TYPES.CORRIDOR, 2
+        end
+
+        -- Safety: force hub if running low on unlinked pads
+        if unlinked <= thresholds.forceHub then
+            local hubRange = config.hubPadRange
+            local padCount = math.random(hubRange.min, hubRange.max)
+            return MAP_TYPES.HUB, padCount
+        end
+
+        -- Allow spurs only if we have plenty of unlinked pads
+        if unlinked >= thresholds.spurAllowed then
+            -- Weighted random: 20% spur, 50% corridor, 30% hub
+            local roll = math.random(100)
+            if roll <= 20 then
+                return MAP_TYPES.SPUR, 1
+            elseif roll <= 70 then
+                return MAP_TYPES.CORRIDOR, 2
+            else
+                local hubRange = config.hubPadRange
+                local padCount = math.random(hubRange.min, hubRange.max)
+                return MAP_TYPES.HUB, padCount
+            end
+        end
+
+        -- Default: corridor or hub (no spurs when unlinked is moderate)
+        local roll = math.random(100)
+        if roll <= 60 then
+            return MAP_TYPES.CORRIDOR, 2
+        else
+            local hubRange = config.hubPadRange
+            local padCount = math.random(hubRange.min, hubRange.max)
+            return MAP_TYPES.HUB, padCount
+        end
+    end
+
+    local function generateLayout(self, seed, regionNum, padCount)
         local state = getState(self)
         local config = state.config
 
@@ -207,6 +266,7 @@ local RegionManager = Node.extend(function(parent)
         -- Generate layout using Layout.Builder
         local layout = Layout.generate({
             seed = seed,
+            regionNum = regionNum,
             origin = offsetOrigin,
             baseUnit = config.baseUnit,
             wallThickness = config.wallThickness,
@@ -220,7 +280,7 @@ local RegionManager = Node.extend(function(parent)
             scaleRange = config.scaleRange,
             material = config.material,
             color = regionColor,
-            roomsPerPad = config.roomsPerPad,
+            padCount = padCount,  -- Direct pad count instead of roomsPerPad
         })
 
         return layout
@@ -243,6 +303,7 @@ local RegionManager = Node.extend(function(parent)
             region.spawnPosition = result.spawnPosition
             region.pads = result.pads
             region.roomCount = result.roomCount
+            region.roomZones = result.roomZones
         end
 
         return result
@@ -327,6 +388,79 @@ local RegionManager = Node.extend(function(parent)
         end
     end
 
+    ----------------------------------------------------------------------------
+    -- AREA INFO SIGNAL
+    ----------------------------------------------------------------------------
+
+    local function fireAreaInfo(self, player, regionNum, roomNum)
+        self.Out:Fire("areaInfo", {
+            _targetPlayer = player,
+            player = player,
+            regionNum = regionNum,
+            roomNum = roomNum,
+        })
+    end
+
+    ----------------------------------------------------------------------------
+    -- ZONE MANAGEMENT (for room detection)
+    ----------------------------------------------------------------------------
+
+    local function createZonesForRegion(self, regionId, roomZones)
+        local state = getState(self)
+        local region = state.regions[regionId]
+
+        if not roomZones then return end
+
+        region.zoneConnections = {}
+
+        for roomId, zonePart in pairs(roomZones) do
+            -- Connect Touched event to detect players entering rooms
+            local connection = zonePart.Touched:Connect(function(otherPart)
+                -- Find if this is a player character
+                local character = otherPart:FindFirstAncestorOfClass("Model")
+                if not character then return end
+
+                local player = Players:GetPlayerFromCharacter(character)
+                if not player then return end
+
+                -- Get region info
+                local currentRegion = state.regions[regionId]
+                if not currentRegion or not currentRegion.layout then return end
+
+                local regionNum = currentRegion.layout.regionNum or 1
+
+                -- Check if this is a new room for this player
+                local currentRoom = state.playerRooms[player]
+                if currentRoom and currentRoom.regionNum == regionNum and currentRoom.roomNum == roomId then
+                    return  -- Already in this room
+                end
+
+                -- Update tracking
+                state.playerRooms[player] = { regionNum = regionNum, roomNum = roomId }
+
+                -- Fire area info to client
+                fireAreaInfo(self, player, regionNum, roomId)
+            end)
+
+            table.insert(region.zoneConnections, connection)
+        end
+    end
+
+    local function destroyZonesForRegion(self, regionId)
+        local state = getState(self)
+        local region = state.regions[regionId]
+
+        if not region then return end
+
+        -- Disconnect all zone connections
+        if region.zoneConnections then
+            for _, connection in ipairs(region.zoneConnections) do
+                connection:Disconnect()
+            end
+            region.zoneConnections = nil
+        end
+    end
+
     function handleJumpRequest(self, regionId, padId, player)
         local state = getState(self)
         local region = state.regions[regionId]
@@ -395,6 +529,9 @@ local RegionManager = Node.extend(function(parent)
             regB.padLinks = regB.padLinks or {}
             regB.padLinks[padB] = { regionId = regionA, padId = padA }
         end
+
+        -- Both pads are now linked (no longer available for expansion)
+        state.unlinkedPadCount = state.unlinkedPadCount - 2
     end
 
     local function getFirstPadId(region)
@@ -415,8 +552,11 @@ local RegionManager = Node.extend(function(parent)
         local newSeed = generateSeed()
         local regionNum = state.regionCount
 
-        -- Generate layout
-        local layout = generateLayout(self, newSeed, regionNum)
+        -- Determine map type based on current unlinked pad count
+        local mapType, padCount = determineMapType(self, false)
+
+        -- Generate layout with determined pad count
+        local layout = generateLayout(self, newSeed, regionNum, padCount)
 
         -- Store region with layout
         state.regions[newRegionId] = {
@@ -437,7 +577,14 @@ local RegionManager = Node.extend(function(parent)
         -- Create JumpPad nodes for this region
         createJumpPadsForRegion(self, newRegionId, result.container)
 
-        -- Link first pad back to source
+        -- Create Zone nodes for room detection
+        createZonesForRegion(self, newRegionId, result.roomZones)
+
+        -- Track new pads for infinite expansion
+        local newPadCount = layout.pads and #layout.pads or 0
+        state.unlinkedPadCount = state.unlinkedPadCount + newPadCount
+
+        -- Link first pad back to source (decrements unlinkedPadCount by 2)
         local firstPadId = getFirstPadId(state.regions[newRegionId])
         if firstPadId and sourcePadId then
             linkPads(self, sourceRegionId, sourcePadId, newRegionId, firstPadId)
@@ -485,14 +632,18 @@ local RegionManager = Node.extend(function(parent)
             oldContainer:Destroy()
         end
 
-        -- Destroy old JumpPads for this region
+        -- Destroy old JumpPads and Zones for this region
         destroyJumpPadsForRegion(self, targetRegionId)
+        destroyZonesForRegion(self, targetRegionId)
 
         -- Reinstantiate from stored layout (no regeneration!)
         local result = instantiateLayout(self, targetRegionId, targetRegion.layout)
 
         -- Create JumpPad nodes for this region
         createJumpPadsForRegion(self, targetRegionId, result.container)
+
+        -- Create Zone nodes for room detection
+        createZonesForRegion(self, targetRegionId, result.roomZones)
 
         -- Teleport to target pad
         teleportPlayerToPad(self, targetRegionId, targetPadId, player)
@@ -514,6 +665,9 @@ local RegionManager = Node.extend(function(parent)
         local region = state.regions[regionId]
 
         if not region then return end
+
+        -- Destroy Zone nodes for this region
+        destroyZonesForRegion(self, regionId)
 
         -- Destroy JumpPad nodes for this region
         destroyJumpPadsForRegion(self, regionId)
@@ -554,8 +708,11 @@ local RegionManager = Node.extend(function(parent)
         local newSeed = generateSeed()
         local regionNum = state.regionCount
 
-        -- Generate layout
-        local layout = generateLayout(self, newSeed, regionNum)
+        -- Determine map type based on current unlinked pad count
+        local mapType, padCount = determineMapType(self, false)
+
+        -- Generate layout with determined pad count
+        local layout = generateLayout(self, newSeed, regionNum, padCount)
 
         -- Store region with layout
         state.regions[newRegionId] = {
@@ -575,7 +732,14 @@ local RegionManager = Node.extend(function(parent)
         -- Create JumpPad nodes for this region
         createJumpPadsForRegion(self, newRegionId, result.container)
 
-        -- Link first pad back to source
+        -- Create Zone nodes for room detection
+        createZonesForRegion(self, newRegionId, result.roomZones)
+
+        -- Track new pads for infinite expansion
+        local newPadCount = layout.pads and #layout.pads or 0
+        state.unlinkedPadCount = state.unlinkedPadCount + newPadCount
+
+        -- Link first pad back to source (decrements unlinkedPadCount by 2)
         local firstPadId = getFirstPadId(state.regions[newRegionId])
         if firstPadId and sourcePadId then
             linkPads(self, sourceRegionId, sourcePadId, newRegionId, firstPadId)
@@ -636,14 +800,18 @@ local RegionManager = Node.extend(function(parent)
             oldContainer:Destroy()
         end
 
-        -- Destroy old JumpPads for this region
+        -- Destroy old JumpPads and Zones for this region
         destroyJumpPadsForRegion(self, targetRegionId)
+        destroyZonesForRegion(self, targetRegionId)
 
         -- Reinstantiate from stored layout (no regeneration!)
         local result = instantiateLayout(self, targetRegionId, targetRegion.layout)
 
         -- Create JumpPad nodes for this region
         createJumpPadsForRegion(self, targetRegionId, result.container)
+
+        -- Create Zone nodes for room detection
+        createZonesForRegion(self, targetRegionId, result.roomZones)
 
         -- Teleport player to target pad (they're anchored so this just sets position)
         teleportPlayerToPad(self, targetRegionId, targetPadId, player)
@@ -847,6 +1015,7 @@ local RegionManager = Node.extend(function(parent)
 
                 local state = getState(self)
                 local player = data.player
+                local pending = state.pendingTransitions[player]
 
                 local System = self._System
                 if System and System.Debug then
@@ -859,6 +1028,22 @@ local RegionManager = Node.extend(function(parent)
                     player = player,
                 })
 
+                -- Fire area info for the destination
+                if pending and pending.targetRegionId then
+                    local targetRegion = state.regions[pending.targetRegionId]
+                    if targetRegion and targetRegion.layout then
+                        -- Get room from pad's roomId
+                        local roomNum = 1
+                        if pending.targetPadId then
+                            local pad = Layout.Schema.getPad(targetRegion.layout, pending.targetPadId)
+                            if pad then
+                                roomNum = pad.roomId
+                            end
+                        end
+                        fireAreaInfo(self, player, targetRegion.layout.regionNum, roomNum)
+                    end
+                end
+
                 -- Unanchor player
                 unanchorPlayer(player)
 
@@ -869,12 +1054,14 @@ local RegionManager = Node.extend(function(parent)
                     System.Debug.info("RegionManager", "Transition complete for", player.Name)
                 end
             end,
+
         },
 
         Out = {
             transitionStart = {},
             loadingComplete = {},
             transitionEnd = {},
+            areaInfo = {},
         },
 
         -- Configuration
@@ -900,8 +1087,11 @@ local RegionManager = Node.extend(function(parent)
             local regionId = "region_1"
             local seed = generateSeed()
 
+            -- First region is always a corridor (2 pads)
+            local mapType, padCount = determineMapType(self, true)
+
             -- Generate layout
-            local layout = generateLayout(self, seed, 1)
+            local layout = generateLayout(self, seed, 1, padCount)
 
             -- Store region with layout
             state.regions[regionId] = {
@@ -920,6 +1110,13 @@ local RegionManager = Node.extend(function(parent)
 
             -- Create JumpPad nodes for this region
             createJumpPadsForRegion(self, regionId, result.container)
+
+            -- Create Zone nodes for room detection
+            createZonesForRegion(self, regionId, result.roomZones)
+
+            -- Track initial pads for infinite expansion (no linking for first region)
+            local initialPadCount = layout.pads and #layout.pads or 0
+            state.unlinkedPadCount = initialPadCount
 
             state.activeRegionId = regionId
 
@@ -944,6 +1141,11 @@ local RegionManager = Node.extend(function(parent)
             return getState(self).regionCount
         end,
 
+        -- Get current unlinked pad count (for debugging/monitoring)
+        getUnlinkedPadCount = function(self)
+            return getState(self).unlinkedPadCount
+        end,
+
         -- Get layout for a region (for serialization/debugging)
         getLayout = function(self, regionId)
             local region = getState(self).regions[regionId]
@@ -966,6 +1168,23 @@ local RegionManager = Node.extend(function(parent)
             }
 
             return regionId
+        end,
+
+        -- Send initial area info for a player (e.g., on spawn)
+        sendInitialAreaInfo = function(self, player, roomNum)
+            local state = getState(self)
+            local activeRegion = state.regions[state.activeRegionId]
+
+            if activeRegion and activeRegion.layout then
+                local regionNum = activeRegion.layout.regionNum or 1
+                roomNum = roomNum or 1
+
+                -- Update tracking
+                state.playerRooms[player] = { regionNum = regionNum, roomNum = roomNum }
+
+                -- Fire area info to client
+                fireAreaInfo(self, player, regionNum, roomNum)
+            end
         end,
     }
 end)

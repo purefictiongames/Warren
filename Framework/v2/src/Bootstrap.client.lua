@@ -77,6 +77,9 @@ local IPC = Lib.System.IPC
 -- Register ScreenTransition for screen fade effects during teleportation
 IPC.registerNode(Lib.Components.ScreenTransition)
 
+-- Register AreaHUD for area/room display
+IPC.registerNode(Lib.Components.AreaHUD)
+
 -- Also register server-side nodes for wiring resolution (they won't create instances)
 IPC.registerNode(Lib.Components.JumpPad)
 IPC.registerNode(Lib.Components.RegionManager)
@@ -87,10 +90,10 @@ IPC.registerNode(Lib.Components.RegionManager)
 -- Define same modes as server for cross-domain wiring to work
 
 IPC.defineMode("Dungeon", {
-    nodes = { "JumpPad", "RegionManager", "ScreenTransition" },
+    nodes = { "JumpPad", "RegionManager", "ScreenTransition", "AreaHUD" },
     wiring = {
         JumpPad = { "RegionManager" },
-        RegionManager = { "ScreenTransition" },
+        RegionManager = { "ScreenTransition", "AreaHUD" },
         ScreenTransition = { "RegionManager" },
     },
 })
@@ -101,6 +104,9 @@ IPC.defineMode("Dungeon", {
 
 -- Create ScreenTransition instance (one per client)
 IPC.createInstance("ScreenTransition", { id = "ScreenTransition_Local" })
+
+-- Create AreaHUD instance (displays current area/room)
+IPC.createInstance("AreaHUD", { id = "AreaHUD_Local" })
 
 -- Initialize IPC (calls onInit on all registered client instances)
 IPC.init()

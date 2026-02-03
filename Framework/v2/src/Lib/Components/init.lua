@@ -49,6 +49,9 @@ Components.JumpPad = require(script.JumpPad)
 -- Screen Transitions
 Components.ScreenTransition = require(script.ScreenTransition)
 
+-- HUD
+Components.AreaHUD = require(script.AreaHUD)
+
 -- Pool Management
 Components.NodePool = require(script.NodePool)
 

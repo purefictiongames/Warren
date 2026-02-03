@@ -80,6 +80,9 @@ IPC.registerNode(Lib.Components.ScreenTransition)
 -- Register AreaHUD for area/room display
 IPC.registerNode(Lib.Components.AreaHUD)
 
+-- Register MiniMap for full-screen map view
+IPC.registerNode(Lib.Components.MiniMap)
+
 -- Also register server-side nodes for wiring resolution (they won't create instances)
 IPC.registerNode(Lib.Components.JumpPad)
 IPC.registerNode(Lib.Components.RegionManager)
@@ -90,11 +93,12 @@ IPC.registerNode(Lib.Components.RegionManager)
 -- Define same modes as server for cross-domain wiring to work
 
 IPC.defineMode("Dungeon", {
-    nodes = { "JumpPad", "RegionManager", "ScreenTransition", "AreaHUD" },
+    nodes = { "JumpPad", "RegionManager", "ScreenTransition", "AreaHUD", "MiniMap" },
     wiring = {
         JumpPad = { "RegionManager" },
-        RegionManager = { "ScreenTransition", "AreaHUD" },
+        RegionManager = { "ScreenTransition", "AreaHUD", "MiniMap" },
         ScreenTransition = { "RegionManager" },
+        MiniMap = { "RegionManager" },
     },
 })
 
@@ -107,6 +111,9 @@ IPC.createInstance("ScreenTransition", { id = "ScreenTransition_Local" })
 
 -- Create AreaHUD instance (displays current area/room)
 IPC.createInstance("AreaHUD", { id = "AreaHUD_Local" })
+
+-- Create MiniMap instance (full-screen map view)
+IPC.createInstance("MiniMap", { id = "MiniMap_Local" })
 
 -- Initialize IPC (calls onInit on all registered client instances)
 IPC.init()

@@ -102,6 +102,7 @@ IPC.registerNode(Lib.Components.JumpPad)
 IPC.registerNode(Lib.Components.RegionManager)
 IPC.registerNode(Lib.Components.ScreenTransition)  -- Client-side, but registered for wiring
 IPC.registerNode(Lib.Components.AreaHUD)           -- Client-side, but registered for wiring
+IPC.registerNode(Lib.Components.MiniMap)           -- Client-side, but registered for wiring
 
 -- Register Game-level nodes (game-specific implementations)
 -- Example:
@@ -122,14 +123,16 @@ Asset.buildInheritanceTree()
 
 -- Dungeon mode: JumpPad signals route to RegionManager, screen transitions cross client/server
 IPC.defineMode("Dungeon", {
-    nodes = { "JumpPad", "RegionManager", "ScreenTransition", "AreaHUD" },
+    nodes = { "JumpPad", "RegionManager", "ScreenTransition", "AreaHUD", "MiniMap" },
     wiring = {
         -- Server-side: JumpPad → RegionManager
         JumpPad = { "RegionManager" },
-        -- Cross-domain: RegionManager (server) → ScreenTransition, AreaHUD (client)
-        RegionManager = { "ScreenTransition", "AreaHUD" },
+        -- Cross-domain: RegionManager (server) → ScreenTransition, AreaHUD, MiniMap (client)
+        RegionManager = { "ScreenTransition", "AreaHUD", "MiniMap" },
         -- Cross-domain: ScreenTransition (client) → RegionManager (server)
         ScreenTransition = { "RegionManager" },
+        -- Cross-domain: MiniMap (client) → RegionManager (server)
+        MiniMap = { "RegionManager" },
     },
 })
 

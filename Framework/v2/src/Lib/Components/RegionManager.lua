@@ -35,6 +35,41 @@
     ```
 
     ============================================================================
+    SIGNALS
+    ============================================================================
+
+    OUT (sends):
+        areaInfo({ player, regionNum, roomNum, visitedRooms })
+            - Fired when player enters a room or on initial spawn
+            - visitedRooms: Set of room IDs player has visited in this region
+
+        mapData({ player, layout, visitedRooms, currentRoom })
+            - Response to requestMapData from MiniMap
+            - Contains layout and current state for map display
+
+        transitionStart({ player, regionId, padId })
+            - Fired when teleport begins (triggers client fade-out)
+
+        loadingComplete({ player, container })
+            - Fired after region is loaded (triggers client preload)
+
+        transitionEnd({ player })
+            - Fired when teleport completes (triggers client fade-in)
+
+    IN (receives):
+        onJumpRequested({ player, padId, regionId })
+            - From JumpPad when player activates a teleport pad
+
+        onFadeOutComplete({ player })
+            - From ScreenTransition when fade-out finishes
+
+        onTransitionComplete({ player })
+            - From ScreenTransition when fade-in finishes
+
+        onRequestMapData({ player })
+            - From MiniMap when it needs current map data
+
+    ============================================================================
     FUTURE: Persistent Layout Storage
     ============================================================================
 
@@ -122,6 +157,9 @@ local RegionManager = Node.extend(function(parent)
                 -- Per-player current room tracking
                 -- { [Player] = { regionNum, roomNum } }
                 playerRooms = {},
+                -- Per-player visited rooms tracking
+                -- { [Player] = { [regionNum] = { [roomId] = true } } }
+                visitedRooms = {},
                 -- Per-player pending transitions (for async flow)
                 -- { [Player] = { regionId, padId, isNewRegion, sourceRegionId, sourcePadId } }
                 pendingTransitions = {},
@@ -393,11 +431,18 @@ local RegionManager = Node.extend(function(parent)
     ----------------------------------------------------------------------------
 
     local function fireAreaInfo(self, player, regionNum, roomNum)
+        local state = getState(self)
+
+        -- Get visited rooms for this player/region (or empty table)
+        local playerVisited = state.visitedRooms[player]
+        local visitedRooms = playerVisited and playerVisited[regionNum] or {}
+
         self.Out:Fire("areaInfo", {
             _targetPlayer = player,
             player = player,
             regionNum = regionNum,
             roomNum = roomNum,
+            visitedRooms = visitedRooms,
         })
     end
 
@@ -437,6 +482,15 @@ local RegionManager = Node.extend(function(parent)
 
                 -- Update tracking
                 state.playerRooms[player] = { regionNum = regionNum, roomNum = roomId }
+
+                -- Mark room as visited
+                if not state.visitedRooms[player] then
+                    state.visitedRooms[player] = {}
+                end
+                if not state.visitedRooms[player][regionNum] then
+                    state.visitedRooms[player][regionNum] = {}
+                end
+                state.visitedRooms[player][regionNum][roomId] = true
 
                 -- Fire area info to client
                 fireAreaInfo(self, player, regionNum, roomId)
@@ -1040,7 +1094,22 @@ local RegionManager = Node.extend(function(parent)
                                 roomNum = pad.roomId
                             end
                         end
-                        fireAreaInfo(self, player, targetRegion.layout.regionNum, roomNum)
+
+                        local regionNum = targetRegion.layout.regionNum
+
+                        -- Update tracking
+                        state.playerRooms[player] = { regionNum = regionNum, roomNum = roomNum }
+
+                        -- Mark room as visited
+                        if not state.visitedRooms[player] then
+                            state.visitedRooms[player] = {}
+                        end
+                        if not state.visitedRooms[player][regionNum] then
+                            state.visitedRooms[player][regionNum] = {}
+                        end
+                        state.visitedRooms[player][regionNum][roomNum] = true
+
+                        fireAreaInfo(self, player, regionNum, roomNum)
                     end
                 end
 
@@ -1055,6 +1124,79 @@ local RegionManager = Node.extend(function(parent)
                 end
             end,
 
+            --[[
+                Handle map data request from MiniMap.
+                Responds with current layout and visited rooms.
+
+                @param data table:
+                    player: Player - The requesting player
+            --]]
+            onRequestMapData = function(self, data)
+                if not data or not data.player then return end
+
+                local state = getState(self)
+                local player = data.player
+                local activeRegion = state.regions[state.activeRegionId]
+
+                if not activeRegion or not activeRegion.layout then return end
+
+                local layout = activeRegion.layout
+                local regionNum = layout.regionNum or 1
+
+                -- Get visited rooms for this player/region
+                local playerVisited = state.visitedRooms[player]
+                local visitedRooms = playerVisited and playerVisited[regionNum] or {}
+
+                -- Get current room
+                local playerRoom = state.playerRooms[player]
+                local currentRoom = playerRoom and playerRoom.roomNum or 1
+
+                -- Calculate stats
+                local totalRooms = 0
+                for _ in pairs(layout.rooms or {}) do
+                    totalRooms = totalRooms + 1
+                end
+
+                local exploredRooms = 0
+                for _ in pairs(visitedRooms) do
+                    exploredRooms = exploredRooms + 1
+                end
+
+                local totalPortals = layout.pads and #layout.pads or 0
+
+                local discoveredPortals = 0
+                if layout.pads then
+                    for _, pad in ipairs(layout.pads) do
+                        if visitedRooms[pad.roomId] then
+                            discoveredPortals = discoveredPortals + 1
+                        end
+                    end
+                end
+
+                local totalItems = totalRooms + totalPortals
+                local discoveredItems = exploredRooms + discoveredPortals
+                local completion = 0
+                if totalItems > 0 then
+                    completion = math.floor((discoveredItems / totalItems) * 100)
+                end
+
+                -- Send map data back to MiniMap
+                self.Out:Fire("mapData", {
+                    _targetPlayer = player,
+                    player = player,
+                    layout = layout,
+                    visitedRooms = visitedRooms,
+                    currentRoom = currentRoom,
+                    stats = {
+                        totalRooms = totalRooms,
+                        exploredRooms = exploredRooms,
+                        totalPortals = totalPortals,
+                        discoveredPortals = discoveredPortals,
+                        completion = completion,
+                    },
+                })
+            end,
+
         },
 
         Out = {
@@ -1062,6 +1204,7 @@ local RegionManager = Node.extend(function(parent)
             loadingComplete = {},
             transitionEnd = {},
             areaInfo = {},
+            mapData = {},
         },
 
         -- Configuration
@@ -1176,11 +1319,21 @@ local RegionManager = Node.extend(function(parent)
             local activeRegion = state.regions[state.activeRegionId]
 
             if activeRegion and activeRegion.layout then
-                local regionNum = activeRegion.layout.regionNum or 1
+                local layout = activeRegion.layout
+                local regionNum = layout.regionNum or 1
                 roomNum = roomNum or 1
 
                 -- Update tracking
                 state.playerRooms[player] = { regionNum = regionNum, roomNum = roomNum }
+
+                -- Mark room as visited
+                if not state.visitedRooms[player] then
+                    state.visitedRooms[player] = {}
+                end
+                if not state.visitedRooms[player][regionNum] then
+                    state.visitedRooms[player][regionNum] = {}
+                end
+                state.visitedRooms[player][regionNum][roomNum] = true
 
                 -- Fire area info to client
                 fireAreaInfo(self, player, regionNum, roomNum)

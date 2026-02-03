@@ -51,6 +51,7 @@ Components.ScreenTransition = require(script.ScreenTransition)
 
 -- HUD
 Components.AreaHUD = require(script.AreaHUD)
+Components.MiniMap = require(script.MiniMap)
 
 -- Pool Management
 Components.NodePool = require(script.NodePool)

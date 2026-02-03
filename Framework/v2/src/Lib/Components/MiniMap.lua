@@ -149,7 +149,7 @@ local MiniMap = Node.extend(function(parent)
                 state.renderConnection:Disconnect()
             end
             -- Unbind context actions
-            ContextActionService:UnbindAction("MiniMapPan")
+            ContextActionService:UnbindAction("MiniMapSinkLeftStick")
             ContextActionService:UnbindAction("MiniMapRotate")
             ContextActionService:UnbindAction("MiniMapZoomIn")
             ContextActionService:UnbindAction("MiniMapZoomOut")
@@ -381,20 +381,27 @@ local MiniMap = Node.extend(function(parent)
             end
         end
 
-        -- Calculate center of all rooms for camera target
-        local centerX, centerY, centerZ = 0, 0, 0
-        local roomCount = 0
+        -- Calculate bounding box of all rooms
+        local minX, maxX = math.huge, -math.huge
+        local minY, maxY = math.huge, -math.huge
+        local minZ, maxZ = math.huge, -math.huge
+
         for _, room in pairs(layout.rooms) do
-            centerX = centerX + room.position[1]
-            centerY = centerY + room.position[2]
-            centerZ = centerZ + room.position[3]
-            roomCount = roomCount + 1
+            local x, y, z = room.position[1], room.position[2], room.position[3]
+            local hw, hh, hd = room.dims[1] / 2, room.dims[2] / 2, room.dims[3] / 2
+
+            minX = math.min(minX, x - hw)
+            maxX = math.max(maxX, x + hw)
+            minY = math.min(minY, y - hh)
+            maxY = math.max(maxY, y + hh)
+            minZ = math.min(minZ, z - hd)
+            maxZ = math.max(maxZ, z + hd)
         end
-        if roomCount > 0 then
-            centerX = centerX / roomCount
-            centerY = centerY / roomCount
-            centerZ = centerZ / roomCount
-        end
+
+        -- Center is the middle of the bounding box
+        local centerX = (minX + maxX) / 2
+        local centerY = (minY + maxY) / 2
+        local centerZ = (minZ + maxZ) / 2
 
         -- Create scaled room parts
         for roomId, room in pairs(layout.rooms) do
@@ -607,21 +614,10 @@ local MiniMap = Node.extend(function(parent)
         local state = getState(self)
 
         -- Bind gamepad actions (sinks input so player doesn't move)
+        -- Sink left stick input (no panning, but prevent player movement)
         ContextActionService:BindAction(
-            "MiniMapPan",
-            function(actionName, inputState, inputObject)
-                if inputState == Enum.UserInputState.Change then
-                    local pos = inputObject.Position
-                    if math.abs(pos.X) > 0.1 or math.abs(pos.Y) > 0.1 then
-                        local panSpeed = state.cameraDistance * 0.02
-                        local yawRad = math.rad(state.cameraYaw)
-                        local dx = pos.X * panSpeed
-                        local dz = -pos.Y * panSpeed
-                        state.cameraPanX = state.cameraPanX + math.cos(yawRad) * dx - math.sin(yawRad) * dz
-                        state.cameraPanZ = state.cameraPanZ + math.sin(yawRad) * dx + math.cos(yawRad) * dz
-                        updateCamera(self)
-                    end
-                end
+            "MiniMapSinkLeftStick",
+            function()
                 return Enum.ContextActionResult.Sink
             end,
             false,
@@ -698,7 +694,7 @@ local MiniMap = Node.extend(function(parent)
     end
 
     stopInputHandling = function(self)
-        ContextActionService:UnbindAction("MiniMapPan")
+        ContextActionService:UnbindAction("MiniMapSinkLeftStick")
         ContextActionService:UnbindAction("MiniMapRotate")
         ContextActionService:UnbindAction("MiniMapZoomIn")
         ContextActionService:UnbindAction("MiniMapZoomOut")

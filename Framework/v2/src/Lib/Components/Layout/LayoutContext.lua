@@ -304,6 +304,9 @@ function LayoutContext:toLayout()
         material = self.config.material or "Brick",
         color = self.config.color or { 140, 110, 90 },
         doorSize = self.config.doorSize or 12,
+        -- Derived values from GeometryContext (for use by LayoutInstantiator, TerrainManager)
+        gap = self.config.gap or (2 * (self.config.wallThickness or 1)),
+        cutterDepth = self.config.cutterDepth or ((self.config.wallThickness or 1) * 8),
     }
 
     -- Store domain-specific seeds for future regeneration

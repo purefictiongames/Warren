@@ -141,6 +141,69 @@
 
     Xrefs can be nested - an imported layout can itself contain xrefs.
 
+    ============================================================================
+    CONFIG REFERENCES (Dimension Values)
+    ============================================================================
+
+    Config values (dimensions) live in the class system and can be referenced
+    in static layouts using the cfg proxy:
+
+        local Geometry = require(path.to.Factory.Geometry)
+        local cfg = Geometry.cfg
+
+        return {
+            name = "Room",
+            spec = {
+                bounds = { X = 40, Y = 30, Z = 40 },
+
+                classes = {
+                    room = {
+                        wallThickness = 1,
+                        WALL_H = 30,
+                        W = 40,
+                    },
+                },
+
+                class = "room",  -- Layout-level class
+
+                parts = {
+                    { id = "Wall", size = {cfg.W, cfg.WALL_H, cfg.wallThickness} },
+                },
+            },
+        }
+
+    Config references support arithmetic:
+        cfg.W - cfg.wallThickness
+        cfg.WALL_H * 2
+
+    Missing config references throw errors (break build with clear message).
+
+    ============================================================================
+    DERIVED VALUES
+    ============================================================================
+
+    Register computed values that derive from resolved config:
+
+        Geometry.registerDerived("gap", function(cfg)
+            return 2 * cfg.wallThickness
+        end)
+
+    Built-in derived values:
+        gap         - 2 * wallThickness (space between adjacent shells)
+        shellSize   - interior dims + 2*wallThickness on each axis
+        cutterDepth - wallThickness * 8 (for door CSG)
+
+    ============================================================================
+    GEOMETRY CONTEXT
+    ============================================================================
+
+    For runtime queries, create a context:
+
+        local ctx = Geometry.createContext(spec, parentContext)
+        ctx:get("wallThickness")     -- Get config value
+        ctx:getDerived("gap")        -- Get computed value
+        ctx:child(childSpec)         -- Create child context
+
 --]]
 
 --##############################################################################
@@ -362,12 +425,186 @@ function Geometry.createParentProxy()
     })
 end
 
-resolveReferences = function(value, resolvedParts, parentId)
+--------------------------------------------------------------------------------
+-- Config Reference System (for dimension values from class cascade)
+--------------------------------------------------------------------------------
+
+--[[
+    Config reference markers capture config key access for deferred resolution.
+
+    Usage in static layouts:
+        local Geometry = require(...)
+        local cfg = Geometry.cfg
+
+        return {
+            spec = {
+                classes = {
+                    room = { wallThickness = 1, WALL_H = 30 },
+                },
+                class = "room",
+                parts = {
+                    { id = "Wall", size = {40, cfg.WALL_H, cfg.wallThickness} },
+                },
+            },
+        }
+
+    When cfg.wallThickness is accessed, it returns a marker:
+        { __isConfigRef = true, key = "wallThickness" }
+
+    During resolution, markers are replaced with values from resolved config.
+--]]
+
+-- Config reference marker with arithmetic support
+local ConfigRefMT = {}
+ConfigRefMT.__add = function(a, b) return createExprMarker("+", a, b) end
+ConfigRefMT.__sub = function(a, b) return createExprMarker("-", a, b) end
+ConfigRefMT.__mul = function(a, b) return createExprMarker("*", a, b) end
+ConfigRefMT.__div = function(a, b) return createExprMarker("/", a, b) end
+ConfigRefMT.__unm = function(a) return createExprMarker("*", a, -1) end
+
+local function createConfigRefMarker(key)
+    return setmetatable({
+        __isConfigRef = true,
+        key = key,
+    }, ConfigRefMT)
+end
+
+-- Config proxy: cfg.wallThickness returns a config reference marker
+Geometry.cfg = setmetatable({}, {
+    __index = function(t, key)
+        local marker = createConfigRefMarker(key)
+        rawset(t, key, marker)  -- Cache for repeated access
+        return marker
+    end,
+})
+
+--------------------------------------------------------------------------------
+-- Derived Values Registry
+--------------------------------------------------------------------------------
+
+local derivedValues = {}
+
+--[[
+    Register a derived value that computes from resolved config.
+
+    @param name: Derived value name (e.g., "gap", "shellSize")
+    @param fn: Function(resolvedConfig, ...) -> value
+--]]
+function Geometry.registerDerived(name, fn)
+    derivedValues[name] = fn
+end
+
+-- Built-in derived values
+Geometry.registerDerived("gap", function(cfg)
+    return 2 * (cfg.wallThickness or 1)
+end)
+
+Geometry.registerDerived("shellSize", function(cfg, interiorDims)
+    local wt = cfg.wallThickness or 1
+    return {
+        interiorDims[1] + 2 * wt,
+        interiorDims[2] + 2 * wt,
+        interiorDims[3] + 2 * wt,
+    }
+end)
+
+Geometry.registerDerived("cutterDepth", function(cfg)
+    return (cfg.wallThickness or 1) * 8
+end)
+
+--------------------------------------------------------------------------------
+-- Geometry Context (for runtime queries)
+--------------------------------------------------------------------------------
+
+--[[
+    Create a context for querying resolved config values.
+
+    @param spec: Layout spec with class and classes
+    @param parentContext: Optional parent context for inheritance
+    @return: Context object with get() and getDerived() methods
+--]]
+function Geometry.createContext(spec, parentContext)
+    local ctx = {}
+
+    -- Resolve config through class cascade
+    local resolvedConfig = {}
+
+    -- Start with parent context values
+    if parentContext and parentContext.resolved then
+        for k, v in pairs(parentContext.resolved) do
+            resolvedConfig[k] = v
+        end
+    end
+
+    -- Apply class cascade from spec
+    if spec then
+        local resolver = getClassResolver()
+        if resolver and spec.classes then
+            local cascaded = resolver.resolve({
+                class = spec.class,
+            }, spec)
+            for k, v in pairs(cascaded) do
+                resolvedConfig[k] = v
+            end
+        elseif spec.classes and spec.class then
+            -- Fallback: manual class resolution
+            for className in (spec.class or ""):gmatch("%S+") do
+                if spec.classes[className] then
+                    for k, v in pairs(spec.classes[className]) do
+                        resolvedConfig[k] = v
+                    end
+                end
+            end
+        end
+    end
+
+    ctx.resolved = resolvedConfig
+
+    function ctx:get(key, default)
+        local value = self.resolved[key]
+        if value ~= nil then return value end
+        return default
+    end
+
+    function ctx:getDerived(name, ...)
+        local fn = derivedValues[name]
+        if not fn then
+            error("[Geometry] Unknown derived value: " .. tostring(name))
+        end
+        return fn(self.resolved, ...)
+    end
+
+    function ctx:child(childSpec)
+        return Geometry.createContext(childSpec, self)
+    end
+
+    return ctx
+end
+
+--------------------------------------------------------------------------------
+-- Reference Resolution (parts + config)
+--------------------------------------------------------------------------------
+
+resolveReferences = function(value, resolvedParts, parentId, resolvedConfig, layoutName)
     if type(value) ~= "table" then
         return value
     end
 
-    -- Check if this is a reference marker
+    -- Check if this is a config reference marker
+    if value.__isConfigRef then
+        local key = value.key
+        if resolvedConfig and resolvedConfig[key] ~= nil then
+            return resolvedConfig[key]
+        end
+        -- Error on missing config reference (break build with clear message)
+        error(string.format(
+            "[Geometry] Config reference 'cfg.%s' not found in layout '%s'. " ..
+            "Check that the value is defined in classes or inherited from parent layout.",
+            key, layoutName or "unknown"
+        ))
+    end
+
+    -- Check if this is a part reference marker
     if value.__isRef then
         -- Resolve __parent__ to actual parent ID
         local targetId = value.partId
@@ -402,8 +639,8 @@ resolveReferences = function(value, resolvedParts, parentId)
 
     -- Check if this is an expression marker
     if value.__isExpr then
-        local left = resolveReferences(value.left, resolvedParts, parentId)
-        local right = resolveReferences(value.right, resolvedParts, parentId)
+        local left = resolveReferences(value.left, resolvedParts, parentId, resolvedConfig, layoutName)
+        local right = resolveReferences(value.right, resolvedParts, parentId, resolvedConfig, layoutName)
 
         if value.op == "+" then return left + right end
         if value.op == "-" then return left - right end
@@ -417,7 +654,7 @@ resolveReferences = function(value, resolvedParts, parentId)
     -- Recurse into table
     local result = {}
     for k, v in pairs(value) do
-        result[k] = resolveReferences(v, resolvedParts, parentId)
+        result[k] = resolveReferences(v, resolvedParts, parentId, resolvedConfig, layoutName)
     end
     return result
 end
@@ -577,7 +814,7 @@ end
 -- Resolve: Geometry Transform
 --------------------------------------------------------------------------------
 
-resolvePartGeometry = function(partDef, parentResolved, resolvedParts, parentId)
+resolvePartGeometry = function(partDef, parentResolved, resolvedParts, parentId, resolvedConfig, layoutName)
     -- Support both formats:
     --   1. geometry = { origin = {...}, scale = {...} }  (function-based layouts)
     --   2. position = {...}, size = {...}  (array-based layouts like BeverlyMansion)
@@ -597,7 +834,8 @@ resolvePartGeometry = function(partDef, parentResolved, resolvedParts, parentId)
 
     -- Resolve any reference markers in geometry values
     -- Pass parentId so parent.Size[2] references work
-    local resolvedGeom = resolveReferences(geom, resolvedParts, parentId)
+    -- Pass resolvedConfig and layoutName for cfg.* references
+    local resolvedGeom = resolveReferences(geom, resolvedParts, parentId, resolvedConfig, layoutName)
 
     local origin = normalizeVector(resolvedGeom.origin)
     local scale = normalizeVector(resolvedGeom.scale or resolvedGeom.dims)
@@ -1247,6 +1485,23 @@ function Geometry.resolve(layout)
     end
 
     --------------------------------------------------------------------------
+    -- PHASE 0d: Resolve layout-level config from class cascade
+    --------------------------------------------------------------------------
+    local resolvedConfig = {}
+    local layoutName = layoutData.name or "unknown"
+
+    -- Resolve config from layout-level class
+    if spec.class and styles.classes then
+        for className in spec.class:gmatch("%S+") do
+            if styles.classes[className] then
+                for k, v in pairs(styles.classes[className]) do
+                    resolvedConfig[k] = v
+                end
+            end
+        end
+    end
+
+    --------------------------------------------------------------------------
     -- PHASE 1: Define tree (create empty stubs for all parts)
     --------------------------------------------------------------------------
     local stubs = {}
@@ -1281,7 +1536,8 @@ function Geometry.resolve(layout)
 
         -- Resolve geometry (references can now look up any stub)
         -- Pass parentId so parent.Size[2] references work
-        stub.geometry = resolvePartGeometry(partDef, parentStub, stubs, parentId)
+        -- Pass resolvedConfig and layoutName for cfg.* references
+        stub.geometry = resolvePartGeometry(partDef, parentStub, stubs, parentId, resolvedConfig, layoutName)
 
         -- Resolve properties (cascade from parent)
         stub.properties = resolvePartProperties(partDef, parentStub, styles)
@@ -1306,6 +1562,7 @@ function Geometry.resolve(layout)
         name = layoutData.name,
         openings = allOpenings,  -- Global openings for instantiate
         classes = styles.classes,  -- Preserve for round-trip scanning
+        config = resolvedConfig,  -- Resolved config for runtime queries
     }
 
     return stubs

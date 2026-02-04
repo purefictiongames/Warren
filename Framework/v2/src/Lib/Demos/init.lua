@@ -136,6 +136,7 @@ local demoModules = {
     Room = "Room_Demo",
     VolumeGraph = "VolumeGraph_Demo",
     DungeonGeneration = "DungeonGeneration_Demo",
+    ConfigRef = "ConfigRef_Demo",
 }
 
 setmetatable(Demos, {

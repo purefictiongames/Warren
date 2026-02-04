@@ -55,6 +55,9 @@ local DoorCutter = Node.extend(function(parent)
                 config = {
                     doorSize = nil,       -- Required: set by orchestrator (doors are square)
                     wallThickness = nil,  -- Required: set by orchestrator
+                    -- Derived values (from GeometryContext, with fallbacks)
+                    gap = nil,            -- 2 * wallThickness (shell-to-shell distance)
+                    cutterDepth = nil,    -- wallThickness * 8 (CSG cutter depth)
                 },
                 container = nil,
                 doorways = {},
@@ -79,14 +82,16 @@ local DoorCutter = Node.extend(function(parent)
 
     local function findAdjacencyAxis(self, roomA, roomB)
         local state = getState(self)
-        local wallThickness = state.config.wallThickness
+        local config = state.config
+        -- Use derived gap value (2 * wallThickness) from GeometryContext
+        local gap = config.gap or (2 * config.wallThickness)
 
         local posA, dimsA = roomA.position, roomA.dims
         local posB, dimsB = roomB.position, roomB.dims
 
         for axis = 1, 3 do
             local distCenters = math.abs(posB[axis] - posA[axis])
-            local shellTouchDist = dimsA[axis] / 2 + dimsB[axis] / 2 + 2 * wallThickness
+            local shellTouchDist = dimsA[axis] / 2 + dimsB[axis] / 2 + gap
 
             if math.abs(distCenters - shellTouchDist) < 1 then
                 local direction = posB[axis] > posA[axis] and 1 or -1
@@ -228,7 +233,9 @@ local DoorCutter = Node.extend(function(parent)
 
     local function cutDoorWithCSG(self, wallPart, doorway, sharedWall)
         local state = getState(self)
-        local wallThickness = state.config.wallThickness
+        local config = state.config
+        -- Use derived cutterDepth from GeometryContext (wallThickness * 8)
+        local cutterDepth = config.cutterDepth or (config.wallThickness * 8)
 
         if not wallPart then return false end
 
@@ -245,7 +252,7 @@ local DoorCutter = Node.extend(function(parent)
         if sharedWall.axis == 1 then
             -- X-axis adjacency (East/West walls) - door faces X
             cutterSize = Vector3.new(
-                wallThickness * 4,  -- Punch through wall thickness
+                cutterDepth,  -- Punch through wall thickness
                 doorway.height,
                 doorway.width
             )
@@ -253,7 +260,7 @@ local DoorCutter = Node.extend(function(parent)
             -- Y-axis adjacency (Ceiling/Floor) - door faces Y
             cutterSize = Vector3.new(
                 doorway.width,
-                wallThickness * 4,
+                cutterDepth,
                 doorway.height
             )
         else
@@ -261,7 +268,7 @@ local DoorCutter = Node.extend(function(parent)
             cutterSize = Vector3.new(
                 doorway.width,
                 doorway.height,
-                wallThickness * 4
+                cutterDepth
             )
         end
 
@@ -356,6 +363,9 @@ local DoorCutter = Node.extend(function(parent)
 
                 if data.doorSize then config.doorSize = data.doorSize end
                 if data.wallThickness then config.wallThickness = data.wallThickness end
+                -- Derived values from GeometryContext
+                if data.gap then config.gap = data.gap end
+                if data.cutterDepth then config.cutterDepth = data.cutterDepth end
 
                 if data.container then
                     state.container = data.container

@@ -38,6 +38,22 @@
 local LayoutSchema = require(script.Parent.LayoutSchema)
 local LayoutContext = require(script.Parent.LayoutContext)
 
+-- Geometry system for derived dimension values
+local Geometry = nil
+local function getGeometry()
+    if not Geometry then
+        local success, result = pcall(function()
+            return require(script.Parent.Parent.Parent.Factory.Geometry)
+        end)
+        if success then
+            Geometry = result
+        else
+            warn("[LayoutBuilder] Could not load Geometry:", result)
+        end
+    end
+    return Geometry
+end
+
 local LayoutBuilder = {}
 
 --------------------------------------------------------------------------------
@@ -80,16 +96,17 @@ local function shuffle(arr)
     end
 end
 
-local function shellsOverlap(posA, dimsA, posB, dimsB, wallThickness)
+local function shellsOverlap(posA, dimsA, posB, dimsB, gap)
+    -- gap = 2 * wallThickness (derived from GeometryContext)
     local shellA = {
-        dimsA[1] + 2 * wallThickness,
-        dimsA[2] + 2 * wallThickness,
-        dimsA[3] + 2 * wallThickness,
+        dimsA[1] + gap,
+        dimsA[2] + gap,
+        dimsA[3] + gap,
     }
     local shellB = {
-        dimsB[1] + 2 * wallThickness,
-        dimsB[2] + 2 * wallThickness,
-        dimsB[3] + 2 * wallThickness,
+        dimsB[1] + gap,
+        dimsB[2] + gap,
+        dimsB[3] + gap,
     }
 
     for axis = 1, 3 do
@@ -107,10 +124,10 @@ local function shellsOverlap(posA, dimsA, posB, dimsB, wallThickness)
     return true
 end
 
-local function overlapsAny(pos, dims, rooms, excludeId, wallThickness)
+local function overlapsAny(pos, dims, rooms, excludeId, gap)
     for id, room in pairs(rooms) do
         if id ~= excludeId then
-            if shellsOverlap(pos, dims, room.position, room.dims, wallThickness) then
+            if shellsOverlap(pos, dims, room.position, room.dims, gap) then
                 return true, id
             end
         end
@@ -118,10 +135,11 @@ local function overlapsAny(pos, dims, rooms, excludeId, wallThickness)
     return false
 end
 
-local function calculateAttachmentPosition(parentPos, parentDims, newDims, face, wallThickness)
+local function calculateAttachmentPosition(parentPos, parentDims, newDims, face, gap)
+    -- gap = 2 * wallThickness (derived from GeometryContext)
     local newPos = { parentPos[1], parentPos[2], parentPos[3] }
     newPos[face.axis] = parentPos[face.axis] +
-        face.dir * (parentDims[face.axis]/2 + newDims[face.axis]/2 + 2 * wallThickness)
+        face.dir * (parentDims[face.axis]/2 + newDims[face.axis]/2 + gap)
     return newPos
 end
 
@@ -181,7 +199,7 @@ end
 
 local function tryAttachRoom(rooms, parentRoom, newDims, face, config)
     local newPos = calculateAttachmentPosition(
-        parentRoom.position, parentRoom.dims, newDims, face, config.wallThickness
+        parentRoom.position, parentRoom.dims, newDims, face, config.gap
     )
 
     if not hasSufficientDoorOverlap(
@@ -192,7 +210,7 @@ local function tryAttachRoom(rooms, parentRoom, newDims, face, config)
         return nil
     end
 
-    local overlaps = overlapsAny(newPos, newDims, rooms, parentRoom.id, config.wallThickness)
+    local overlaps = overlapsAny(newPos, newDims, rooms, parentRoom.id, config.gap)
     if overlaps then
         return nil
     end
@@ -797,6 +815,29 @@ function LayoutBuilder.generate(config)
         padCount = config.padCount,  -- Direct pad count (overrides roomsPerPad if set)
         roomsPerPad = config.roomsPerPad or 25,
     }
+
+    -- Create geometry context for derived dimension values
+    local geo = getGeometry()
+    if geo then
+        local geoCtx = geo.createContext({
+            class = "layout",
+            classes = {
+                layout = {
+                    wallThickness = cfg.wallThickness,
+                    baseUnit = cfg.baseUnit,
+                    doorSize = cfg.doorSize,
+                },
+            },
+        })
+        -- Add derived values to config for use by planning functions
+        cfg.gap = geoCtx:getDerived("gap")              -- 2 * wallThickness
+        cfg.cutterDepth = geoCtx:getDerived("cutterDepth")  -- wallThickness * 8
+        cfg.geoCtx = geoCtx  -- Store context for advanced queries
+    else
+        -- Fallback: compute derived values manually
+        cfg.gap = 2 * cfg.wallThickness
+        cfg.cutterDepth = cfg.wallThickness * 8
+    end
 
     -- Create central context for all planners to read/write
     local ctx = LayoutContext.new(cfg)

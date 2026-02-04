@@ -315,6 +315,68 @@ local RegionManager = Node.extend(function(parent)
         return normalized
     end
 
+    ----------------------------------------------------------------------------
+    -- LAYOUT GENERATION (must be defined before loadPlayerData)
+    ----------------------------------------------------------------------------
+
+    local function generateSeed()
+        return os.time() + math.random(1, 100000)
+    end
+
+    -- Color palette for different regions (distinct, varied tones)
+    local REGION_COLORS = {
+        { 140, 100, 80 },   -- Warm brown
+        { 80, 100, 140 },   -- Steel blue
+        { 160, 90, 90 },    -- Brick red
+        { 80, 130, 100 },   -- Forest green
+        { 130, 100, 150 },  -- Violet
+        { 170, 140, 90 },   -- Gold/tan
+        { 100, 140, 140 },  -- Teal
+        { 150, 120, 100 },  -- Terracotta
+        { 90, 90, 120 },    -- Slate
+        { 140, 130, 100 },  -- Sandstone
+    }
+
+    local function getRegionColor(regionNum)
+        -- Cycle through palette (no randomization)
+        return REGION_COLORS[((regionNum - 1) % #REGION_COLORS) + 1]
+    end
+
+    local function generateLayout(self, seed, regionNum, padCount)
+        local state = getState(self)
+        local config = state.config
+
+        -- Offset each region to avoid geometry overlap during transitions
+        local regionOffset = (regionNum - 1) * 2000
+        local origin = config.origin or { 0, 20, 0 }
+        local offsetOrigin = { origin[1] + regionOffset, origin[2], origin[3] }
+
+        -- Get unique color for this region
+        local regionColor = getRegionColor(regionNum)
+
+        -- Generate layout using Layout.Builder
+        local layout = Layout.generate({
+            seed = seed,
+            regionNum = regionNum,
+            origin = offsetOrigin,
+            baseUnit = config.baseUnit,
+            wallThickness = config.wallThickness,
+            doorSize = config.doorSize,
+            floorThreshold = config.floorThreshold,
+            verticalChance = config.verticalChance,
+            minVerticalRatio = config.minVerticalRatio,
+            mainPathLength = config.mainPathLength,
+            spurCount = config.spurCount,
+            loopCount = config.loopCount,
+            scaleRange = config.scaleRange,
+            material = config.material,
+            color = regionColor,
+            padCount = padCount,  -- Direct pad count instead of roomsPerPad
+        })
+
+        return layout
+    end
+
     --[[
         Saves dungeon data for a player to DataStore.
         Stores: regions (layouts + padLinks), regionCount, activeRegionId,
@@ -486,33 +548,6 @@ local RegionManager = Node.extend(function(parent)
     end
 
     ----------------------------------------------------------------------------
-    -- LAYOUT GENERATION & INSTANTIATION
-    ----------------------------------------------------------------------------
-
-    local function generateSeed()
-        return os.time() + math.random(1, 100000)
-    end
-
-    -- Color palette for different regions (distinct, varied tones)
-    local REGION_COLORS = {
-        { 140, 100, 80 },   -- Warm brown
-        { 80, 100, 140 },   -- Steel blue
-        { 160, 90, 90 },    -- Brick red
-        { 80, 130, 100 },   -- Forest green
-        { 130, 100, 150 },  -- Violet
-        { 170, 140, 90 },   -- Gold/tan
-        { 100, 140, 140 },  -- Teal
-        { 150, 120, 100 },  -- Terracotta
-        { 90, 90, 120 },    -- Slate
-        { 140, 130, 100 },  -- Sandstone
-    }
-
-    local function getRegionColor(regionNum)
-        -- Cycle through palette (no randomization)
-        return REGION_COLORS[((regionNum - 1) % #REGION_COLORS) + 1]
-    end
-
-    ----------------------------------------------------------------------------
     -- MAP TYPE DETERMINATION
     ----------------------------------------------------------------------------
     -- Map types: spur (1 pad), corridor (2 pads), hub (3-5 pads)
@@ -585,41 +620,6 @@ local RegionManager = Node.extend(function(parent)
             local padCount = math.random(hubRange.min, hubRange.max)
             return MAP_TYPES.HUB, padCount
         end
-    end
-
-    local function generateLayout(self, seed, regionNum, padCount)
-        local state = getState(self)
-        local config = state.config
-
-        -- Offset each region to avoid geometry overlap during transitions
-        local regionOffset = (regionNum - 1) * 2000
-        local origin = config.origin or { 0, 20, 0 }
-        local offsetOrigin = { origin[1] + regionOffset, origin[2], origin[3] }
-
-        -- Get unique color for this region
-        local regionColor = getRegionColor(regionNum)
-
-        -- Generate layout using Layout.Builder
-        local layout = Layout.generate({
-            seed = seed,
-            regionNum = regionNum,
-            origin = offsetOrigin,
-            baseUnit = config.baseUnit,
-            wallThickness = config.wallThickness,
-            doorSize = config.doorSize,
-            floorThreshold = config.floorThreshold,
-            verticalChance = config.verticalChance,
-            minVerticalRatio = config.minVerticalRatio,
-            mainPathLength = config.mainPathLength,
-            spurCount = config.spurCount,
-            loopCount = config.loopCount,
-            scaleRange = config.scaleRange,
-            material = config.material,
-            color = regionColor,
-            padCount = padCount,  -- Direct pad count instead of roomsPerPad
-        })
-
-        return layout
     end
 
     local function instantiateLayout(self, regionId, layout)

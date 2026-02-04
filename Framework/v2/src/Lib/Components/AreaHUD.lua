@@ -45,6 +45,7 @@ local AreaHUD = Node.extend(function(parent)
                 screenGui = nil,
                 areaLabel = nil,
                 roomLabel = nil,
+                userLabel = nil,
             }
         end
         return instanceStates[self.id]
@@ -90,8 +91,8 @@ local AreaHUD = Node.extend(function(parent)
         -- Create container frame (top-right corner)
         local container = Instance.new("Frame")
         container.Name = "Container"
-        container.Size = UDim2.new(0, 120, 0, 50)
-        container.Position = UDim2.new(1, -130, 0, 10)
+        container.Size = UDim2.new(0, 140, 0, 70)
+        container.Position = UDim2.new(1, -150, 0, 10)
         container.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
         container.BackgroundTransparency = 0.5
         container.BorderSizePixel = 0
@@ -136,9 +137,23 @@ local AreaHUD = Node.extend(function(parent)
         roomLabel.Text = "Room: --"
         roomLabel.Parent = container
 
+        -- User ID label (row 3)
+        local userLabel = Instance.new("TextLabel")
+        userLabel.Name = "UserLabel"
+        userLabel.Size = UDim2.new(1, 0, 0, 18)
+        userLabel.Position = UDim2.new(0, 0, 0, 40)
+        userLabel.BackgroundTransparency = 1
+        userLabel.Font = Enum.Font.GothamBold
+        userLabel.TextSize = 12
+        userLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
+        userLabel.TextXAlignment = Enum.TextXAlignment.Left
+        userLabel.Text = "ID: " .. tostring(player.UserId)
+        userLabel.Parent = container
+
         state.screenGui = screenGui
         state.areaLabel = areaLabel
         state.roomLabel = roomLabel
+        state.userLabel = userLabel
     end
 
     ----------------------------------------------------------------------------

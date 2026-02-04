@@ -1300,6 +1300,115 @@ local RegionManager = Node.extend(function(parent)
 
         In = {
             --[[
+                Handle start pressed signal from TitleScreen.
+                Starts the dungeon for the player and hides the title screen.
+
+                @param data table:
+                    player: Player - The player who pressed start
+            --]]
+            onStartPressed = function(self, data)
+                if not data or not data.player then
+                    warn("[RegionManager] Invalid startPressed data")
+                    return
+                end
+
+                local state = getState(self)
+                local player = data.player
+
+                local System = self._System
+                if System and System.Debug then
+                    System.Debug.info("RegionManager", "Start pressed by", player.Name)
+                end
+
+                -- Start dungeon for this player
+                local regionId = self:startFirstRegion(player)
+
+                -- Log layout info for debugging
+                local region = state.regions[regionId]
+                if region and region.layout then
+                    local layout = region.layout
+                    local roomCount = 0
+                    for _ in pairs(layout.rooms) do roomCount = roomCount + 1 end
+
+                    if System and System.Debug then
+                        System.Debug.info("RegionManager", string.format(
+                            "Layout: %d rooms, %d doors, %d trusses, %d lights, %d pads",
+                            roomCount,
+                            #layout.doors,
+                            #layout.trusses,
+                            #layout.lights,
+                            #layout.pads
+                        ))
+                    end
+                end
+
+                -- Fire hideTitle signal to client to fade out title screen
+                self.Out:Fire("hideTitle", {
+                    _targetPlayer = player,
+                    player = player,
+                })
+
+                -- Handle character setup (moved from Bootstrap.server.lua)
+                local function onCharacterAdded(character)
+                    -- Wait for character to fully load and settle
+                    task.wait(0.5)
+
+                    local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+                    if not humanoidRootPart then return end
+
+                    local activeRegion = state.regions[state.activeRegionId]
+                    local layout = activeRegion and activeRegion.layout
+
+                    local pos = humanoidRootPart.Position
+
+                    -- Check if player is inside any room
+                    local isInside = false
+                    if layout then
+                        for _, room in pairs(layout.rooms) do
+                            local minX = room.position[1] - room.dims[1] / 2
+                            local maxX = room.position[1] + room.dims[1] / 2
+                            local minY = room.position[2] - room.dims[2] / 2
+                            local maxY = room.position[2] + room.dims[2] / 2
+                            local minZ = room.position[3] - room.dims[3] / 2
+                            local maxZ = room.position[3] + room.dims[3] / 2
+
+                            if pos.X >= minX and pos.X <= maxX and
+                               pos.Y >= minY and pos.Y <= maxY and
+                               pos.Z >= minZ and pos.Z <= maxZ then
+                                isInside = true
+                                break
+                            end
+                        end
+                    end
+
+                    if not isInside and layout then
+                        -- Player spawned outside - teleport to room 1 center
+                        local room1 = layout.rooms[1]
+                        if room1 then
+                            local targetPos = Vector3.new(
+                                room1.position[1],
+                                room1.position[2] - room1.dims[2] / 2 + 3,
+                                room1.position[3]
+                            )
+                            humanoidRootPart.CFrame = CFrame.new(targetPos)
+                        end
+                    end
+
+                    -- Send initial area info to client
+                    self:sendInitialAreaInfo(player, 1)
+                end
+
+                if player.Character then
+                    onCharacterAdded(player.Character)
+                end
+                player.CharacterAdded:Connect(onCharacterAdded)
+
+                if System and System.Debug then
+                    System.Debug.info("RegionManager", "Dungeon ready for", player.Name)
+                end
+            end,
+
+            --[[
                 Handle jump request from JumpPad (routed via IPC wiring).
 
                 @param data table:
@@ -1511,6 +1620,7 @@ local RegionManager = Node.extend(function(parent)
         },
 
         Out = {
+            hideTitle = {},
             transitionStart = {},
             loadingComplete = {},
             transitionEnd = {},

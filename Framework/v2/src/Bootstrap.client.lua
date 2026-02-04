@@ -74,6 +74,9 @@ local IPC = Lib.System.IPC
 --------------------------------------------------------------------------------
 -- Register client-domain nodes and define modes here before IPC.init()
 
+-- Register TitleScreen for initial title display
+IPC.registerNode(Lib.Components.TitleScreen)
+
 -- Register ScreenTransition for screen fade effects during teleportation
 IPC.registerNode(Lib.Components.ScreenTransition)
 
@@ -93,10 +96,11 @@ IPC.registerNode(Lib.Components.RegionManager)
 -- Define same modes as server for cross-domain wiring to work
 
 IPC.defineMode("Dungeon", {
-    nodes = { "JumpPad", "RegionManager", "ScreenTransition", "AreaHUD", "MiniMap" },
+    nodes = { "JumpPad", "RegionManager", "TitleScreen", "ScreenTransition", "AreaHUD", "MiniMap" },
     wiring = {
         JumpPad = { "RegionManager" },
-        RegionManager = { "ScreenTransition", "AreaHUD", "MiniMap" },
+        TitleScreen = { "RegionManager" },
+        RegionManager = { "TitleScreen", "ScreenTransition", "AreaHUD", "MiniMap" },
         ScreenTransition = { "RegionManager" },
         MiniMap = { "RegionManager" },
     },
@@ -105,6 +109,9 @@ IPC.defineMode("Dungeon", {
 --------------------------------------------------------------------------------
 -- INSTANCE CREATION
 --------------------------------------------------------------------------------
+
+-- Create TitleScreen instance (displays before game loads)
+IPC.createInstance("TitleScreen", { id = "TitleScreen_Local" })
 
 -- Create ScreenTransition instance (one per client)
 IPC.createInstance("ScreenTransition", { id = "ScreenTransition_Local" })

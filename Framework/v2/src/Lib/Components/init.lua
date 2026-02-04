@@ -48,6 +48,7 @@ Components.JumpPad = require(script.JumpPad)
 
 -- Screen Transitions
 Components.ScreenTransition = require(script.ScreenTransition)
+Components.TitleScreen = require(script.TitleScreen)
 
 -- HUD
 Components.AreaHUD = require(script.AreaHUD)

@@ -35,6 +35,17 @@
 local LayoutInstantiator = {}
 
 --------------------------------------------------------------------------------
+-- CONSTANTS
+--------------------------------------------------------------------------------
+
+local VOXEL_SIZE = 4  -- Roblox terrain minimum voxel size
+
+-- Ice cave theme colors
+local WALL_COLOR = Color3.fromRGB(180, 210, 230)  -- Light icy blue for walls
+local FLOOR_COLOR = Color3.fromRGB(240, 250, 255)  -- Bright white for snow
+
+
+--------------------------------------------------------------------------------
 -- MATERIAL/COLOR CONVERSION
 --------------------------------------------------------------------------------
 
@@ -133,10 +144,62 @@ local function buildShell(room, config, container)
 end
 
 --------------------------------------------------------------------------------
+-- TERRAIN SHELL PAINTING
+--------------------------------------------------------------------------------
+
+--[[
+    Fill solid terrain block for a room's shell (no carving yet).
+--]]
+local function fillTerrainShell(roomPos, roomDims, gap, material)
+    local terrain = workspace.Terrain
+    local pos = Vector3.new(roomPos[1], roomPos[2], roomPos[3])
+    local dims = Vector3.new(roomDims[1], roomDims[2], roomDims[3])
+
+    -- Outer shell size: interior + gap on each side + 1 voxel thickness
+    local shellSize = dims + Vector3.new(
+        2 * (gap + VOXEL_SIZE),
+        2 * (gap + VOXEL_SIZE),
+        2 * (gap + VOXEL_SIZE)
+    )
+
+    -- Fill solid terrain block
+    terrain:FillBlock(CFrame.new(pos), shellSize, material)
+end
+
+--[[
+    Carve out room interior with Air.
+--]]
+local function carveTerrainInterior(roomPos, roomDims, gap)
+    local terrain = workspace.Terrain
+    local pos = Vector3.new(roomPos[1], roomPos[2], roomPos[3])
+    local dims = Vector3.new(roomDims[1], roomDims[2], roomDims[3])
+
+    -- Carve out interior + gap with Air
+    local interiorSize = dims + Vector3.new(2 * gap, 2 * gap, 2 * gap)
+    terrain:FillBlock(CFrame.new(pos), interiorSize, Enum.Material.Air)
+end
+
+--[[
+    Style walls to match terrain (ice cave theme).
+    Floors get snow texture, walls/ceiling get ice texture.
+--]]
+local function styleWallsAsTerrain(walls)
+    for wallName, wall in pairs(walls) do
+        if wallName == "Floor" then
+            wall.Material = Enum.Material.Snow
+            wall.Color = FLOOR_COLOR
+        else
+            wall.Material = Enum.Material.Ice
+            wall.Color = WALL_COLOR
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
 -- DOOR CUTTING
 --------------------------------------------------------------------------------
 
-local function cutDoor(door, roomContainers, config)
+local function cutDoor(door, roomContainers, config, useTerrainShell)
     local wt = config.wallThickness
 
     -- Create cutter part
@@ -208,6 +271,13 @@ local function cutDoor(door, roomContainers, config)
         end
     end
 
+    -- Clear terrain in doorway area (terrain isn't affected by CSG)
+    if useTerrainShell then
+        -- Expand cutter size to clear terrain (account for voxel overlap)
+        local terrainClearSize = cutter.Size + Vector3.new(VOXEL_SIZE, VOXEL_SIZE, VOXEL_SIZE)
+        workspace.Terrain:FillBlock(cutter.CFrame, terrainClearSize, Enum.Material.Air)
+    end
+
     cutter:Destroy()
 end
 
@@ -235,10 +305,47 @@ local function createLight(light, roomContainers)
         roomContainer = workspace
     end
 
+    local fixtureSize = Vector3.new(light.size[1], light.size[2], light.size[3])
+    local fixturePos = Vector3.new(light.position[1], light.position[2], light.position[3])
+
+    -- Wall direction mapping (wall the light is mounted on)
+    local wallDirs = {
+        N = Vector3.new(0, 0, 1),   -- +Z
+        S = Vector3.new(0, 0, -1),  -- -Z
+        E = Vector3.new(1, 0, 0),   -- +X
+        W = Vector3.new(-1, 0, 0),  -- -X
+    }
+    local wallDir = wallDirs[light.wall] or Vector3.new(0, 0, 1)
+
+    -- Create backing/spacer between light and wall
+    local spacerThickness = 1.5
+    local spacerSize
+    local spacerOffset
+    if math.abs(wallDir.X) > 0 then
+        -- E/W wall: spacer is thin in X, matches light Y and Z
+        spacerSize = Vector3.new(spacerThickness, fixtureSize.Y, fixtureSize.Z)
+        spacerOffset = wallDir * (fixtureSize.X/2 + spacerThickness/2)
+    else
+        -- N/S wall: spacer is thin in Z, matches light X and Y
+        spacerSize = Vector3.new(fixtureSize.X, fixtureSize.Y, spacerThickness)
+        spacerOffset = wallDir * (fixtureSize.Z/2 + spacerThickness/2)
+    end
+
+    local spacer = Instance.new("Part")
+    spacer.Name = "Light_" .. light.id .. "_Spacer"
+    spacer.Size = spacerSize
+    spacer.Position = fixturePos + spacerOffset  -- Behind the light
+    spacer.Anchored = true
+    spacer.CanCollide = false
+    spacer.Material = Enum.Material.Ice
+    spacer.Color = WALL_COLOR
+    spacer.Parent = roomContainer
+
+    -- Create light fixture
     local fixture = Instance.new("Part")
     fixture.Name = "Light_" .. light.id
-    fixture.Size = Vector3.new(light.size[1], light.size[2], light.size[3])
-    fixture.Position = Vector3.new(light.position[1], light.position[2], light.position[3])
+    fixture.Size = fixtureSize
+    fixture.Position = fixturePos
     fixture.Anchored = true
     fixture.CanCollide = false
     fixture.Material = Enum.Material.Neon
@@ -266,10 +373,26 @@ local function createPad(pad, roomContainers)
         roomContainer = workspace
     end
 
+    local padSize = Vector3.new(6, 1, 6)
+    local padPos = Vector3.new(pad.position[1], pad.position[2], pad.position[3])
+
+    -- Create backing/base (same XZ, 1.5 studs thick, below pad)
+    local baseThickness = 1.5
+    local base = Instance.new("Part")
+    base.Name = pad.id .. "_Base"
+    base.Size = Vector3.new(padSize.X, baseThickness, padSize.Z)
+    base.Position = padPos - Vector3.new(0, (padSize.Y + baseThickness) / 2, 0)
+    base.Anchored = true
+    base.CanCollide = true
+    base.Material = Enum.Material.Snow
+    base.Color = FLOOR_COLOR
+    base.Parent = roomContainer
+
+    -- Create portal pad
     local part = Instance.new("Part")
     part.Name = pad.id
-    part.Size = Vector3.new(6, 1, 6)
-    part.Position = Vector3.new(pad.position[1], pad.position[2], pad.position[3])
+    part.Size = padSize
+    part.Position = padPos
     part.Anchored = true
     part.CanCollide = true
     part.Material = Enum.Material.Neon
@@ -335,14 +458,35 @@ function LayoutInstantiator.instantiate(layout, options)
         color = { 140, 110, 90 },
     }
 
+    -- Terrain shell configuration (ice cave theme)
+    local useTerrainShell = config.useTerrainShell ~= false  -- Default true
+    local wallMaterial = Enum.Material.Glacier
+    local floorMaterial = Enum.Material.Snow
+
     local roomContainers = {}
     local pads = {}
 
-    -- Build all room shells and zone parts
+    -- Clear existing terrain and set material colors (ice cave theme)
+    if useTerrainShell then
+        workspace.Terrain:Clear()
+        workspace.Terrain:SetMaterialColor(Enum.Material.Glacier, WALL_COLOR)
+        workspace.Terrain:SetMaterialColor(Enum.Material.Snow, FLOOR_COLOR)
+    end
+
+    -- PASS 1: Build all room shells, hide walls, fill terrain
     local roomZones = {}
+    local allWalls = {}  -- Store walls for later reference
     for id, room in pairs(layout.rooms) do
         local roomContainer, walls = buildShell(room, config, container)
         roomContainers[id] = roomContainer
+        allWalls[id] = walls
+
+        -- Style walls to match terrain
+        if useTerrainShell then
+            styleWallsAsTerrain(walls)
+            -- Fill terrain shell (solid block, no carving yet)
+            fillTerrainShell(room.position, room.dims, 0, wallMaterial)
+        end
 
         -- Create invisible zone part for player detection
         local zonePart = Instance.new("Part")
@@ -359,9 +503,31 @@ function LayoutInstantiator.instantiate(layout, options)
         roomZones[id] = zonePart
     end
 
+    -- PASS 2: Carve all room interiors (after all shells are filled)
+    if useTerrainShell then
+        for id, room in pairs(layout.rooms) do
+            carveTerrainInterior(room.position, room.dims, 0)
+        end
+    end
+
+    -- PASS 3: Paint snow floors (replace glacier with snow on floor surfaces)
+    if useTerrainShell then
+        local terrain = workspace.Terrain
+        for id, room in pairs(layout.rooms) do
+            local pos = Vector3.new(room.position[1], room.position[2], room.position[3])
+            local dims = Vector3.new(room.dims[1], room.dims[2], room.dims[3])
+
+            -- Floor is at bottom of room, paint snow on the exterior floor surface
+            local floorY = pos.Y - dims.Y / 2 - VOXEL_SIZE / 2
+            local floorPos = Vector3.new(pos.X, floorY, pos.Z)
+            local floorSize = Vector3.new(dims.X + VOXEL_SIZE * 2, VOXEL_SIZE, dims.Z + VOXEL_SIZE * 2)
+            terrain:FillBlock(CFrame.new(floorPos), floorSize, floorMaterial)
+        end
+    end
+
     -- Cut all doors
     for _, door in ipairs(layout.doors) do
-        cutDoor(door, roomContainers, config)
+        cutDoor(door, roomContainers, config, useTerrainShell)
     end
 
     -- Create all trusses
@@ -369,12 +535,18 @@ function LayoutInstantiator.instantiate(layout, options)
         createTruss(truss, container)
     end
 
-    -- Create all lights
+    -- Create all lights and carve terrain around them
     for _, light in ipairs(layout.lights) do
-        createLight(light, roomContainers)
+        local fixture = createLight(light, roomContainers)
+        if useTerrainShell and fixture then
+            -- Carve terrain around light fixture with small margin
+            local margin = 2
+            local carveSize = fixture.Size + Vector3.new(margin * 2, margin * 2, margin * 2)
+            workspace.Terrain:FillBlock(fixture.CFrame, carveSize, Enum.Material.Air)
+        end
     end
 
-    -- Create all pads
+    -- Create all pads and carve terrain around them
     for _, pad in ipairs(layout.pads) do
         local padPart = createPad(pad, roomContainers)
         pads[pad.id] = {
@@ -383,6 +555,12 @@ function LayoutInstantiator.instantiate(layout, options)
             roomId = pad.roomId,
             position = pad.position,
         }
+        if useTerrainShell and padPart then
+            -- Carve terrain around pad with small margin
+            local margin = 2
+            local carveSize = padPart.Size + Vector3.new(margin * 2, margin * 2, margin * 2)
+            workspace.Terrain:FillBlock(padPart.CFrame, carveSize, Enum.Material.Air)
+        end
     end
 
     -- Create spawn at room 1 center

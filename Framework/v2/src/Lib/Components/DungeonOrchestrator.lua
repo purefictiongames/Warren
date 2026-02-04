@@ -93,6 +93,7 @@ local DungeonOrchestrator = Node.extend(function(parent)
                 shellBuilder = nil,
                 doorCutter = nil,
                 trussBuilder = nil,
+                terrainBuilder = nil,
             }
         end
         return instanceStates[self.id]
@@ -404,6 +405,21 @@ local DungeonOrchestrator = Node.extend(function(parent)
         local roomData = state.builtRooms[data.roomId]
         if not roomData then return end
 
+        -- Send to TerrainBuilder to paint terrain shell on walls
+        state.terrainBuilder.In.onBuildTerrain(state.terrainBuilder, {
+            roomId = data.roomId,
+            walls = data.walls,
+            position = roomData.position,
+            dims = roomData.dims,
+        })
+    end
+
+    local function onTerrainBuilderComplete(self, data)
+        local state = getState(self)
+
+        local roomData = state.builtRooms[data.roomId]
+        if not roomData then return end
+
         -- Emit roomBuilt signal
         self.Out:Fire("roomBuilt", {
             roomId = data.roomId,
@@ -607,6 +623,26 @@ local DungeonOrchestrator = Node.extend(function(parent)
             end
             tbOriginalFire(outSelf, signal, data)
         end
+
+        -- Create TerrainBuilder
+        local TerrainBuilder = require(script.Parent.TerrainBuilder)
+        state.terrainBuilder = TerrainBuilder:new({
+            id = self.id .. "_TerrainBuilder",
+        })
+        state.terrainBuilder.Sys.onInit(state.terrainBuilder)
+        state.terrainBuilder.In.onConfigure(state.terrainBuilder, {
+            material = Enum.Material.Rock,
+            container = state.container,
+        })
+
+        -- Wire TerrainBuilder signals
+        local terrOriginalFire = state.terrainBuilder.Out.Fire
+        state.terrainBuilder.Out.Fire = function(outSelf, signal, data)
+            if signal == "terrainComplete" then
+                onTerrainBuilderComplete(self, data)
+            end
+            terrOriginalFire(outSelf, signal, data)
+        end
     end
 
     ----------------------------------------------------------------------------
@@ -639,6 +675,9 @@ local DungeonOrchestrator = Node.extend(function(parent)
                 end
                 if state.trussBuilder then
                     state.trussBuilder.Sys.onStop(state.trussBuilder)
+                end
+                if state.terrainBuilder then
+                    state.terrainBuilder.Sys.onStop(state.terrainBuilder)
                 end
 
                 cleanupState(self)
@@ -769,6 +808,10 @@ local DungeonOrchestrator = Node.extend(function(parent)
 
         getTrussBuilder = function(self)
             return getState(self).trussBuilder
+        end,
+
+        getTerrainBuilder = function(self)
+            return getState(self).terrainBuilder
         end,
 
         getSpawnPoint = function(self)

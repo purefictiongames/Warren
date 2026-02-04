@@ -40,9 +40,9 @@ local LayoutInstantiator = {}
 
 local VOXEL_SIZE = 4  -- Roblox terrain minimum voxel size
 
--- Ice cave theme colors
-local WALL_COLOR = Color3.fromRGB(180, 210, 230)  -- Light icy blue for walls
-local FLOOR_COLOR = Color3.fromRGB(240, 250, 255)  -- Bright white for snow
+-- Lava cave theme colors (stone walls, lava floor)
+local WALL_COLOR = Color3.fromRGB(120, 110, 100)  -- Stone gray
+local FLOOR_COLOR = Color3.fromRGB(255, 255, 240)  -- White-hot lava
 
 
 --------------------------------------------------------------------------------
@@ -180,16 +180,61 @@ local function carveTerrainInterior(roomPos, roomDims, gap)
 end
 
 --[[
-    Style walls to match terrain (ice cave theme).
-    Floors get snow texture, walls/ceiling get ice texture.
+    Paint lava veins through the terrain shell using noise.
+    Iterates through shell voxels and replaces some with CrackedLava.
+--]]
+local function paintLavaVeins(roomPos, roomDims, veinMaterial, noiseScale, threshold)
+    local terrain = workspace.Terrain
+    local pos = Vector3.new(roomPos[1], roomPos[2], roomPos[3])
+    local dims = Vector3.new(roomDims[1], roomDims[2], roomDims[3])
+
+    noiseScale = noiseScale or 8
+    threshold = threshold or 0.55
+
+    -- Shell bounds (outer edge of terrain)
+    local shellMin = pos - dims/2 - Vector3.new(VOXEL_SIZE, VOXEL_SIZE, VOXEL_SIZE)
+    local shellMax = pos + dims/2 + Vector3.new(VOXEL_SIZE, VOXEL_SIZE, VOXEL_SIZE)
+
+    -- Interior bounds (don't paint inside the room)
+    local interiorMin = pos - dims/2
+    local interiorMax = pos + dims/2
+
+    -- Iterate through shell region voxel by voxel
+    for x = shellMin.X, shellMax.X, VOXEL_SIZE do
+        for y = shellMin.Y, shellMax.Y, VOXEL_SIZE do
+            for z = shellMin.Z, shellMax.Z, VOXEL_SIZE do
+                -- Skip if inside the interior (not in shell)
+                local inInterior = x > interiorMin.X and x < interiorMax.X
+                    and y > interiorMin.Y and y < interiorMax.Y
+                    and z > interiorMin.Z and z < interiorMax.Z
+
+                if not inInterior then
+                    -- Use noise to determine if this voxel gets lava
+                    local n = math.noise(x / noiseScale, y / noiseScale, z / noiseScale)
+
+                    if n > threshold then
+                        terrain:FillBlock(
+                            CFrame.new(x, y, z),
+                            Vector3.new(VOXEL_SIZE, VOXEL_SIZE, VOXEL_SIZE),
+                            veinMaterial
+                        )
+                    end
+                end
+            end
+        end
+    end
+end
+
+--[[
+    Style walls to match terrain (lava cave theme).
 --]]
 local function styleWallsAsTerrain(walls)
     for wallName, wall in pairs(walls) do
         if wallName == "Floor" then
-            wall.Material = Enum.Material.Snow
+            wall.Material = Enum.Material.CrackedLava
             wall.Color = FLOOR_COLOR
         else
-            wall.Material = Enum.Material.Ice
+            wall.Material = Enum.Material.Granite
             wall.Color = WALL_COLOR
         end
     end
@@ -299,7 +344,7 @@ end
 -- LIGHT CREATION
 --------------------------------------------------------------------------------
 
-local function createLight(light, roomContainers)
+local function createLight(light, roomContainers, rooms)
     local roomContainer = roomContainers[light.roomId]
     if not roomContainer then
         roomContainer = workspace
@@ -337,7 +382,7 @@ local function createLight(light, roomContainers)
     spacer.Position = fixturePos + spacerOffset  -- Behind the light
     spacer.Anchored = true
     spacer.CanCollide = false
-    spacer.Material = Enum.Material.Ice
+    spacer.Material = Enum.Material.Rock
     spacer.Color = WALL_COLOR
     spacer.Parent = roomContainer
 
@@ -349,14 +394,14 @@ local function createLight(light, roomContainers)
     fixture.Anchored = true
     fixture.CanCollide = false
     fixture.Material = Enum.Material.Neon
-    fixture.Color = Color3.fromRGB(255, 250, 240)
+    fixture.Color = Color3.fromRGB(255, 120, 40)  -- Orange-red lava glow
     fixture.Parent = roomContainer
 
     local pointLight = Instance.new("PointLight")
     pointLight.Name = "PointLight"
-    pointLight.Brightness = 0.75
+    pointLight.Brightness = 0.7  -- Warm glow
     pointLight.Range = 60
-    pointLight.Color = Color3.fromRGB(255, 245, 230)
+    pointLight.Color = Color3.fromRGB(255, 50, 20)  -- Deep red lava glow
     pointLight.Shadows = false
     pointLight.Parent = fixture
 
@@ -384,7 +429,7 @@ local function createPad(pad, roomContainers)
     base.Position = padPos - Vector3.new(0, (padSize.Y + baseThickness) / 2, 0)
     base.Anchored = true
     base.CanCollide = true
-    base.Material = Enum.Material.Snow
+    base.Material = Enum.Material.Neon
     base.Color = FLOOR_COLOR
     base.Parent = roomContainer
 
@@ -458,19 +503,19 @@ function LayoutInstantiator.instantiate(layout, options)
         color = { 140, 110, 90 },
     }
 
-    -- Terrain shell configuration (ice cave theme)
+    -- Terrain shell configuration (lava cave theme)
     local useTerrainShell = config.useTerrainShell ~= false  -- Default true
-    local wallMaterial = Enum.Material.Glacier
-    local floorMaterial = Enum.Material.Snow
+    local wallMaterial = Enum.Material.Rock
+    local floorMaterial = Enum.Material.CrackedLava
 
     local roomContainers = {}
     local pads = {}
 
-    -- Clear existing terrain and set material colors (ice cave theme)
+    -- Clear existing terrain and set material colors (lava cave theme)
     if useTerrainShell then
         workspace.Terrain:Clear()
-        workspace.Terrain:SetMaterialColor(Enum.Material.Glacier, WALL_COLOR)
-        workspace.Terrain:SetMaterialColor(Enum.Material.Snow, FLOOR_COLOR)
+        workspace.Terrain:SetMaterialColor(Enum.Material.Rock, WALL_COLOR)
+        workspace.Terrain:SetMaterialColor(Enum.Material.CrackedLava, FLOOR_COLOR)
     end
 
     -- PASS 1: Build all room shells, hide walls, fill terrain
@@ -510,18 +555,54 @@ function LayoutInstantiator.instantiate(layout, options)
         end
     end
 
-    -- PASS 3: Paint snow floors (replace glacier with snow on floor surfaces)
+    -- PASS 3: Paint lava veins through granite walls (doubled - lower threshold)
+    if useTerrainShell then
+        for id, room in pairs(layout.rooms) do
+            paintLavaVeins(room.position, room.dims, floorMaterial, 8, 0.35)
+        end
+    end
+
+    -- PASS 4: Paint floor material (CrackedLava base)
     if useTerrainShell then
         local terrain = workspace.Terrain
         for id, room in pairs(layout.rooms) do
             local pos = Vector3.new(room.position[1], room.position[2], room.position[3])
             local dims = Vector3.new(room.dims[1], room.dims[2], room.dims[3])
 
-            -- Floor is at bottom of room, paint snow on the exterior floor surface
+            -- Floor is at bottom of room, paint floor material on the exterior floor surface
             local floorY = pos.Y - dims.Y / 2 - VOXEL_SIZE / 2
             local floorPos = Vector3.new(pos.X, floorY, pos.Z)
             local floorSize = Vector3.new(dims.X + VOXEL_SIZE * 2, VOXEL_SIZE, dims.Z + VOXEL_SIZE * 2)
             terrain:FillBlock(CFrame.new(floorPos), floorSize, floorMaterial)
+        end
+    end
+
+    -- PASS 5: Mix granite patches into lava floors
+    if useTerrainShell then
+        local terrain = workspace.Terrain
+        for id, room in pairs(layout.rooms) do
+            local pos = Vector3.new(room.position[1], room.position[2], room.position[3])
+            local dims = Vector3.new(room.dims[1], room.dims[2], room.dims[3])
+
+            local floorY = pos.Y - dims.Y / 2 - VOXEL_SIZE / 2
+            local minX = pos.X - dims.X / 2 - VOXEL_SIZE
+            local maxX = pos.X + dims.X / 2 + VOXEL_SIZE
+            local minZ = pos.Z - dims.Z / 2 - VOXEL_SIZE
+            local maxZ = pos.Z + dims.Z / 2 + VOXEL_SIZE
+
+            -- Paint granite patches on floor using noise
+            for x = minX, maxX, VOXEL_SIZE do
+                for z = minZ, maxZ, VOXEL_SIZE do
+                    local n = math.noise(x / 12, floorY / 12, z / 12)
+                    if n > 0.4 then  -- ~30% granite patches
+                        terrain:FillBlock(
+                            CFrame.new(x, floorY, z),
+                            Vector3.new(VOXEL_SIZE, VOXEL_SIZE, VOXEL_SIZE),
+                            wallMaterial
+                        )
+                    end
+                end
+            end
         end
     end
 
@@ -537,7 +618,7 @@ function LayoutInstantiator.instantiate(layout, options)
 
     -- Create all lights and carve terrain around them
     for _, light in ipairs(layout.lights) do
-        local fixture = createLight(light, roomContainers)
+        local fixture = createLight(light, roomContainers, layout.rooms)
         if useTerrainShell and fixture then
             -- Carve terrain around light fixture with small margin
             local margin = 2

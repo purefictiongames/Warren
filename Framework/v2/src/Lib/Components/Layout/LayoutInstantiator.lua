@@ -40,9 +40,106 @@ local LayoutInstantiator = {}
 
 local VOXEL_SIZE = 4  -- Roblox terrain minimum voxel size
 
--- Lava cave theme colors (stone walls, lava floor)
-local WALL_COLOR = Color3.fromRGB(120, 110, 100)  -- Stone gray
-local FLOOR_COLOR = Color3.fromRGB(255, 255, 240)  -- White-hot lava
+--------------------------------------------------------------------------------
+-- CAVE PALETTES (10 themed color sets, cycled per region)
+--------------------------------------------------------------------------------
+-- Each palette defines coordinated high-contrast colors:
+--   wallColor:    Terrain Rock + Cobblestone parts (stone/granite tone)
+--   floorColor:   Terrain CrackedLava tint (lava glow color)
+--   lightColor:   PointLight color (ambient glow)
+--   fixtureColor: Neon light fixture color
+
+local CAVE_PALETTES = {
+    -- 1. Classic Lava: Gray stone, white-hot lava, red-orange glow
+    {
+        name = "Classic Lava",
+        wallColor = Color3.fromRGB(120, 110, 100),
+        floorColor = Color3.fromRGB(255, 255, 240),
+        lightColor = Color3.fromRGB(255, 50, 20),
+        fixtureColor = Color3.fromRGB(255, 120, 40),
+    },
+    -- 2. Blue Inferno: Blue-gray stone, cyan-white flame, blue glow
+    {
+        name = "Blue Inferno",
+        wallColor = Color3.fromRGB(90, 100, 120),
+        floorColor = Color3.fromRGB(200, 240, 255),
+        lightColor = Color3.fromRGB(30, 120, 255),
+        fixtureColor = Color3.fromRGB(100, 180, 255),
+    },
+    -- 3. Toxic Depths: Green-gray stone, bright green, green glow
+    {
+        name = "Toxic Depths",
+        wallColor = Color3.fromRGB(90, 110, 90),
+        floorColor = Color3.fromRGB(180, 255, 120),
+        lightColor = Color3.fromRGB(50, 255, 50),
+        fixtureColor = Color3.fromRGB(120, 255, 80),
+    },
+    -- 4. Void Abyss: Purple-gray stone, magenta glow, purple light
+    {
+        name = "Void Abyss",
+        wallColor = Color3.fromRGB(100, 90, 115),
+        floorColor = Color3.fromRGB(255, 150, 255),
+        lightColor = Color3.fromRGB(180, 50, 255),
+        fixtureColor = Color3.fromRGB(220, 100, 255),
+    },
+    -- 5. Golden Forge: Warm brown stone, golden-yellow lava, gold glow
+    {
+        name = "Golden Forge",
+        wallColor = Color3.fromRGB(130, 110, 85),
+        floorColor = Color3.fromRGB(255, 220, 100),
+        lightColor = Color3.fromRGB(255, 180, 50),
+        fixtureColor = Color3.fromRGB(255, 200, 80),
+    },
+    -- 6. Frozen Fire: Ice blue stone, white-cyan flame, cyan glow
+    {
+        name = "Frozen Fire",
+        wallColor = Color3.fromRGB(100, 115, 130),
+        floorColor = Color3.fromRGB(220, 255, 255),
+        lightColor = Color3.fromRGB(100, 220, 255),
+        fixtureColor = Color3.fromRGB(150, 240, 255),
+    },
+    -- 7. Blood Sanctum: Dark burgundy stone, crimson lava, deep red glow
+    {
+        name = "Blood Sanctum",
+        wallColor = Color3.fromRGB(100, 70, 75),
+        floorColor = Color3.fromRGB(255, 100, 100),
+        lightColor = Color3.fromRGB(200, 30, 30),
+        fixtureColor = Color3.fromRGB(255, 60, 60),
+    },
+    -- 8. Solar Furnace: Tan stone, bright white-yellow, warm white glow
+    {
+        name = "Solar Furnace",
+        wallColor = Color3.fromRGB(140, 130, 110),
+        floorColor = Color3.fromRGB(255, 255, 200),
+        lightColor = Color3.fromRGB(255, 240, 200),
+        fixtureColor = Color3.fromRGB(255, 250, 220),
+    },
+    -- 9. Nether Realm: Charcoal stone, deep orange, orange-red glow
+    {
+        name = "Nether Realm",
+        wallColor = Color3.fromRGB(80, 75, 70),
+        floorColor = Color3.fromRGB(255, 150, 50),
+        lightColor = Color3.fromRGB(255, 100, 30),
+        fixtureColor = Color3.fromRGB(255, 130, 50),
+    },
+    -- 10. Spectral Cavern: Slate gray stone, pale ghostly blue, cold white
+    {
+        name = "Spectral Cavern",
+        wallColor = Color3.fromRGB(95, 100, 110),
+        floorColor = Color3.fromRGB(200, 220, 255),
+        lightColor = Color3.fromRGB(180, 200, 255),
+        fixtureColor = Color3.fromRGB(200, 220, 255),
+    },
+}
+
+--[[
+    Get the cave palette for a given region number.
+    Cycles through the 10 palettes.
+--]]
+local function getPalette(regionNum)
+    local index = ((regionNum - 1) % #CAVE_PALETTES) + 1
+    return CAVE_PALETTES[index]
+end
 
 
 --------------------------------------------------------------------------------
@@ -227,15 +324,17 @@ end
 
 --[[
     Style walls to match terrain (lava cave theme).
+    @param walls: Table of wall parts
+    @param palette: Color palette from CAVE_PALETTES
 --]]
-local function styleWallsAsTerrain(walls)
+local function styleWallsAsTerrain(walls, palette)
     for wallName, wall in pairs(walls) do
         if wallName == "Floor" then
             wall.Material = Enum.Material.CrackedLava
-            wall.Color = FLOOR_COLOR
+            wall.Color = palette.floorColor
         else
             wall.Material = Enum.Material.Cobblestone
-            wall.Color = WALL_COLOR
+            wall.Color = palette.wallColor
         end
     end
 end
@@ -344,7 +443,7 @@ end
 -- LIGHT CREATION
 --------------------------------------------------------------------------------
 
-local function createLight(light, roomContainers, rooms)
+local function createLight(light, roomContainers, rooms, palette)
     local roomContainer = roomContainers[light.roomId]
     if not roomContainer then
         roomContainer = workspace
@@ -383,7 +482,7 @@ local function createLight(light, roomContainers, rooms)
     spacer.Anchored = true
     spacer.CanCollide = false
     spacer.Material = Enum.Material.Rock
-    spacer.Color = WALL_COLOR
+    spacer.Color = palette.wallColor
     spacer.Parent = roomContainer
 
     -- Create light fixture
@@ -394,14 +493,14 @@ local function createLight(light, roomContainers, rooms)
     fixture.Anchored = true
     fixture.CanCollide = false
     fixture.Material = Enum.Material.Neon
-    fixture.Color = Color3.fromRGB(255, 120, 40)  -- Orange-red lava glow
+    fixture.Color = palette.fixtureColor
     fixture.Parent = roomContainer
 
     local pointLight = Instance.new("PointLight")
     pointLight.Name = "PointLight"
-    pointLight.Brightness = 0.7  -- Warm glow
+    pointLight.Brightness = 0.7
     pointLight.Range = 60
-    pointLight.Color = Color3.fromRGB(255, 50, 20)  -- Deep red lava glow
+    pointLight.Color = palette.lightColor
     pointLight.Shadows = false
     pointLight.Parent = fixture
 
@@ -412,7 +511,7 @@ end
 -- PAD CREATION
 --------------------------------------------------------------------------------
 
-local function createPad(pad, roomContainers)
+local function createPad(pad, roomContainers, palette)
     local roomContainer = roomContainers[pad.roomId]
     if not roomContainer then
         roomContainer = workspace
@@ -430,10 +529,10 @@ local function createPad(pad, roomContainers)
     base.Anchored = true
     base.CanCollide = true
     base.Material = Enum.Material.Neon
-    base.Color = FLOOR_COLOR
+    base.Color = palette.floorColor
     base.Parent = roomContainer
 
-    -- Create portal pad
+    -- Create portal pad (keep purple for visibility/contrast)
     local part = Instance.new("Part")
     part.Name = pad.id
     part.Size = padSize
@@ -508,14 +607,19 @@ function LayoutInstantiator.instantiate(layout, options)
     local wallMaterial = Enum.Material.Rock
     local floorMaterial = Enum.Material.CrackedLava
 
+    -- Get color palette for this region (cycles through 10 themes)
+    local regionNum = layout.regionNum or 1
+    local palette = getPalette(regionNum)
+    print(string.format("[LayoutInstantiator] Region %d using palette: %s", regionNum, palette.name))
+
     local roomContainers = {}
     local pads = {}
 
-    -- Clear existing terrain and set material colors (lava cave theme)
+    -- Clear existing terrain and set material colors from palette
     if useTerrainShell then
         workspace.Terrain:Clear()
-        workspace.Terrain:SetMaterialColor(Enum.Material.Rock, WALL_COLOR)
-        workspace.Terrain:SetMaterialColor(Enum.Material.CrackedLava, FLOOR_COLOR)
+        workspace.Terrain:SetMaterialColor(Enum.Material.Rock, palette.wallColor)
+        workspace.Terrain:SetMaterialColor(Enum.Material.CrackedLava, palette.floorColor)
     end
 
     -- PASS 1: Build all room shells, hide walls, fill terrain
@@ -528,7 +632,7 @@ function LayoutInstantiator.instantiate(layout, options)
 
         -- Style walls to match terrain
         if useTerrainShell then
-            styleWallsAsTerrain(walls)
+            styleWallsAsTerrain(walls, palette)
             -- Fill terrain shell (solid block, no carving yet)
             fillTerrainShell(room.position, room.dims, 0, wallMaterial)
         end
@@ -618,7 +722,7 @@ function LayoutInstantiator.instantiate(layout, options)
 
     -- Create all lights and carve terrain around them
     for _, light in ipairs(layout.lights) do
-        local fixture = createLight(light, roomContainers, layout.rooms)
+        local fixture = createLight(light, roomContainers, layout.rooms, palette)
         if useTerrainShell and fixture then
             -- Carve terrain around light fixture with small margin
             local margin = 2
@@ -629,7 +733,7 @@ function LayoutInstantiator.instantiate(layout, options)
 
     -- Create all pads and carve terrain around them
     for _, pad in ipairs(layout.pads) do
-        local padPart = createPad(pad, roomContainers)
+        local padPart = createPad(pad, roomContainers, palette)
         pads[pad.id] = {
             part = padPart,
             id = pad.id,

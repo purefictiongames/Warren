@@ -234,7 +234,7 @@ local function styleWallsAsTerrain(walls)
             wall.Material = Enum.Material.CrackedLava
             wall.Color = FLOOR_COLOR
         else
-            wall.Material = Enum.Material.Granite
+            wall.Material = Enum.Material.Cobblestone
             wall.Color = WALL_COLOR
         end
     end

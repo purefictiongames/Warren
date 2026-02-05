@@ -242,10 +242,25 @@ local MiniMap = Node.extend(function(parent)
         worldModel.Parent = viewport
 
         -- Stats display (bottom-right corner)
+        local STATS_SCALE = 2
+        local STATS_PADDING = 10
+        local LINE_HEIGHT = 8 * STATS_SCALE + 4  -- 8px char + 4px spacing
+        local NUM_LINES = 6
+
+        -- Calculate width based on longest possible text
+        local maxStatsWidth = math.max(
+            PixelFont.getTextWidth("ROOMS: 999 / 999", STATS_SCALE, 0),
+            PixelFont.getTextWidth("PORTALS: 99 / 99", STATS_SCALE, 0),
+            PixelFont.getTextWidth("COMPLETION: 100%", STATS_SCALE, 0),
+            PixelFont.getTextWidth("PORTAL TO AREA 99", STATS_SCALE, 0)
+        )
+        local statsWidth = maxStatsWidth + STATS_PADDING * 2
+        local statsHeight = NUM_LINES * LINE_HEIGHT + STATS_PADDING * 2
+
         local statsFrame = Instance.new("Frame")
         statsFrame.Name = "StatsFrame"
-        statsFrame.Size = UDim2.new(0, 200, 0, 130)
-        statsFrame.Position = UDim2.new(1, -220, 1, -150)
+        statsFrame.Size = UDim2.new(0, statsWidth, 0, statsHeight)
+        statsFrame.Position = UDim2.new(1, -statsWidth - 20, 1, -statsHeight - 20)
         statsFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
         statsFrame.BackgroundTransparency = 0.5
         statsFrame.BorderSizePixel = 0
@@ -255,18 +270,16 @@ local MiniMap = Node.extend(function(parent)
         statsCorner.CornerRadius = UDim.new(0, 8)
         statsCorner.Parent = statsFrame
 
-        -- Create pixel text labels for stats (5 lines max: rooms, portals, blank, completion, portal info)
-        local STATS_SCALE = 2
-        local LINE_HEIGHT = 8 * STATS_SCALE + 4  -- 8px char + 4px spacing
+        -- Create pixel text labels for stats (6 lines: rooms, portals, blank, completion, blank, portal info)
         state.statsLabels = {}
 
-        for i = 1, 6 do
+        for i = 1, NUM_LINES do
             local lineText = PixelFont.createText(i == 1 and "LOADING..." or "", {
                 scale = STATS_SCALE,
                 color = Color3.fromRGB(255, 255, 255),
             })
             lineText.Name = "StatsLine" .. i
-            lineText.Position = UDim2.new(0, 10, 0, 10 + (i - 1) * LINE_HEIGHT)
+            lineText.Position = UDim2.new(0, STATS_PADDING, 0, STATS_PADDING + (i - 1) * LINE_HEIGHT)
             lineText.Parent = statsFrame
             state.statsLabels[i] = lineText
         end

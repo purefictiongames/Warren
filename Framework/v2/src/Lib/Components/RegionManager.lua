@@ -1409,6 +1409,36 @@ local RegionManager = Node.extend(function(parent)
             end,
 
             --[[
+                Handle clear saved data request from TitleScreen Options menu.
+                Clears all dungeon data for the player from DataStore.
+
+                @param data table:
+                    player: Player - The player requesting data clear
+            --]]
+            onClearSavedData = function(self, data)
+                if not data or not data.player then
+                    warn("[RegionManager] Invalid clearSavedData data")
+                    return
+                end
+
+                local player = data.player
+                local System = self._System
+                if System and System.Debug then
+                    System.Debug.info("RegionManager", "Clearing saved data for", player.Name)
+                end
+
+                -- Clear the data
+                local success = self:clearSaveData(player)
+
+                -- Signal back to client with result
+                self.Out:Fire("savedDataCleared", {
+                    _targetPlayer = player,
+                    player = player,
+                    success = success,
+                })
+            end,
+
+            --[[
                 Handle jump request from JumpPad (routed via IPC wiring).
 
                 @param data table:
@@ -1448,6 +1478,52 @@ local RegionManager = Node.extend(function(parent)
                 end
 
                 local System = self._System
+
+                -- Handle exit-to-title transition
+                if pending.isExitToTitle then
+                    if System and System.Debug then
+                        System.Debug.info("RegionManager", "Fade complete for", player.Name, "- returning to title")
+                    end
+
+                    -- Clear the pending transition
+                    state.pendingTransitions[player] = nil
+
+                    -- Unload all regions
+                    for regionId, region in pairs(state.regions) do
+                        if region.container then
+                            unloadRegion(self, regionId)
+                        end
+                    end
+
+                    -- Reset dungeon state (keep save data)
+                    state.activeRegionId = nil
+
+                    -- Signal client to close exit screen
+                    self.Out:Fire("returnToTitle", {
+                        _targetPlayer = player,
+                        player = player,
+                    })
+
+                    -- Signal client to show title screen
+                    self.Out:Fire("showTitle", {
+                        _targetPlayer = player,
+                        player = player,
+                    })
+
+                    -- Signal client to fade from black (reveals title screen)
+                    self.Out:Fire("transitionEnd", {
+                        _targetPlayer = player,
+                        player = player,
+                    })
+
+                    if System and System.Debug then
+                        System.Debug.info("RegionManager", "Returned to title for", player.Name)
+                    end
+
+                    return
+                end
+
+                -- Normal teleport transition
                 if System and System.Debug then
                     System.Debug.info("RegionManager", "Fade complete for", player.Name, "- loading region")
                 end
@@ -1617,15 +1693,51 @@ local RegionManager = Node.extend(function(parent)
                 })
             end,
 
+            --[[
+                Handle exit to title request from ExitScreen.
+                Initiates fade-to-black transition, then unloads dungeon and shows title screen.
+
+                @param data table:
+                    player: Player - The player who requested exit
+            --]]
+            onExitToTitle = function(self, data)
+                if not data or not data.player then
+                    warn("[RegionManager] Invalid exitToTitle data")
+                    return
+                end
+
+                local state = getState(self)
+                local player = data.player
+
+                local System = self._System
+                if System and System.Debug then
+                    System.Debug.info("RegionManager", "Exit to title requested by", player.Name)
+                end
+
+                -- Store pending exit-to-title transition
+                state.pendingTransitions[player] = {
+                    isExitToTitle = true,
+                }
+
+                -- Signal client to fade to black
+                self.Out:Fire("transitionStart", {
+                    _targetPlayer = player,
+                    player = player,
+                })
+            end,
+
         },
 
         Out = {
             hideTitle = {},
+            showTitle = {},
+            returnToTitle = {},
             transitionStart = {},
             loadingComplete = {},
             transitionEnd = {},
             areaInfo = {},
             mapData = {},
+            savedDataCleared = {},
         },
 
         -- Configuration
@@ -1646,8 +1758,18 @@ local RegionManager = Node.extend(function(parent)
                 baseplate:Destroy()
             end
 
-            -- Try to load existing save data
-            if player and loadPlayerData(self, player) and state.activeRegionId then
+            -- Check if we should skip DataStore load (e.g., user just cleared data)
+            local skipLoad = state.skipDataLoad and state.skipDataLoad[player]
+            if skipLoad then
+                state.skipDataLoad[player] = nil  -- Clear the flag
+                local System = self._System
+                if System and System.Debug then
+                    System.Debug.info("RegionManager", "Skipping DataStore load for", player.Name, "(data was cleared)")
+                end
+            end
+
+            -- Try to load existing save data (unless skipLoad is set)
+            if not skipLoad and player and loadPlayerData(self, player) and state.activeRegionId then
                 -- Data loaded successfully - instantiate the active region
                 local activeRegion = state.regions[state.activeRegionId]
                 if activeRegion and activeRegion.layout then
@@ -1804,6 +1926,7 @@ local RegionManager = Node.extend(function(parent)
             local store = getDataStore()
             if not store then return false end
 
+            local state = getState(self)
             local key = "player_" .. player.UserId
             local success, err = pcall(function()
                 store:RemoveAsync(key)
@@ -1813,6 +1936,34 @@ local RegionManager = Node.extend(function(parent)
                 local System = self._System
                 if System and System.Debug then
                     System.Debug.info("RegionManager", "Cleared save data for", player.Name)
+                end
+
+                -- Also clear in-memory state so next Start creates fresh data
+                -- Clear region data
+                for regionId, region in pairs(state.regions) do
+                    -- Destroy any instantiated models
+                    if region.model then
+                        region.model:Destroy()
+                    end
+                end
+                state.regions = {}
+                state.activeRegionId = nil
+                state.regionCount = 0
+                state.unlinkedPadCount = 0
+
+                -- Clear player-specific state
+                state.visitedRooms[player] = nil
+                state.playerRooms[player] = nil
+                state.pendingTransitions[player] = nil
+
+                -- Set flag to skip DataStore load on next Start (avoids cache issues)
+                if not state.skipDataLoad then
+                    state.skipDataLoad = {}
+                end
+                state.skipDataLoad[player] = true
+
+                if System and System.Debug then
+                    System.Debug.info("RegionManager", "Reset in-memory state for", player.Name)
                 end
             else
                 warn("[RegionManager] Failed to clear data for", player.Name, ":", err)

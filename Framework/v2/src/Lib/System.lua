@@ -1906,6 +1906,18 @@ System.IPC = (function()
             return
         end
 
+        -- On server, inject the authenticated player from RemoteEvent if not in data
+        -- This ensures handlers always get a valid player even if serialization fails
+        if System.isServer and player then
+            if not data.player then
+                data.player = player
+            end
+            -- Also set _targetPlayer for consistency
+            if not data._targetPlayer then
+                data._targetPlayer = player
+            end
+        end
+
         -- Resolve targets from wiring (same as normal routing)
         if not currentMode then
             return
@@ -2785,6 +2797,8 @@ System.InputCapture = (function()
     ---------------------------------------------------------------------------
 
     local UserInputService = game:GetService("UserInputService")
+    local ContextActionService = game:GetService("ContextActionService")
+    local StarterGui = game:GetService("StarterGui")
     local Players = game:GetService("Players")
 
     ---------------------------------------------------------------------------
@@ -2795,6 +2809,8 @@ System.InputCapture = (function()
     local claimIdCounter = 0          -- Unique ID generator
     local connections = {}            -- UserInputService connections
     local savedControlsState = nil    -- Saved player controls state for restoration
+    local savedCoreGuiState = nil     -- Saved CoreGui visibility state
+    local savedPlayerModuleState = nil -- Saved PlayerModule enable state
 
     -- Control mapping state (for claimForNode)
     local mappingLookups = nil        -- Built from Node.Controls
@@ -2862,6 +2878,142 @@ System.InputCapture = (function()
             end
             savedControlsState = nil
         end
+    end
+
+    --[[
+        Hide all CoreGui elements and topbar.
+    --]]
+    local function hideCoreGui()
+        if System.isServer then return end
+
+        -- Save state if not already saved
+        if not savedCoreGuiState then
+            savedCoreGuiState = {
+                coreGuiEnabled = true,  -- Assume it was enabled
+                topbarEnabled = true,   -- Assume it was enabled
+            }
+        end
+
+        pcall(function()
+            StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.All, false)
+        end)
+        pcall(function()
+            StarterGui:SetCore("TopbarEnabled", false)
+        end)
+
+        System.Debug.info("InputCapture", "CoreGui hidden")
+    end
+
+    --[[
+        Restore CoreGui elements and topbar.
+    --]]
+    local function showCoreGui()
+        if System.isServer then return end
+
+        pcall(function()
+            StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.All, true)
+        end)
+        pcall(function()
+            StarterGui:SetCore("TopbarEnabled", true)
+        end)
+
+        savedCoreGuiState = nil
+        System.Debug.info("InputCapture", "CoreGui restored")
+    end
+
+    --[[
+        Sink movement input (Thumbstick1) via ContextActionService.
+    --]]
+    local function sinkMovementInput()
+        if System.isServer then return end
+
+        ContextActionService:BindAction(
+            "InputCapture_SinkMovement",
+            function()
+                return Enum.ContextActionResult.Sink
+            end,
+            false,
+            Enum.KeyCode.Thumbstick1
+        )
+
+        System.Debug.info("InputCapture", "Movement input sunk")
+    end
+
+    --[[
+        Restore movement input.
+    --]]
+    local function unsinkMovementInput()
+        if System.isServer then return end
+
+        ContextActionService:UnbindAction("InputCapture_SinkMovement")
+        System.Debug.info("InputCapture", "Movement input restored")
+    end
+
+    --[[
+        Sink camera input (Thumbstick2) via ContextActionService.
+    --]]
+    local function sinkCameraInput()
+        if System.isServer then return end
+
+        ContextActionService:BindAction(
+            "InputCapture_SinkCamera",
+            function()
+                return Enum.ContextActionResult.Sink
+            end,
+            false,
+            Enum.KeyCode.Thumbstick2
+        )
+
+        System.Debug.info("InputCapture", "Camera input sunk")
+    end
+
+    --[[
+        Restore camera input.
+    --]]
+    local function unsinkCameraInput()
+        if System.isServer then return end
+
+        ContextActionService:UnbindAction("InputCapture_SinkCamera")
+        System.Debug.info("InputCapture", "Camera input restored")
+    end
+
+    --[[
+        Disable PlayerModule controls.
+    --]]
+    local function disablePlayerModule()
+        if System.isServer then return end
+
+        local player = Players.LocalPlayer
+        if not player then return end
+
+        local playerScripts = player:FindFirstChild("PlayerScripts")
+        if not playerScripts then return end
+
+        local playerModule = playerScripts:FindFirstChild("PlayerModule")
+        if not playerModule then return end
+
+        local success, controls = pcall(function()
+            return require(playerModule):GetControls()
+        end)
+
+        if success and controls then
+            savedPlayerModuleState = { controls = controls, wasEnabled = true }
+            controls:Disable()
+            System.Debug.info("InputCapture", "PlayerModule disabled")
+        end
+    end
+
+    --[[
+        Enable PlayerModule controls.
+    --]]
+    local function enablePlayerModule()
+        if System.isServer then return end
+
+        if savedPlayerModuleState and savedPlayerModuleState.controls then
+            savedPlayerModuleState.controls:Enable()
+            System.Debug.info("InputCapture", "PlayerModule enabled")
+        end
+        savedPlayerModuleState = nil
     end
 
     local function setupConnections()
@@ -3030,6 +3182,26 @@ System.InputCapture = (function()
                     enablePlayerControls()
                 end
 
+                -- Restore CoreGui if we hid it
+                if self.hidCoreGui then
+                    showCoreGui()
+                end
+
+                -- Restore movement input if we sunk it
+                if self.sunkMovement then
+                    unsinkMovementInput()
+                end
+
+                -- Restore camera input if we sunk it
+                if self.sunkCamera then
+                    unsinkCameraInput()
+                end
+
+                -- Restore PlayerModule if we disabled it
+                if self.disabledPlayerModule then
+                    enablePlayerModule()
+                end
+
                 -- Call onRelease handler if provided
                 if self.handlers.onRelease then
                     self.handlers.onRelease()
@@ -3072,7 +3244,11 @@ System.InputCapture = (function()
             onInputChanged(input, gameProcessed) - Called on analog input
             onRelease() - Called when this claim is released
         @param options table (optional) - Options:
-            disableCharacter: boolean - Disable player movement while claimed
+            disableCharacter: boolean - Disable player movement (sets WalkSpeed=0)
+            hideCoreGui: boolean - Hide all CoreGui elements and topbar
+            sinkMovement: boolean - Sink Thumbstick1 input (prevents player movement)
+            sinkCamera: boolean - Sink Thumbstick2 input (prevents camera rotation)
+            disablePlayerModule: boolean - Disable PlayerModule controls entirely
         @return table|nil - Claim object with :release() method, or nil on server
     --]]
     function InputCapture.claim(handlers, options)
@@ -3099,12 +3275,34 @@ System.InputCapture = (function()
         -- Create new claim
         claimIdCounter = claimIdCounter + 1
         local claim = createClaimObject(claimIdCounter, handlers)
-        claim.disabledCharacter = options.disableCharacter or false
         currentClaim = claim
 
-        -- Disable player controls if requested
+        -- Store options flags on claim for release
+        claim.disabledCharacter = options.disableCharacter or false
+        claim.hidCoreGui = options.hideCoreGui or false
+        claim.sunkMovement = options.sinkMovement or false
+        claim.sunkCamera = options.sinkCamera or false
+        claim.disabledPlayerModule = options.disablePlayerModule or false
+
+        -- Apply options
         if claim.disabledCharacter then
             disablePlayerControls()
+        end
+
+        if claim.hidCoreGui then
+            hideCoreGui()
+        end
+
+        if claim.sunkMovement then
+            sinkMovementInput()
+        end
+
+        if claim.sunkCamera then
+            sinkCameraInput()
+        end
+
+        if claim.disabledPlayerModule then
+            disablePlayerModule()
         end
 
         -- Call onClaim handler if provided
@@ -3112,7 +3310,7 @@ System.InputCapture = (function()
             handlers.onClaim()
         end
 
-        System.Debug.info("InputCapture", "New claim established:", claim.id, "disableCharacter:", claim.disabledCharacter)
+        System.Debug.info("InputCapture", "New claim established:", claim.id)
         return claim
     end
 

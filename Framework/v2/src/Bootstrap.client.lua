@@ -77,6 +77,9 @@ local IPC = Lib.System.IPC
 -- Register TitleScreen for initial title display
 IPC.registerNode(Lib.Components.TitleScreen)
 
+-- Register ExitScreen for pause/exit menu
+IPC.registerNode(Lib.Components.ExitScreen)
+
 -- Register ScreenTransition for screen fade effects during teleportation
 IPC.registerNode(Lib.Components.ScreenTransition)
 
@@ -96,11 +99,12 @@ IPC.registerNode(Lib.Components.RegionManager)
 -- Define same modes as server for cross-domain wiring to work
 
 IPC.defineMode("Dungeon", {
-    nodes = { "JumpPad", "RegionManager", "TitleScreen", "ScreenTransition", "AreaHUD", "MiniMap" },
+    nodes = { "JumpPad", "RegionManager", "TitleScreen", "ExitScreen", "ScreenTransition", "AreaHUD", "MiniMap" },
     wiring = {
         JumpPad = { "RegionManager" },
         TitleScreen = { "RegionManager" },
-        RegionManager = { "TitleScreen", "ScreenTransition", "AreaHUD", "MiniMap" },
+        ExitScreen = { "RegionManager" },
+        RegionManager = { "TitleScreen", "ExitScreen", "ScreenTransition", "AreaHUD", "MiniMap" },
         ScreenTransition = { "RegionManager" },
         MiniMap = { "RegionManager" },
     },
@@ -112,6 +116,9 @@ IPC.defineMode("Dungeon", {
 
 -- Create TitleScreen instance (displays before game loads)
 IPC.createInstance("TitleScreen", { id = "TitleScreen_Local" })
+
+-- Create ExitScreen instance (pause/exit menu)
+IPC.createInstance("ExitScreen", { id = "ExitScreen_Local" })
 
 -- Create ScreenTransition instance (one per client)
 IPC.createInstance("ScreenTransition", { id = "ScreenTransition_Local" })

@@ -101,6 +101,7 @@ local Game = require(ReplicatedStorage:WaitForChild("Game"))
 IPC.registerNode(Lib.Components.JumpPad)
 IPC.registerNode(Lib.Components.RegionManager)
 IPC.registerNode(Lib.Components.TitleScreen)       -- Client-side, but registered for wiring
+IPC.registerNode(Lib.Components.ExitScreen)        -- Client-side, but registered for wiring
 IPC.registerNode(Lib.Components.ScreenTransition)  -- Client-side, but registered for wiring
 IPC.registerNode(Lib.Components.AreaHUD)           -- Client-side, but registered for wiring
 IPC.registerNode(Lib.Components.MiniMap)           -- Client-side, but registered for wiring
@@ -124,14 +125,16 @@ Asset.buildInheritanceTree()
 
 -- Dungeon mode: JumpPad signals route to RegionManager, screen transitions cross client/server
 IPC.defineMode("Dungeon", {
-    nodes = { "JumpPad", "RegionManager", "TitleScreen", "ScreenTransition", "AreaHUD", "MiniMap" },
+    nodes = { "JumpPad", "RegionManager", "TitleScreen", "ExitScreen", "ScreenTransition", "AreaHUD", "MiniMap" },
     wiring = {
         -- Server-side: JumpPad → RegionManager
         JumpPad = { "RegionManager" },
         -- Cross-domain: TitleScreen (client) → RegionManager (server)
         TitleScreen = { "RegionManager" },
-        -- Cross-domain: RegionManager (server) → TitleScreen, ScreenTransition, AreaHUD, MiniMap (client)
-        RegionManager = { "TitleScreen", "ScreenTransition", "AreaHUD", "MiniMap" },
+        -- Cross-domain: ExitScreen (client) → RegionManager (server)
+        ExitScreen = { "RegionManager" },
+        -- Cross-domain: RegionManager (server) → TitleScreen, ExitScreen, ScreenTransition, AreaHUD, MiniMap (client)
+        RegionManager = { "TitleScreen", "ExitScreen", "ScreenTransition", "AreaHUD", "MiniMap" },
         -- Cross-domain: ScreenTransition (client) → RegionManager (server)
         ScreenTransition = { "RegionManager" },
         -- Cross-domain: MiniMap (client) → RegionManager (server)

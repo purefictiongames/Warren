@@ -45,7 +45,7 @@ local PixelFont = {}
 
 -- Asset ID for the spritesheet (update after uploading to Roblox)
 -- Use the DOS 8x8 font from OpenGameArt: https://opengameart.org/content/dos-8x8-font
-local SPRITESHEET_ASSET = "rbxassetid://128496795370434"
+local SPRITESHEET_ASSET = "rbxassetid://75617219796318"
 
 -- Glyph dimensions
 local GLYPH_WIDTH = 8

@@ -48,7 +48,7 @@ local TitleScreen = Node.extend(function(parent)
 
     local ORANGE_BORDER = Color3.fromRGB(255, 140, 0)
     local FADE_DURATION = 0.5
-    local BUILD_NUMBER = 189
+    local BUILD_NUMBER = 190
     local TITLE_MUSIC_ID = "rbxassetid://115218802234328"
     local GAMEPLAY_MUSIC_ID = "rbxassetid://127750735513287"
     local PIXEL_SCALE = 3  -- 24px equivalent (8 * 3)
@@ -671,6 +671,14 @@ local TitleScreen = Node.extend(function(parent)
             }))
         end
 
+        -- Fade in studio icon
+        local studioIcon = state.screenGui:FindFirstChild("StudioIcon")
+        if studioIcon and studioIcon:IsA("ImageLabel") then
+            table.insert(tweens, TweenService:Create(studioIcon, tweenInfo, {
+                ImageTransparency = 0,
+            }))
+        end
+
         -- Play all tweens
         for _, tween in ipairs(tweens) do
             tween:Play()
@@ -720,6 +728,14 @@ local TitleScreen = Node.extend(function(parent)
         local logo = state.screenGui:FindFirstChild("Logo")
         if logo and logo:IsA("ImageLabel") then
             table.insert(tweens, TweenService:Create(logo, tweenInfo, {
+                ImageTransparency = 1,
+            }))
+        end
+
+        -- Fade out studio icon
+        local studioIcon = state.screenGui:FindFirstChild("StudioIcon")
+        if studioIcon and studioIcon:IsA("ImageLabel") then
+            table.insert(tweens, TweenService:Create(studioIcon, tweenInfo, {
                 ImageTransparency = 1,
             }))
         end
@@ -913,6 +929,18 @@ local TitleScreen = Node.extend(function(parent)
         logo.ImageTransparency = 1  -- Start invisible
         logo.ZIndex = 2
         logo.Parent = screenGui
+
+        -- Create studio icon in lower left corner
+        local studioIcon = Instance.new("ImageLabel")
+        studioIcon.Name = "StudioIcon"
+        studioIcon.Size = UDim2.fromOffset(128, 128)
+        studioIcon.Position = UDim2.new(0, 16, 1, -144)
+        studioIcon.Image = "rbxassetid://115752690911606"
+        studioIcon.ScaleType = Enum.ScaleType.Fit
+        studioIcon.BackgroundTransparency = 1
+        studioIcon.ImageTransparency = 1  -- Start invisible for fade-in
+        studioIcon.ZIndex = 2
+        studioIcon.Parent = screenGui
 
         -- Helper to create a menu button with PixelFont
         -- Uses separate TextButton (for clicks) and pixel text Frame (for display)

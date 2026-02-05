@@ -1113,13 +1113,19 @@ local MiniMap = Node.extend(function(parent)
                     player: Player - The player this is for
             --]]
             onBuildMiniMap = function(self, data)
-                if not data or not data.layout then return end
-
                 local state = getState(self)
                 local player = Players.LocalPlayer
 
                 -- Only process for local player
-                if data._targetPlayer and data._targetPlayer ~= player then return end
+                if data and data._targetPlayer and data._targetPlayer ~= player then return end
+
+                -- Always signal ready, even if layout is missing (prevents hang)
+                if not data or not data.layout then
+                    self.Out:Fire("miniMapReady", {
+                        player = player,
+                    })
+                    return
+                end
 
                 -- Store layout
                 state.layout = data.layout

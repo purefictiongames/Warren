@@ -28,7 +28,7 @@
     ============================================================================
 
     Gamepad:
-    - Back/Select: Toggle map open/close
+    - Y/Triangle: Toggle map open/close
     - Right Stick: Rotate
     - L1/R1: Zoom out/in
     - L2/R2: Navigate rooms (previous/next)
@@ -67,6 +67,8 @@ local ContextActionService = game:GetService("ContextActionService")
 local RunService = game:GetService("RunService")
 
 local Node = require(script.Parent.Parent.Node)
+local System = require(script.Parent.Parent.System)
+local PixelFont = require(script.Parent.Parent.PixelFont)
 
 --------------------------------------------------------------------------------
 -- CONSTANTS
@@ -124,7 +126,8 @@ local MiniMap = Node.extend(function(parent)
                 viewportCamera = nil,
                 worldModel = nil,
                 toggleButton = nil,
-                statsLabel = nil,
+                toggleButtonText = nil,  -- PixelFont text frame for toggle button
+                statsLabels = {},  -- Array of PixelFont text frames for stats lines
                 -- Map state
                 isOpen = false,
                 layout = nil,
@@ -153,6 +156,7 @@ local MiniMap = Node.extend(function(parent)
                 -- Input state
                 toggleConnection = nil,  -- Persistent toggle listener
                 renderConnection = nil,
+                inputClaim = nil,  -- InputCapture claim for movement sinking
             }
         end
         return instanceStates[self.id]
@@ -168,8 +172,12 @@ local MiniMap = Node.extend(function(parent)
             if state.renderConnection then
                 state.renderConnection:Disconnect()
             end
+            -- Release input claim if active
+            if state.inputClaim then
+                state.inputClaim:release()
+                state.inputClaim = nil
+            end
             -- Unbind context actions
-            ContextActionService:UnbindAction("MiniMapSinkLeftStick")
             ContextActionService:UnbindAction("MiniMapRotate")
             ContextActionService:UnbindAction("MiniMapZoomIn")
             ContextActionService:UnbindAction("MiniMapZoomOut")
@@ -236,8 +244,8 @@ local MiniMap = Node.extend(function(parent)
         -- Stats display (bottom-right corner)
         local statsFrame = Instance.new("Frame")
         statsFrame.Name = "StatsFrame"
-        statsFrame.Size = UDim2.new(0, 200, 0, 100)
-        statsFrame.Position = UDim2.new(1, -220, 1, -120)
+        statsFrame.Size = UDim2.new(0, 200, 0, 130)
+        statsFrame.Position = UDim2.new(1, -220, 1, -150)
         statsFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
         statsFrame.BackgroundTransparency = 0.5
         statsFrame.BorderSizePixel = 0
@@ -247,28 +255,26 @@ local MiniMap = Node.extend(function(parent)
         statsCorner.CornerRadius = UDim.new(0, 8)
         statsCorner.Parent = statsFrame
 
-        local statsPadding = Instance.new("UIPadding")
-        statsPadding.PaddingLeft = UDim.new(0, 10)
-        statsPadding.PaddingTop = UDim.new(0, 10)
-        statsPadding.Parent = statsFrame
+        -- Create pixel text labels for stats (5 lines max: rooms, portals, blank, completion, portal info)
+        local STATS_SCALE = 2
+        local LINE_HEIGHT = 8 * STATS_SCALE + 4  -- 8px char + 4px spacing
+        state.statsLabels = {}
 
-        local statsLabel = Instance.new("TextLabel")
-        statsLabel.Name = "StatsLabel"
-        statsLabel.Size = UDim2.new(1, -10, 1, -10)
-        statsLabel.BackgroundTransparency = 1
-        statsLabel.Font = Enum.Font.GothamBold
-        statsLabel.TextSize = 14
-        statsLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-        statsLabel.TextXAlignment = Enum.TextXAlignment.Left
-        statsLabel.TextYAlignment = Enum.TextYAlignment.Top
-        statsLabel.Text = "Loading..."
-        statsLabel.Parent = statsFrame
+        for i = 1, 6 do
+            local lineText = PixelFont.createText(i == 1 and "LOADING..." or "", {
+                scale = STATS_SCALE,
+                color = Color3.fromRGB(255, 255, 255),
+            })
+            lineText.Name = "StatsLine" .. i
+            lineText.Position = UDim2.new(0, 10, 0, 10 + (i - 1) * LINE_HEIGHT)
+            lineText.Parent = statsFrame
+            state.statsLabels[i] = lineText
+        end
 
         state.screenGui = screenGui
         state.viewport = viewport
         state.viewportCamera = camera
         state.worldModel = worldModel
-        state.statsLabel = statsLabel
 
         -- Create toggle button if needed (touch/PC without gamepad)
         createToggleButton(self)
@@ -287,6 +293,7 @@ local MiniMap = Node.extend(function(parent)
             if state.toggleButton then
                 state.toggleButton:Destroy()
                 state.toggleButton = nil
+                state.toggleButtonText = nil
             end
             return
         end
@@ -303,18 +310,16 @@ local MiniMap = Node.extend(function(parent)
             buttonGui.Parent = playerGui
         end
 
-        -- Create toggle button (bottom-left corner)
-        local button = Instance.new("TextButton")
+        -- Create toggle button (bottom-left corner) using PixelFont
+        local button, buttonText = PixelFont.createButton("MAP", {
+            scale = 2,
+            color = Color3.fromRGB(255, 255, 255),
+            backgroundColor = Color3.fromRGB(40, 40, 50),
+            backgroundTransparency = 0.3,
+            padding = 10,
+        })
         button.Name = "ToggleButton"
-        button.Size = UDim2.new(0, 50, 0, 50)
         button.Position = UDim2.new(0, 20, 1, -70)
-        button.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
-        button.BackgroundTransparency = 0.3
-        button.BorderSizePixel = 0
-        button.Text = "MAP"
-        button.Font = Enum.Font.GothamBold
-        button.TextSize = 12
-        button.TextColor3 = Color3.fromRGB(255, 255, 255)
         button.Parent = buttonGui
 
         local corner = Instance.new("UICorner")
@@ -326,6 +331,7 @@ local MiniMap = Node.extend(function(parent)
         end)
 
         state.toggleButton = button
+        state.toggleButtonText = buttonText
     end
 
     ----------------------------------------------------------------------------
@@ -698,21 +704,30 @@ local MiniMap = Node.extend(function(parent)
     updateStats = function(self)
         local state = getState(self)
 
-        if not state.statsLabel then return end
+        if not state.statsLabels or #state.statsLabels == 0 then return end
         if not state.stats then
-            state.statsLabel.Text = "No map data"
+            PixelFont.updateText(state.statsLabels[1], "NO MAP DATA")
+            for i = 2, #state.statsLabels do
+                PixelFont.updateText(state.statsLabels[i], "")
+            end
             return
         end
 
         local s = state.stats
-        local statsText = string.format(
-            "ROOMS: %d / %d\nPORTALS: %d / %d\n\nCOMPLETION: %d%%",
-            s.exploredRooms, s.totalRooms,
-            s.discoveredPortals, s.totalPortals,
-            s.completion
-        )
+        local lines = {
+            string.format("ROOMS: %d / %d", s.exploredRooms, s.totalRooms),
+            string.format("PORTALS: %d / %d", s.discoveredPortals, s.totalPortals),
+            "",
+            string.format("COMPLETION: %d%%", s.completion),
+            "",  -- Reserved for portal info
+            "",  -- Reserved for portal info
+        }
 
-        state.statsLabel.Text = statsText
+        for i, line in ipairs(lines) do
+            if state.statsLabels[i] then
+                PixelFont.updateText(state.statsLabels[i], line)
+            end
+        end
     end
 
     --[[
@@ -780,22 +795,20 @@ local MiniMap = Node.extend(function(parent)
     updatePortalInfo = function(self)
         local state = getState(self)
 
-        if not state.statsLabel then return end
+        if not state.statsLabels or #state.statsLabels == 0 then return end
         if not state.layout then return end
 
-        -- Start with base stats
+        -- Start with base stats (update first 4 lines)
         local s = state.stats
-        local statsText = ""
         if s then
-            statsText = string.format(
-                "ROOMS: %d / %d\nPORTALS: %d / %d\n\nCOMPLETION: %d%%",
-                s.exploredRooms, s.totalRooms,
-                s.discoveredPortals, s.totalPortals,
-                s.completion
-            )
+            PixelFont.updateText(state.statsLabels[1], string.format("ROOMS: %d / %d", s.exploredRooms, s.totalRooms))
+            PixelFont.updateText(state.statsLabels[2], string.format("PORTALS: %d / %d", s.discoveredPortals, s.totalPortals))
+            PixelFont.updateText(state.statsLabels[3], "")
+            PixelFont.updateText(state.statsLabels[4], string.format("COMPLETION: %d%%", s.completion))
         end
 
-        -- Check if selected room has a portal
+        -- Check if selected room has a portal (use lines 5-6)
+        local portalLine = ""
         if state.layout.pads and state.selectedRoom then
             for _, pad in ipairs(state.layout.pads) do
                 if pad.roomId == state.selectedRoom then
@@ -807,7 +820,7 @@ local MiniMap = Node.extend(function(parent)
                         -- Extract region number from regionId (e.g., "region_3" -> 3)
                         local regionNum = tonumber(string.match(padLink.regionId, "region_(%d+)"))
                         if regionNum then
-                            destText = "Area " .. regionNum
+                            destText = "AREA " .. regionNum
                         else
                             destText = padLink.regionId
                         end
@@ -816,13 +829,14 @@ local MiniMap = Node.extend(function(parent)
                         destText = "???"
                     end
 
-                    statsText = statsText .. "\n\nPORTAL: " .. destText
+                    portalLine = "PORTAL: " .. destText
                     break  -- Only show first portal (rooms typically have 1)
                 end
             end
         end
 
-        state.statsLabel.Text = statsText
+        PixelFont.updateText(state.statsLabels[5], "")
+        PixelFont.updateText(state.statsLabels[6], portalLine)
     end
 
     ----------------------------------------------------------------------------
@@ -868,17 +882,13 @@ local MiniMap = Node.extend(function(parent)
     startInputHandling = function(self)
         local state = getState(self)
 
-        -- Bind gamepad actions (sinks input so player doesn't move)
-        -- Sink left stick input (no panning, but prevent player movement)
-        ContextActionService:BindAction(
-            "MiniMapSinkLeftStick",
-            function()
-                return Enum.ContextActionResult.Sink
-            end,
-            false,
-            Enum.KeyCode.Thumbstick1
-        )
+        -- Use InputCapture to sink movement (player can't walk while map is open)
+        state.inputClaim = System.InputCapture.claim({}, {
+            sinkMovement = true,
+            -- Note: NOT sinking camera - we use Thumbstick2 for map rotation
+        })
 
+        -- Bind gamepad actions for map controls
         ContextActionService:BindAction(
             "MiniMapRotate",
             function(actionName, inputState, inputObject)
@@ -970,12 +980,20 @@ local MiniMap = Node.extend(function(parent)
                 return Enum.ContextActionResult.Sink
             end,
             false,
-            Enum.KeyCode.ButtonSelect
+            Enum.KeyCode.ButtonY
         )
     end
 
     stopInputHandling = function(self)
-        ContextActionService:UnbindAction("MiniMapSinkLeftStick")
+        local state = getState(self)
+
+        -- Release input claim (restores movement)
+        if state.inputClaim then
+            state.inputClaim:release()
+            state.inputClaim = nil
+        end
+
+        -- Unbind map-specific controls
         ContextActionService:UnbindAction("MiniMapRotate")
         ContextActionService:UnbindAction("MiniMapZoomIn")
         ContextActionService:UnbindAction("MiniMapZoomOut")
@@ -1007,7 +1025,7 @@ local MiniMap = Node.extend(function(parent)
                 state.toggleConnection = UserInputService.InputBegan:Connect(function(input, processed)
                     if processed then return end
                     -- Only handle toggle when map is closed (when open, ContextAction handles it)
-                    if not state.isOpen and input.KeyCode == Enum.KeyCode.ButtonSelect then
+                    if not state.isOpen and input.KeyCode == Enum.KeyCode.ButtonY then
                         toggleMap(self)
                     end
                 end)

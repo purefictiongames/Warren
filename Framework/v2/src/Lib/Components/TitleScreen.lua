@@ -29,10 +29,11 @@
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
-local StarterGui = game:GetService("StarterGui")
 local SoundService = game:GetService("SoundService")
 
 local Node = require(script.Parent.Parent.Node)
+local System = require(script.Parent.Parent.System)
+local PixelFont = require(script.Parent.Parent.PixelFont)
 
 --------------------------------------------------------------------------------
 -- TITLESCREEN NODE
@@ -47,9 +48,11 @@ local TitleScreen = Node.extend(function(parent)
 
     local ORANGE_BORDER = Color3.fromRGB(255, 140, 0)
     local FADE_DURATION = 0.5
-    local BUILD_NUMBER = 184
+    local BUILD_NUMBER = 186
     local TITLE_MUSIC_ID = "rbxassetid://115218802234328"
     local GAMEPLAY_MUSIC_ID = "rbxassetid://127750735513287"
+    local PIXEL_SCALE = 3  -- 24px equivalent (8 * 3)
+    local PIXEL_SCALE_SMALL = 2  -- 16px equivalent
 
     local function getState(self)
         if not instanceStates[self.id] then
@@ -58,7 +61,10 @@ local TitleScreen = Node.extend(function(parent)
                 isVisible = true,
                 selectedIndex = 1,  -- 1 = Start, 2 = Options
                 buttons = {},       -- { StartButton, OptionsButton }
+                buttonTexts = {},   -- { StartText, OptionsText } PixelFont frames
+                footerTexts = {},   -- { copyrightText, buildText } PixelFont frames
                 inputConnection = nil,
+                inputClaim = nil,   -- InputCapture claim for hiding CoreGui
                 music = nil,        -- Background music Sound instance
             }
         end
@@ -71,6 +77,11 @@ local TitleScreen = Node.extend(function(parent)
             if state.inputConnection then
                 state.inputConnection:Disconnect()
                 state.inputConnection = nil
+            end
+            -- Release input claim (restores CoreGui)
+            if state.inputClaim then
+                state.inputClaim:release()
+                state.inputClaim = nil
             end
             if state.music then
                 state.music:Stop()
@@ -88,14 +99,25 @@ local TitleScreen = Node.extend(function(parent)
     -- BUTTON SELECTION
     ----------------------------------------------------------------------------
 
+    local BUTTON_ACTIVE_COLOR = Color3.fromRGB(0, 255, 255)  -- Cyan
+    local BUTTON_INACTIVE_COLOR = Color3.fromRGB(40, 40, 50)
+
     local function updateButtonHighlight(state)
         for i, button in ipairs(state.buttons) do
             local stroke = button:FindFirstChildOfClass("UIStroke")
-            if stroke then
-                if i == state.selectedIndex then
+            if i == state.selectedIndex then
+                -- Active: cyan, 75% transparent
+                button.BackgroundColor3 = BUTTON_ACTIVE_COLOR
+                button.BackgroundTransparency = 0.75
+                if stroke then
                     stroke.Enabled = true
                     stroke.Color = ORANGE_BORDER
-                else
+                end
+            else
+                -- Inactive: dark, 50% transparent
+                button.BackgroundColor3 = BUTTON_INACTIVE_COLOR
+                button.BackgroundTransparency = 0.5
+                if stroke then
                     stroke.Enabled = false
                 end
             end
@@ -122,12 +144,15 @@ local TitleScreen = Node.extend(function(parent)
         if not state.isVisible then return end
 
         local button = state.buttons[state.selectedIndex]
+        local buttonText = state.buttonTexts[state.selectedIndex]
         if button then
             -- Trigger the button's click handler
             if button.Name == "StartButton" then
                 -- Disable to prevent double-clicks
                 button.Active = false
-                button.TextTransparency = 0.5
+                if buttonText then
+                    PixelFont.setTransparency(buttonText, 0.5)
+                end
 
                 -- Fire signal to server
                 local player = Players.LocalPlayer
@@ -143,28 +168,8 @@ local TitleScreen = Node.extend(function(parent)
     end
 
     ----------------------------------------------------------------------------
-    -- CORE GUI VISIBILITY
+    -- GAMEPLAY MUSIC
     ----------------------------------------------------------------------------
-
-    local function hideCoreGui()
-        pcall(function()
-            StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.All, false)
-        end)
-        -- Hide the top bar (Roblox menu button)
-        pcall(function()
-            StarterGui:SetCore("TopbarEnabled", false)
-        end)
-    end
-
-    local function showCoreGui()
-        pcall(function()
-            StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.All, true)
-        end)
-        -- Show the top bar
-        pcall(function()
-            StarterGui:SetCore("TopbarEnabled", true)
-        end)
-    end
 
     local function startGameplayMusic()
         -- Remove any existing gameplay music
@@ -199,18 +204,33 @@ local TitleScreen = Node.extend(function(parent)
         local tweenInfo = TweenInfo.new(FADE_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
         local tweens = {}
 
-        -- Fade in buttons and text labels (not the background)
-        for _, child in ipairs(state.screenGui:GetChildren()) do
-            if child:IsA("TextButton") then
-                table.insert(tweens, TweenService:Create(child, tweenInfo, {
-                    TextTransparency = 0,
-                    BackgroundTransparency = 0,
-                }))
-            elseif child:IsA("TextLabel") then
-                table.insert(tweens, TweenService:Create(child, tweenInfo, {
-                    TextTransparency = 0,
+        -- Fade in buttons (TextButton backgrounds only)
+        -- Active button fades to 0.75, inactive to 0.5
+        for i, button in ipairs(state.buttons) do
+            if button:IsA("TextButton") then
+                local targetTransparency = (i == state.selectedIndex) and 0.75 or 0.5
+                table.insert(tweens, TweenService:Create(button, tweenInfo, {
+                    BackgroundTransparency = targetTransparency,
                 }))
             end
+        end
+
+        -- Fade in button pixel text
+        for _, textFrame in ipairs(state.buttonTexts) do
+            PixelFont.fadeIn(textFrame, FADE_DURATION)
+        end
+
+        -- Fade in footer pixel text
+        for _, textFrame in ipairs(state.footerTexts) do
+            PixelFont.fadeIn(textFrame, FADE_DURATION)
+        end
+
+        -- Fade in logo
+        local logo = state.screenGui:FindFirstChild("Logo")
+        if logo and logo:IsA("ImageLabel") then
+            table.insert(tweens, TweenService:Create(logo, tweenInfo, {
+                ImageTransparency = 0.3,
+            }))
         end
 
         -- Play all tweens
@@ -223,7 +243,9 @@ local TitleScreen = Node.extend(function(parent)
                 if callback then callback() end
             end)
         else
-            if callback then callback() end
+            task.delay(FADE_DURATION, function()
+                if callback then callback() end
+            end)
         end
     end
 
@@ -237,18 +259,31 @@ local TitleScreen = Node.extend(function(parent)
         local tweenInfo = TweenInfo.new(FADE_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
         local tweens = {}
 
-        -- Fade out buttons and text labels (not the background yet)
-        for _, child in ipairs(state.screenGui:GetChildren()) do
-            if child:IsA("TextButton") then
-                table.insert(tweens, TweenService:Create(child, tweenInfo, {
-                    TextTransparency = 1,
+        -- Fade out buttons (TextButton backgrounds only)
+        for _, button in ipairs(state.buttons) do
+            if button:IsA("TextButton") then
+                table.insert(tweens, TweenService:Create(button, tweenInfo, {
                     BackgroundTransparency = 1,
                 }))
-            elseif child:IsA("TextLabel") then
-                table.insert(tweens, TweenService:Create(child, tweenInfo, {
-                    TextTransparency = 1,
-                }))
             end
+        end
+
+        -- Fade out button pixel text
+        for _, textFrame in ipairs(state.buttonTexts) do
+            PixelFont.fadeOut(textFrame, FADE_DURATION)
+        end
+
+        -- Fade out footer pixel text
+        for _, textFrame in ipairs(state.footerTexts) do
+            PixelFont.fadeOut(textFrame, FADE_DURATION)
+        end
+
+        -- Fade out logo
+        local logo = state.screenGui:FindFirstChild("Logo")
+        if logo and logo:IsA("ImageLabel") then
+            table.insert(tweens, TweenService:Create(logo, tweenInfo, {
+                ImageTransparency = 1,
+            }))
         end
 
         -- Play all tweens
@@ -261,7 +296,9 @@ local TitleScreen = Node.extend(function(parent)
                 if callback then callback() end
             end)
         else
-            if callback then callback() end
+            task.delay(FADE_DURATION, function()
+                if callback then callback() end
+            end)
         end
     end
 
@@ -299,28 +336,23 @@ local TitleScreen = Node.extend(function(parent)
             return
         end
 
-        -- Create loading text
-        local loadingText = Instance.new("TextLabel")
+        -- Create loading text with PixelFont
+        local loadingScale = 4  -- Larger for visibility
+        local loadingText = PixelFont.createText("STARTING....", {
+            scale = loadingScale,
+            color = Color3.fromRGB(255, 255, 255),  -- White
+        })
         loadingText.Name = "LoadingText"
-        loadingText.Size = UDim2.new(1, 0, 0.1, 0)
-        loadingText.Position = UDim2.new(0, 0, 0.45, 0)
-        loadingText.BackgroundTransparency = 1
-        loadingText.Font = Enum.Font.GothamBold
-        loadingText.Text = "Starting...."
-        loadingText.TextColor3 = ORANGE_BORDER  -- Orange color
-        loadingText.TextTransparency = 1  -- Start invisible
-        loadingText.TextScaled = true
+        -- Center it on screen
+        local loadingWidth = PixelFont.getTextWidth("STARTING....", loadingScale, 0)
+        loadingText.Position = UDim2.new(0.5, -loadingWidth / 2, 0.5, -loadingScale * 4)
         loadingText.ZIndex = 10
+        -- Start invisible
+        PixelFont.setTransparency(loadingText, 1)
         loadingText.Parent = state.screenGui
 
         -- Fade in the text
-        local fadeInTween = TweenService:Create(
-            loadingText,
-            TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-            { TextTransparency = 0 }
-        )
-
-        fadeInTween.Completed:Connect(function()
+        PixelFont.fadeIn(loadingText, 0.3, function()
             -- Fade out music over 2 seconds
             if state.music then
                 local musicFadeTween = TweenService:Create(
@@ -341,22 +373,12 @@ local TitleScreen = Node.extend(function(parent)
                 end
 
                 -- Fade out the text
-                local fadeOutTween = TweenService:Create(
-                    loadingText,
-                    TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-                    { TextTransparency = 1 }
-                )
-
-                fadeOutTween.Completed:Connect(function()
+                PixelFont.fadeOut(loadingText, 0.3, function()
                     loadingText:Destroy()
                     if callback then callback() end
                 end)
-
-                fadeOutTween:Play()
             end)
         end)
-
-        fadeInTween:Play()
     end
 
     local function fadeOutBlackBackground(self, callback)
@@ -414,8 +436,10 @@ local TitleScreen = Node.extend(function(parent)
         screenGui.IgnoreGuiInset = true
         screenGui.Parent = playerGui
 
-        -- Hide Roblox toolbar during title screen
-        hideCoreGui()
+        -- Hide Roblox CoreGui and topbar during title screen
+        state.inputClaim = System.InputCapture.claim({}, {
+            hideCoreGui = true,
+        })
 
         -- Create and play background music
         local music = Instance.new("Sound")
@@ -432,7 +456,7 @@ local TitleScreen = Node.extend(function(parent)
         background.Name = "Background"
         background.Size = UDim2.new(1, 0, 1, 0)
         background.Position = UDim2.new(0, 0, 0, 0)
-        background.Image = "rbxassetid://109454468572134"
+        background.Image = "rbxassetid://114898388494877"
         background.ScaleType = Enum.ScaleType.Crop
         background.BackgroundColor3 = Color3.new(0, 0, 0)
         background.BackgroundTransparency = 0
@@ -440,37 +464,74 @@ local TitleScreen = Node.extend(function(parent)
         background.ZIndex = 1
         background.Parent = screenGui
 
-        -- Helper to create a menu button (starts invisible for fade-in)
-        local function createMenuButton(name, text, positionY)
+        -- Create logo image (centered above buttons, starts invisible for fade-in)
+        local logo = Instance.new("ImageLabel")
+        logo.Name = "Logo"
+        logo.Size = UDim2.new(1, 0, 0.9, 0)
+        logo.Position = UDim2.new(0, 0, -0.12, 0)
+        logo.Image = "rbxassetid://91612654080142"
+        logo.ScaleType = Enum.ScaleType.Fit
+        logo.BackgroundTransparency = 1
+        logo.ImageTransparency = 1  -- Start invisible
+        logo.ZIndex = 2
+        logo.Parent = screenGui
+
+        -- Helper to create a menu button with PixelFont
+        -- Uses separate TextButton (for clicks) and pixel text Frame (for display)
+        local function createMenuButton(name, text, positionY, isActive)
+            -- Create pixel text first to get dimensions
+            local buttonText = PixelFont.createText(text, {
+                scale = PIXEL_SCALE,
+                color = Color3.fromRGB(255, 255, 255),
+            })
+
+            local textWidth = buttonText.Size.X.Offset
+            local textHeight = buttonText.Size.Y.Offset
+            local padding = 16
+            local buttonWidth = textWidth + padding * 2
+            local buttonHeight = textHeight + padding * 2
+
+            -- Create button (background + click handler)
             local button = Instance.new("TextButton")
             button.Name = name
-            button.Size = UDim2.new(0.3, 0, 0.08, 0)
-            button.Position = UDim2.new(0.35, 0, positionY, 0)
-            button.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
-            button.BackgroundTransparency = 1  -- Start invisible
+            button.Text = ""
+            button.AutoButtonColor = false
+            -- Set initial state based on isActive
+            if isActive then
+                button.BackgroundColor3 = Color3.fromRGB(0, 255, 255)  -- Cyan
+                button.BackgroundTransparency = 0.75
+            else
+                button.BackgroundColor3 = Color3.fromRGB(40, 40, 50)  -- Dark gray
+                button.BackgroundTransparency = 0.5
+            end
             button.BorderSizePixel = 0
-            button.Font = Enum.Font.GothamBold
-            button.Text = text
-            button.TextColor3 = Color3.fromRGB(255, 255, 255)
-            button.TextTransparency = 1  -- Start invisible
-            button.TextScaled = true
+            button.Size = UDim2.fromOffset(buttonWidth, buttonHeight)
+            button.Position = UDim2.new(0.5, -buttonWidth / 2, positionY, 0)
             button.ZIndex = 2
             button.Parent = screenGui
 
+            -- Position text centered over the button (as sibling, not child)
+            buttonText.Position = UDim2.new(0.5, -textWidth / 2, positionY, padding)
+            buttonText.ZIndex = 3
+            buttonText.Parent = screenGui
+
+            -- DEBUG: Start text visible to test
+            -- PixelFont.setTransparency(buttonText, 1)
+
             -- Corner rounding
             local corner = Instance.new("UICorner")
-            corner.CornerRadius = UDim.new(0.2, 0)
+            corner.CornerRadius = UDim.new(0, 8)
             corner.Parent = button
 
-            -- Selection border (1px orange, initially disabled)
+            -- Selection border (1px orange)
             local stroke = Instance.new("UIStroke")
             stroke.Name = "SelectionStroke"
             stroke.Color = ORANGE_BORDER
-            stroke.Thickness = 1
-            stroke.Enabled = false
+            stroke.Thickness = 2
+            stroke.Enabled = isActive  -- Enabled if active
             stroke.Parent = button
 
-            -- Hover effect
+            -- Hover effect - select on hover, colors handled by updateButtonHighlight
             button.MouseEnter:Connect(function()
                 -- Select this button on hover
                 for i, btn in ipairs(state.buttons) do
@@ -479,32 +540,21 @@ local TitleScreen = Node.extend(function(parent)
                         break
                     end
                 end
-                TweenService:Create(
-                    button,
-                    TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-                    { BackgroundColor3 = Color3.fromRGB(60, 60, 80) }
-                ):Play()
             end)
 
-            button.MouseLeave:Connect(function()
-                TweenService:Create(
-                    button,
-                    TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-                    { BackgroundColor3 = Color3.fromRGB(40, 40, 50) }
-                ):Play()
-            end)
+            -- MouseLeave doesn't need to do anything - selection stays
 
-            return button
+            return button, buttonText
         end
 
         -- Create Start button
-        local startButton = createMenuButton("StartButton", "START", 0.55)
+        local startButton, startText = createMenuButton("StartButton", "START", 0.52, true)  -- Active by default
         startButton.MouseButton1Click:Connect(function()
             if not state.isVisible then return end
 
             -- Disable button to prevent double-clicks
             startButton.Active = false
-            startButton.TextTransparency = 0.5
+            PixelFont.setTransparency(startText, 0.5)
 
             -- Fire signal to server
             self.Out:Fire("startPressed", {
@@ -514,46 +564,48 @@ local TitleScreen = Node.extend(function(parent)
         end)
 
         -- Create Options button
-        local optionsButton = createMenuButton("OptionsButton", "OPTIONS", 0.66)
+        local optionsButton, optionsText = createMenuButton("OptionsButton", "OPTIONS", 0.63, false)  -- Inactive
         optionsButton.MouseButton1Click:Connect(function()
             if not state.isVisible then return end
             -- TODO: Open options menu
         end)
 
-        -- Store button references
+        -- Store button and text references
         state.buttons = { startButton, optionsButton }
+        state.buttonTexts = { startText, optionsText }
 
         -- Set initial selection (Start button)
         state.selectedIndex = 1
-        updateButtonHighlight(state)
+        -- Initial highlight already set via isActive parameter in createMenuButton
 
         -- Footer text - copyright line (starts invisible for fade-in)
-        local copyrightText = Instance.new("TextLabel")
+        local copyrightStr = "(C) 2025-2026 PURE FICTION RECORDS"
+        local copyrightText = PixelFont.createText(copyrightStr, {
+            scale = PIXEL_SCALE_SMALL,
+            color = Color3.fromRGB(255, 255, 255),
+        })
         copyrightText.Name = "CopyrightText"
-        copyrightText.Size = UDim2.new(1, 0, 0.03, 0)
-        copyrightText.Position = UDim2.new(0, 0, 0.92, 0)
-        copyrightText.BackgroundTransparency = 1
-        copyrightText.Font = Enum.Font.GothamBold
-        copyrightText.Text = "(c) 2025 - 2026 Pure Fiction Records/AlphaRabbit Games"
-        copyrightText.TextColor3 = Color3.fromRGB(255, 255, 255)
-        copyrightText.TextTransparency = 1  -- Start invisible
-        copyrightText.TextScaled = true
+        local copyrightWidth = PixelFont.getTextWidth(copyrightStr, PIXEL_SCALE_SMALL, 0)
+        copyrightText.Position = UDim2.new(0.5, -copyrightWidth / 2, 0.92, 0)
         copyrightText.ZIndex = 2
+        PixelFont.setTransparency(copyrightText, 1)  -- Start invisible for fade
         copyrightText.Parent = screenGui
 
         -- Footer text - build number (starts invisible for fade-in)
-        local buildText = Instance.new("TextLabel")
+        local buildStr = "DEMO BUILD " .. BUILD_NUMBER
+        local buildText = PixelFont.createText(buildStr, {
+            scale = PIXEL_SCALE_SMALL,
+            color = Color3.fromRGB(255, 255, 255),
+        })
         buildText.Name = "BuildText"
-        buildText.Size = UDim2.new(1, 0, 0.03, 0)
-        buildText.Position = UDim2.new(0, 0, 0.95, 0)
-        buildText.BackgroundTransparency = 1
-        buildText.Font = Enum.Font.GothamBold
-        buildText.Text = "DEMO BUILD " .. BUILD_NUMBER
-        buildText.TextColor3 = Color3.fromRGB(255, 255, 255)
-        buildText.TextTransparency = 1  -- Start invisible
-        buildText.TextScaled = true
+        local buildWidth = PixelFont.getTextWidth(buildStr, PIXEL_SCALE_SMALL, 0)
+        buildText.Position = UDim2.new(0.5, -buildWidth / 2, 0.95, 0)
         buildText.ZIndex = 2
+        PixelFont.setTransparency(buildText, 1)  -- Start invisible for fade
         buildText.Parent = screenGui
+
+        -- Store footer text references
+        state.footerTexts = { copyrightText, buildText }
 
         -- Set up controller/keyboard input
         state.inputConnection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
@@ -602,16 +654,20 @@ local TitleScreen = Node.extend(function(parent)
 
         -- Step 1: Fade out content (buttons and footer text)
         fadeOutContent(self, function()
-            -- Step 2: Destroy buttons and footer text
+            -- Step 2: Destroy buttons and their text (now separate)
             for _, button in ipairs(state.buttons) do
                 button:Destroy()
             end
+            for _, textFrame in ipairs(state.buttonTexts) do
+                textFrame:Destroy()
+            end
             state.buttons = {}
+            state.buttonTexts = {}
 
-            local copyrightText = state.screenGui:FindFirstChild("CopyrightText")
-            if copyrightText then copyrightText:Destroy() end
-            local buildText = state.screenGui:FindFirstChild("BuildText")
-            if buildText then buildText:Destroy() end
+            for _, footerText in ipairs(state.footerTexts) do
+                footerText:Destroy()
+            end
+            state.footerTexts = {}
 
             -- Step 3: Fade out background image (keep black background)
             fadeOutBackgroundImage(self, function()
@@ -619,8 +675,11 @@ local TitleScreen = Node.extend(function(parent)
                 showLoadingText(self, function()
                     -- Step 5: Fade out black background to reveal dungeon
                     fadeOutBlackBackground(self, function()
-                        -- Step 6: Show Roblox toolbar for gameplay
-                        showCoreGui()
+                        -- Step 6: Restore Roblox CoreGui/topbar by releasing input claim
+                        if state.inputClaim then
+                            state.inputClaim:release()
+                            state.inputClaim = nil
+                        end
 
                         -- Step 7: Start gameplay music (after 2 second delay)
                         startGameplayMusic()
@@ -666,6 +725,19 @@ local TitleScreen = Node.extend(function(parent)
                 if not state.isVisible then return end
 
                 fadeOut(self)
+            end,
+
+            -- Server signals to show the title screen (e.g., returning from game)
+            onShowTitle = function(self, data)
+                local state = getState(self)
+                local player = Players.LocalPlayer
+
+                if data.player and data.player ~= player then return end
+                if state.isVisible then return end
+
+                -- Recreate the UI
+                state.isVisible = true
+                createUI(self)
             end,
         },
 

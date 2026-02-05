@@ -27,6 +27,7 @@
 local Players = game:GetService("Players")
 
 local Node = require(script.Parent.Parent.Node)
+local PixelFont = require(script.Parent.Parent.PixelFont)
 
 --------------------------------------------------------------------------------
 -- AREAHUD NODE
@@ -64,6 +65,8 @@ local AreaHUD = Node.extend(function(parent)
     ----------------------------------------------------------------------------
     -- UI CREATION
     ----------------------------------------------------------------------------
+
+    local PIXEL_SCALE = 2  -- 16px equivalent (8 * 2)
 
     local function createUI(self)
         local state = getState(self)
@@ -103,51 +106,31 @@ local AreaHUD = Node.extend(function(parent)
         corner.CornerRadius = UDim.new(0, 6)
         corner.Parent = container
 
-        -- Padding
-        local padding = Instance.new("UIPadding")
-        padding.PaddingLeft = UDim.new(0, 8)
-        padding.PaddingRight = UDim.new(0, 8)
-        padding.PaddingTop = UDim.new(0, 6)
-        padding.PaddingBottom = UDim.new(0, 6)
-        padding.Parent = container
-
-        -- Area label (row 1)
-        local areaLabel = Instance.new("TextLabel")
+        -- Area label (row 1) - pixel text
+        local areaLabel = PixelFont.createText("AREA: --", {
+            scale = PIXEL_SCALE,
+            color = Color3.fromRGB(255, 255, 255),
+        })
         areaLabel.Name = "AreaLabel"
-        areaLabel.Size = UDim2.new(1, 0, 0, 18)
-        areaLabel.Position = UDim2.new(0, 0, 0, 0)
-        areaLabel.BackgroundTransparency = 1
-        areaLabel.Font = Enum.Font.GothamBold
-        areaLabel.TextSize = 14
-        areaLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-        areaLabel.TextXAlignment = Enum.TextXAlignment.Left
-        areaLabel.Text = "Area: --"
+        areaLabel.Position = UDim2.new(0, 8, 0, 6)
         areaLabel.Parent = container
 
-        -- Room label (row 2)
-        local roomLabel = Instance.new("TextLabel")
+        -- Room label (row 2) - pixel text
+        local roomLabel = PixelFont.createText("ROOM: --", {
+            scale = PIXEL_SCALE,
+            color = Color3.fromRGB(200, 200, 200),
+        })
         roomLabel.Name = "RoomLabel"
-        roomLabel.Size = UDim2.new(1, 0, 0, 18)
-        roomLabel.Position = UDim2.new(0, 0, 0, 20)
-        roomLabel.BackgroundTransparency = 1
-        roomLabel.Font = Enum.Font.GothamBold
-        roomLabel.TextSize = 14
-        roomLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-        roomLabel.TextXAlignment = Enum.TextXAlignment.Left
-        roomLabel.Text = "Room: --"
+        roomLabel.Position = UDim2.new(0, 8, 0, 26)
         roomLabel.Parent = container
 
-        -- User ID label (row 3)
-        local userLabel = Instance.new("TextLabel")
+        -- User ID label (row 3) - pixel text
+        local userLabel = PixelFont.createText("ID: " .. tostring(player.UserId), {
+            scale = PIXEL_SCALE,
+            color = Color3.fromRGB(150, 150, 150),
+        })
         userLabel.Name = "UserLabel"
-        userLabel.Size = UDim2.new(1, 0, 0, 18)
-        userLabel.Position = UDim2.new(0, 0, 0, 40)
-        userLabel.BackgroundTransparency = 1
-        userLabel.Font = Enum.Font.GothamBold
-        userLabel.TextSize = 12
-        userLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
-        userLabel.TextXAlignment = Enum.TextXAlignment.Left
-        userLabel.Text = "ID: " .. tostring(player.UserId)
+        userLabel.Position = UDim2.new(0, 8, 0, 46)
         userLabel.Parent = container
 
         state.screenGui = screenGui
@@ -197,11 +180,11 @@ local AreaHUD = Node.extend(function(parent)
                 if data.player and data.player ~= player then return end
 
                 if state.areaLabel and data.regionNum then
-                    state.areaLabel.Text = "Area: " .. tostring(data.regionNum)
+                    PixelFont.updateText(state.areaLabel, "AREA: " .. tostring(data.regionNum))
                 end
 
                 if state.roomLabel and data.roomNum then
-                    state.roomLabel.Text = "Room: " .. tostring(data.roomNum)
+                    PixelFont.updateText(state.roomLabel, "ROOM: " .. tostring(data.roomNum))
                 end
             end,
         },

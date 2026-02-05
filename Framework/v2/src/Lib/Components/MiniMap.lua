@@ -45,13 +45,21 @@
     ============================================================================
 
     OUT (sends):
-        requestMapData({ player })
-            - Requests current map data from RegionManager
+        miniMapReady({ player })
+            - Signals RegionManager that minimap geometry is built
+
+        requestVisitedState({ player })
+            - Requests current visited rooms from RegionManager
 
     IN (receives):
-        onMapData({ layout, visitedRooms, currentRoom, padLinks, stats })
-            - Receives map data in response to requestMapData
-            - padLinks: { [padId] = { regionId, padId } } for portal destinations
+        onBuildMiniMap({ layout, player })
+            - Builds minimap geometry during region load (from RegionManager)
+
+        onVisitedState({ visitedRooms, currentRoom, padLinks, stats })
+            - Updates room colors/visibility when map is opened
+
+        onTransitionStart({ player })
+            - Closes map when region transition begins
 
         onShowMap()
             - Opens the map screen
@@ -134,9 +142,13 @@ local MiniMap = Node.extend(function(parent)
                 visitedRooms = {},
                 currentRoom = nil,
                 regionNum = nil,
+                pendingVisitedRequest = false, -- True if we've sent requestVisitedState
+                gameplayActive = false, -- True when player can move (after transitionEnd)
                 stats = nil,
                 -- Room part references (for color updates)
                 roomParts = {},  -- { [roomId] = Part }
+                -- Pad part references (for visibility control)
+                padParts = {},  -- { [padId] = { glow, core, light, roomId } }
                 -- Player marker (shows current physical location)
                 playerMarker = nil,
                 -- Selected room for navigation (highlighted blue)
@@ -177,6 +189,8 @@ local MiniMap = Node.extend(function(parent)
                 state.inputClaim:release()
                 state.inputClaim = nil
             end
+            -- Destroy room parts
+            destroyRoomParts(state)
             -- Unbind context actions
             ContextActionService:UnbindAction("MiniMapRotate")
             ContextActionService:UnbindAction("MiniMapZoomIn")
@@ -364,14 +378,21 @@ local MiniMap = Node.extend(function(parent)
         local state = getState(self)
         if state.isOpen then return end
 
+        -- Don't open if no layout built yet
+        if not state.layout then return end
+
+        -- Don't open until gameplay is active (after transition completes)
+        if not state.gameplayActive then return end
+
         state.isOpen = true
         if state.screenGui then
             state.screenGui.Enabled = true
         end
 
-        -- Request fresh map data from RegionManager
+        -- Request current visited state from RegionManager (for color updates)
         local player = Players.LocalPlayer
-        self.Out:Fire("requestMapData", {
+        state.pendingVisitedRequest = true
+        self.Out:Fire("requestVisitedState", {
             player = player,
         })
 
@@ -396,6 +417,41 @@ local MiniMap = Node.extend(function(parent)
     -- 3D MODEL BUILDING
     ----------------------------------------------------------------------------
 
+    --[[
+        Explicitly destroys all room parts and markers to prevent memory leaks.
+    --]]
+    local function destroyRoomParts(state)
+        -- Explicitly destroy each room part to prevent memory leaks
+        for _, part in pairs(state.roomParts or {}) do
+            if part and part.Parent then
+                part:Destroy()
+            end
+        end
+        state.roomParts = {}
+
+        -- Destroy pad parts
+        for _, padParts in pairs(state.padParts or {}) do
+            if padParts.glow and padParts.glow.Parent then
+                padParts.glow:Destroy()
+            end
+            if padParts.core and padParts.core.Parent then
+                padParts.core:Destroy()
+            end
+        end
+        state.padParts = {}
+
+        -- Destroy player marker
+        if state.playerMarker then
+            state.playerMarker:Destroy()
+            state.playerMarker = nil
+        end
+
+        -- Clear world model (catches anything we missed)
+        if state.worldModel then
+            state.worldModel:ClearAllChildren()
+        end
+    end
+
     buildModel = function(self)
         local state = getState(self)
         local layout = state.layout
@@ -403,24 +459,7 @@ local MiniMap = Node.extend(function(parent)
         if not layout or not layout.rooms then return end
 
         -- Clear existing model
-        if state.worldModel then
-            state.worldModel:ClearAllChildren()
-        end
-        state.roomParts = {}
-
-        -- Build adjacency set (rooms adjacent to visited rooms)
-        local adjacentRooms = {}
-        if layout.doors then
-            for _, door in ipairs(layout.doors) do
-                local fromVisited = state.visitedRooms[door.fromRoom]
-                local toVisited = state.visitedRooms[door.toRoom]
-                if fromVisited and not toVisited then
-                    adjacentRooms[door.toRoom] = true
-                elseif toVisited and not fromVisited then
-                    adjacentRooms[door.fromRoom] = true
-                end
-            end
-        end
+        destroyRoomParts(state)
 
         -- Calculate bounding box of all rooms
         local minX, maxX = math.huge, -math.huge
@@ -454,17 +493,8 @@ local MiniMap = Node.extend(function(parent)
         end
         table.sort(state.sortedRoomIds)
 
-        -- Create scaled room parts
+        -- Create scaled room parts (build ALL rooms, visibility controlled by updateRoomColors)
         for roomId, room in pairs(layout.rooms) do
-            local isVisited = state.visitedRooms[roomId]
-            local isCurrent = roomId == state.currentRoom
-            local isAdjacent = adjacentRooms[roomId]
-
-            -- Skip non-adjacent unexplored rooms
-            if not isVisited and not isAdjacent then
-                continue
-            end
-
             -- Create part
             local part = Instance.new("Part")
             part.Name = "Room_" .. roomId
@@ -482,70 +512,66 @@ local MiniMap = Node.extend(function(parent)
             part.Position = Vector3.new(scaledX, scaledY, scaledZ)
             part.Size = Vector3.new(scaledW, scaledH, scaledD)
 
-            -- Color based on state
-            -- Selected room is blue, visited is orange, adjacent is grey
-            -- Current room no longer gets special color (player marker shows location)
-            local isSelected = roomId == state.selectedRoom
-            if isSelected then
-                part.Color = COLORS.selected
-            elseif isVisited then
-                part.Color = COLORS.visited
-            else
-                part.Color = COLORS.adjacent
-            end
-
-            part.Transparency = ROOM_TRANSPARENCY
+            -- Default color (grey) - updateRoomColors will set proper colors/visibility
+            part.Color = COLORS.adjacent
+            part.Transparency = 1  -- Hidden until updateRoomColors is called
             part.Material = Enum.Material.SmoothPlastic
             part.Parent = state.worldModel
 
             state.roomParts[roomId] = part
         end
 
-        -- Create pad markers (only for visited rooms)
+        -- Create pad markers for ALL pads (visibility controlled by updateRoomColors)
+        state.padParts = {}
         if layout.pads then
             for _, pad in ipairs(layout.pads) do
-                local padRoomId = pad.roomId
-                local isRoomVisited = state.visitedRooms[padRoomId]
+                -- Scale position
+                local scaledX = (pad.position[1] - centerX) * SCALE
+                local scaledY = (pad.position[2] - centerY) * SCALE
+                local scaledZ = (pad.position[3] - centerZ) * SCALE
+                local markerPos = Vector3.new(scaledX, scaledY, scaledZ)
 
-                if isRoomVisited then
-                    -- Scale position
-                    local scaledX = (pad.position[1] - centerX) * SCALE
-                    local scaledY = (pad.position[2] - centerY) * SCALE
-                    local scaledZ = (pad.position[3] - centerZ) * SCALE
-                    local markerPos = Vector3.new(scaledX, scaledY, scaledZ)
+                -- Outer glow sphere
+                local glow = Instance.new("Part")
+                glow.Name = "PadGlow_" .. pad.id
+                glow.Shape = Enum.PartType.Ball
+                glow.Anchored = true
+                glow.CanCollide = false
+                glow.Position = markerPos
+                glow.Size = Vector3.new(0.12, 0.12, 0.12)
+                glow.Color = COLORS.padMarker
+                glow.Material = Enum.Material.Neon
+                glow.Transparency = 1  -- Hidden until updateRoomColors
+                glow.Parent = state.worldModel
 
-                    -- Outer glow sphere
-                    local glow = Instance.new("Part")
-                    glow.Name = "PadGlow_" .. pad.id
-                    glow.Shape = Enum.PartType.Ball
-                    glow.Anchored = true
-                    glow.CanCollide = false
-                    glow.Position = markerPos
-                    glow.Size = Vector3.new(0.12, 0.12, 0.12)
-                    glow.Color = COLORS.padMarker
-                    glow.Material = Enum.Material.Neon
-                    glow.Transparency = 0.6
-                    glow.Parent = state.worldModel
+                -- Inner core
+                local core = Instance.new("Part")
+                core.Name = "PadCore_" .. pad.id
+                core.Shape = Enum.PartType.Ball
+                core.Anchored = true
+                core.CanCollide = false
+                core.Position = markerPos
+                core.Size = Vector3.new(0.05, 0.05, 0.05)
+                core.Color = Color3.fromRGB(255, 255, 255)
+                core.Material = Enum.Material.Neon
+                core.Transparency = 1  -- Hidden until updateRoomColors
+                core.Parent = state.worldModel
 
-                    -- Inner core
-                    local core = Instance.new("Part")
-                    core.Name = "PadCore_" .. pad.id
-                    core.Shape = Enum.PartType.Ball
-                    core.Anchored = true
-                    core.CanCollide = false
-                    core.Position = markerPos
-                    core.Size = Vector3.new(0.05, 0.05, 0.05)
-                    core.Color = Color3.fromRGB(255, 255, 255)
-                    core.Material = Enum.Material.Neon
-                    core.Parent = state.worldModel
+                -- Point light for extra glow
+                local light = Instance.new("PointLight")
+                light.Color = COLORS.padMarker
+                light.Brightness = 2
+                light.Range = 0.3
+                light.Enabled = false  -- Disabled until updateRoomColors
+                light.Parent = core
 
-                    -- Point light for extra glow
-                    local light = Instance.new("PointLight")
-                    light.Color = COLORS.padMarker
-                    light.Brightness = 2
-                    light.Range = 0.3
-                    light.Parent = core
-                end
+                -- Store reference for visibility control
+                state.padParts[pad.id] = {
+                    glow = glow,
+                    core = core,
+                    light = light,
+                    roomId = pad.roomId,
+                }
             end
         end
 
@@ -560,8 +586,7 @@ local MiniMap = Node.extend(function(parent)
         end
         state.cameraDistance = maxExtent * SCALE * 2
 
-        -- Create player marker at current room
-        createPlayerMarker(self)
+        -- Note: Player marker is created/updated in onVisitedState via updatePlayerMarker
     end
 
     --[[
@@ -677,12 +702,13 @@ local MiniMap = Node.extend(function(parent)
 
         if not layout or not layout.rooms then return end
 
-        -- Build adjacency set
+        -- Build adjacency set (rooms adjacent to visited rooms)
+        -- Handle key type mismatch (RemoteEvents can convert number keys to strings)
         local adjacentRooms = {}
         if layout.doors then
             for _, door in ipairs(layout.doors) do
-                local fromVisited = state.visitedRooms[door.fromRoom]
-                local toVisited = state.visitedRooms[door.toRoom]
+                local fromVisited = state.visitedRooms[door.fromRoom] or state.visitedRooms[tostring(door.fromRoom)]
+                local toVisited = state.visitedRooms[door.toRoom] or state.visitedRooms[tostring(door.toRoom)]
                 if fromVisited and not toVisited then
                     adjacentRooms[door.toRoom] = true
                 elseif toVisited and not fromVisited then
@@ -691,25 +717,42 @@ local MiniMap = Node.extend(function(parent)
             end
         end
 
+        -- Update room visibility and colors
         for roomId, part in pairs(state.roomParts) do
-            local isVisited = state.visitedRooms[roomId]
+            -- Handle key type mismatch (RemoteEvents can convert number keys to strings)
+            local isVisited = state.visitedRooms[roomId] or state.visitedRooms[tostring(roomId)]
+            local isAdjacent = adjacentRooms[roomId]
             local isSelected = roomId == state.selectedRoom
 
-            if isSelected then
-                part.Color = COLORS.selected
-            elseif isVisited then
-                part.Color = COLORS.visited
+            -- Show only visited + adjacent rooms
+            if isVisited or isAdjacent then
+                part.Transparency = ROOM_TRANSPARENCY
+
+                if isSelected then
+                    part.Color = COLORS.selected
+                elseif isVisited then
+                    part.Color = COLORS.visited
+                else
+                    part.Color = COLORS.adjacent
+                end
             else
-                part.Color = COLORS.adjacent
+                -- Hide unexplored non-adjacent rooms
+                part.Transparency = 1
             end
         end
 
-        -- Check if we need to add newly revealed adjacent rooms
-        for roomId, _ in pairs(adjacentRooms) do
-            if not state.roomParts[roomId] and layout.rooms[roomId] then
-                -- Need to rebuild model to add new room
-                buildModel(self)
-                return
+        -- Update pad marker visibility (show only in visited rooms)
+        for padId, padParts in pairs(state.padParts or {}) do
+            local isRoomVisited = state.visitedRooms[padParts.roomId] or state.visitedRooms[tostring(padParts.roomId)]
+
+            if isRoomVisited then
+                padParts.glow.Transparency = 0.6
+                padParts.core.Transparency = 0
+                padParts.light.Enabled = true
+            else
+                padParts.glow.Transparency = 1
+                padParts.core.Transparency = 1
+                padParts.light.Enabled = false
             end
         end
     end
@@ -873,10 +916,21 @@ local MiniMap = Node.extend(function(parent)
         local offsetY = math.sin(pitchRad) * distance
         local offsetZ = math.cos(yawRad) * math.cos(pitchRad) * distance
 
-        -- Target is at pan offset (model is centered at origin)
+        -- Target is player's current room (pivot point for rotation)
         local targetX = state.cameraPanX
         local targetY = 0
         local targetZ = state.cameraPanZ
+
+        -- Calculate current room's scaled position as pivot point
+        if state.currentRoom and state.layout and state.layout.rooms then
+            local currentRoom = state.layout.rooms[state.currentRoom]
+            if currentRoom then
+                local center = state.layoutCenter
+                targetX = (currentRoom.position[1] - center.x) * SCALE + state.cameraPanX
+                targetY = (currentRoom.position[2] - center.y) * SCALE
+                targetZ = (currentRoom.position[3] - center.z) * SCALE + state.cameraPanZ
+            end
+        end
 
         local cameraPos = Vector3.new(
             targetX + offsetX,
@@ -1051,49 +1105,81 @@ local MiniMap = Node.extend(function(parent)
 
         In = {
             --[[
-                Handle map data response from RegionManager.
+                Handle minimap build request from RegionManager (during map load).
+                Builds geometry for the new region, then signals ready.
 
                 @param data table:
-                    layout: table - The Layout table
-                    visitedRooms: table - Set of visited room IDs
-                    currentRoom: number - Current room ID
-                    padLinks: table - { [padId] = { regionId, padId } } for portal destinations
+                    layout: table - The Layout table with rooms, doors, pads
+                    player: Player - The player this is for
             --]]
-            onMapData = function(self, data)
-                if not data then return end
+            onBuildMiniMap = function(self, data)
+                if not data or not data.layout then return end
 
                 local state = getState(self)
                 local player = Players.LocalPlayer
 
-                -- Only update for local player
-                if data.player and data.player ~= player then return end
+                -- Only process for local player
+                if data._targetPlayer and data._targetPlayer ~= player then return end
 
-                -- Store fresh data
+                -- Store layout
                 state.layout = data.layout
-                state.visitedRooms = data.visitedRooms or {}
-                state.currentRoom = data.currentRoom
-                state.stats = data.stats
-                state.padLinks = data.padLinks or {}
+                state.regionNum = data.layout.regionNum
 
-                -- Set selected room to current room on map open
-                state.selectedRoom = data.currentRoom
+                -- Destroy old geometry and build new
+                destroyRoomParts(state)
 
-                -- Clear old room parts and player marker
-                if state.worldModel then
-                    state.worldModel:ClearAllChildren()
-                end
-                state.roomParts = {}
-                state.playerMarker = nil
-
-                -- Reset camera for new data
+                -- Reset camera for new layout
                 state.cameraPanX = 0
                 state.cameraPanZ = 0
                 state.cameraYaw = 0
                 state.cameraPitch = 45
 
-                -- Build the model and update display
+                -- Build the 3D model (geometry only, no colors yet)
                 buildModel(self)
                 updateCamera(self)
+
+                -- Signal back to RegionManager that we're ready
+                self.Out:Fire("miniMapReady", {
+                    player = player,
+                })
+            end,
+
+            --[[
+                Handle visited state response from RegionManager (when map is opened).
+                Updates room colors and player marker based on current exploration state.
+
+                @param data table:
+                    visitedRooms: table - Set of visited room IDs
+                    currentRoom: number - Current room ID
+                    padLinks: table - { [padId] = { regionId, padId } } for portal destinations
+                    stats: table - Exploration statistics
+            --]]
+            onVisitedState = function(self, data)
+                if not data then return end
+
+                local state = getState(self)
+                local player = Players.LocalPlayer
+
+                -- Only process for local player
+                if data._targetPlayer and data._targetPlayer ~= player then return end
+
+                -- Discard if we didn't request this
+                if not state.pendingVisitedRequest then return end
+                state.pendingVisitedRequest = false
+
+                -- Update state with fresh visited data
+                state.visitedRooms = data.visitedRooms or {}
+                state.currentRoom = data.currentRoom
+                state.stats = data.stats
+                state.padLinks = data.padLinks or {}
+
+                -- Set selected room to current room
+                state.selectedRoom = data.currentRoom
+
+                -- Update colors and markers (geometry already exists)
+                updateRoomColors(self)
+                updatePlayerMarker(self)
+                updateStats(self)
                 updatePortalInfo(self)
             end,
 
@@ -1110,10 +1196,42 @@ local MiniMap = Node.extend(function(parent)
             onHideMap = function(self)
                 closeMap(self)
             end,
+
+            --[[
+                Handle region transition start - close map and block opening.
+            --]]
+            onTransitionStart = function(self, data)
+                local state = getState(self)
+                local player = Players.LocalPlayer
+
+                if data._targetPlayer and data._targetPlayer ~= player then return end
+
+                -- Block map opening during transition
+                state.gameplayActive = false
+
+                -- Close map if open (geometry will be rebuilt via onBuildMiniMap)
+                if state.isOpen then
+                    closeMap(self)
+                end
+            end,
+
+            --[[
+                Handle region transition end - allow map to be opened.
+            --]]
+            onTransitionEnd = function(self, data)
+                local state = getState(self)
+                local player = Players.LocalPlayer
+
+                if data._targetPlayer and data._targetPlayer ~= player then return end
+
+                -- Allow map opening now that gameplay is active
+                state.gameplayActive = true
+            end,
         },
 
         Out = {
-            requestMapData = {},
+            miniMapReady = {},
+            requestVisitedState = {},
         },
     }
 end)

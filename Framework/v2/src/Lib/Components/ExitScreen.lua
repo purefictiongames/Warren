@@ -528,6 +528,7 @@ local ExitScreen = Node.extend(function(parent)
                     local keyCode = input.KeyCode
 
                     -- Toggle with Select/Touchpad button or Escape (open or close)
+                    -- PS4 touchpad click maps to ButtonSelect
                     if keyCode == Enum.KeyCode.ButtonSelect or keyCode == Enum.KeyCode.Escape then
                         toggleExitScreen(self)
                         return

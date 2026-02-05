@@ -43,9 +43,13 @@
             - Fired when player enters a room or on initial spawn
             - visitedRooms: Set of room IDs player has visited in this region
 
-        mapData({ player, layout, visitedRooms, currentRoom })
-            - Response to requestMapData from MiniMap
-            - Contains layout and current state for map display
+        buildMiniMap({ player, layout })
+            - Fired after region geometry is built, before loadingComplete
+            - MiniMap should build geometry and signal miniMapReady
+
+        visitedState({ player, visitedRooms, currentRoom, padLinks, stats })
+            - Response to requestVisitedState from MiniMap
+            - Contains visited state for color updates when map is opened
 
         transitionStart({ player, regionId, padId })
             - Fired when teleport begins (triggers client fade-out)
@@ -66,8 +70,12 @@
         onTransitionComplete({ player })
             - From ScreenTransition when fade-in finishes
 
-        onRequestMapData({ player })
-            - From MiniMap when it needs current map data
+        onMiniMapReady({ player })
+            - From MiniMap when geometry build is complete
+            - Continues the load chain by firing loadingComplete
+
+        onRequestVisitedState({ player })
+            - From MiniMap when map is opened, needs current visited rooms
 
     ============================================================================
     PERSISTENCE (Seed-Based)
@@ -172,6 +180,11 @@ local RegionManager = Node.extend(function(parent)
                 -- Per-player pending transitions (for async flow)
                 -- { [Player] = { regionId, padId, isNewRegion, sourceRegionId, sourcePadId } }
                 pendingTransitions = {},
+                -- Per-player pending minimap builds (waiting for miniMapReady)
+                -- { [Player] = { container } }
+                pendingMiniMapBuild = {},
+                -- Per-player skip data load flags (after clearing saved data)
+                skipDataLoad = {},
                 -- Global unlinked pad count for infinite expansion
                 unlinkedPadCount = 0,
             }
@@ -1340,6 +1353,13 @@ local RegionManager = Node.extend(function(parent)
                             #layout.pads
                         ))
                     end
+
+                    -- Fire buildMiniMap to client (builds while title fades out)
+                    self.Out:Fire("buildMiniMap", {
+                        _targetPlayer = player,
+                        player = player,
+                        layout = layout,
+                    })
                 end
 
                 -- Fire hideTitle signal to client to fade out title screen
@@ -1347,6 +1367,14 @@ local RegionManager = Node.extend(function(parent)
                     _targetPlayer = player,
                     player = player,
                 })
+
+                -- Fire transitionEnd after title fades (enables minimap, etc.)
+                task.delay(0.6, function()
+                    self.Out:Fire("transitionEnd", {
+                        _targetPlayer = player,
+                        player = player,
+                    })
+                end)
 
                 -- Handle character setup (moved from Bootstrap.server.lua)
                 local function onCharacterAdded(character)
@@ -1528,24 +1556,31 @@ local RegionManager = Node.extend(function(parent)
                     System.Debug.info("RegionManager", "Fade complete for", player.Name, "- loading region")
                 end
 
-                local container
+                local container, layout
                 if pending.isNewRegion then
                     -- Generate new region
                     local newRegionId = createNewRegionAsync(self, pending.sourceRegionId, pending.sourcePadId, player)
                     local newRegion = state.regions[newRegionId]
                     container = newRegion and newRegion.container
+                    layout = newRegion and newRegion.layout
                 else
                     -- Load existing region
                     teleportToRegionAsync(self, pending.targetRegionId, pending.targetPadId, player)
                     local targetRegion = state.regions[pending.targetRegionId]
                     container = targetRegion and targetRegion.container
+                    layout = targetRegion and targetRegion.layout
                 end
 
-                -- Fire loading complete to client with container for preloading
-                self.Out:Fire("loadingComplete", {
+                -- Store pending minimap build (will fire loadingComplete when ready)
+                state.pendingMiniMapBuild[player] = {
+                    container = container,
+                }
+
+                -- Fire buildMiniMap to client - client will signal miniMapReady when done
+                self.Out:Fire("buildMiniMap", {
                     _targetPlayer = player,
                     player = player,
-                    container = container,
+                    layout = layout,
                 })
             end,
 
@@ -1626,7 +1661,11 @@ local RegionManager = Node.extend(function(parent)
                 @param data table:
                     player: Player - The requesting player
             --]]
-            onRequestMapData = function(self, data)
+            --[[
+                Handle visited state request from MiniMap (when map is opened).
+                Sends current visited rooms, current room, and stats (no layout).
+            --]]
+            onRequestVisitedState = function(self, data)
                 if not data or not data.player then return end
 
                 local state = getState(self)
@@ -1675,11 +1714,10 @@ local RegionManager = Node.extend(function(parent)
                     completion = math.floor((discoveredItems / totalItems) * 100)
                 end
 
-                -- Send map data back to MiniMap
-                self.Out:Fire("mapData", {
+                -- Send visited state back to MiniMap
+                self.Out:Fire("visitedState", {
                     _targetPlayer = player,
                     player = player,
-                    layout = layout,
                     visitedRooms = visitedRooms,
                     currentRoom = currentRoom,
                     padLinks = activeRegion.padLinks or {},
@@ -1690,6 +1728,35 @@ local RegionManager = Node.extend(function(parent)
                         discoveredPortals = discoveredPortals,
                         completion = completion,
                     },
+                })
+            end,
+
+            --[[
+                Handle minimap ready signal from MiniMap.
+                Continues the region load chain after minimap geometry is built.
+            --]]
+            onMiniMapReady = function(self, data)
+                if not data or not data.player then return end
+
+                local state = getState(self)
+                local player = data.player
+                local pending = state.pendingMiniMapBuild and state.pendingMiniMapBuild[player]
+
+                if not pending then return end
+
+                local System = self._System
+                if System and System.Debug then
+                    System.Debug.info("RegionManager", "MiniMap ready for", player.Name)
+                end
+
+                -- Clear pending state
+                state.pendingMiniMapBuild[player] = nil
+
+                -- Fire loading complete to client with container for preloading
+                self.Out:Fire("loadingComplete", {
+                    _targetPlayer = player,
+                    player = player,
+                    container = pending.container,
                 })
             end,
 
@@ -1736,7 +1803,8 @@ local RegionManager = Node.extend(function(parent)
             loadingComplete = {},
             transitionEnd = {},
             areaInfo = {},
-            mapData = {},
+            buildMiniMap = {},
+            visitedState = {},
             savedDataCleared = {},
         },
 

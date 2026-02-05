@@ -92,16 +92,14 @@ local AreaHUD = Node.extend(function(parent)
         screenGui.DisplayOrder = 10
         screenGui.Parent = playerGui
 
-        -- Calculate container size based on longest text (ID can be up to 10 digits)
-        local idText = "ID: " .. tostring(player.UserId)
+        -- Calculate container size based on longest text
         local maxTextWidth = math.max(
             PixelFont.getTextWidth("AREA: 999", PIXEL_SCALE, 0),
-            PixelFont.getTextWidth("ROOM: 999", PIXEL_SCALE, 0),
-            PixelFont.getTextWidth(idText, PIXEL_SCALE, 0)
+            PixelFont.getTextWidth("ROOM: 999", PIXEL_SCALE, 0)
         )
         local containerWidth = maxTextWidth + PADDING * 2
         local lineHeight = 8 * PIXEL_SCALE  -- 8px base char height
-        local containerHeight = lineHeight * 3 + PADDING * 2 + 8  -- 3 lines + padding + spacing
+        local containerHeight = lineHeight * 2 + PADDING * 2 + 4  -- 2 lines + padding + spacing
 
         -- Create container frame (top-right corner)
         local container = Instance.new("Frame")
@@ -136,19 +134,9 @@ local AreaHUD = Node.extend(function(parent)
         roomLabel.Position = UDim2.new(0, PADDING, 0, PADDING + lineHeight + 4)
         roomLabel.Parent = container
 
-        -- User ID label (row 3) - pixel text
-        local userLabel = PixelFont.createText(idText, {
-            scale = PIXEL_SCALE,
-            color = Color3.fromRGB(150, 150, 150),
-        })
-        userLabel.Name = "UserLabel"
-        userLabel.Position = UDim2.new(0, PADDING, 0, PADDING + (lineHeight + 4) * 2)
-        userLabel.Parent = container
-
         state.screenGui = screenGui
         state.areaLabel = areaLabel
         state.roomLabel = roomLabel
-        state.userLabel = userLabel
     end
 
     ----------------------------------------------------------------------------

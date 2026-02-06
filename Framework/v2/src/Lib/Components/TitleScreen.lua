@@ -48,7 +48,7 @@ local TitleScreen = Node.extend(function(parent)
 
     local ORANGE_BORDER = Color3.fromRGB(255, 140, 0)
     local FADE_DURATION = 0.5
-    local BUILD_NUMBER = 192
+    local BUILD_NUMBER = 193
     local TITLE_MUSIC_ID = "rbxassetid://115218802234328"
     local GAMEPLAY_MUSIC_ID = "rbxassetid://127750735513287"
     local PIXEL_SCALE = 3  -- 24px equivalent (8 * 3)
@@ -66,6 +66,7 @@ local TitleScreen = Node.extend(function(parent)
                 inputConnection = nil,
                 inputClaim = nil,   -- InputCapture claim for hiding CoreGui
                 music = nil,        -- Background music Sound instance
+                blinkLoop = nil,    -- Active button text blink animation
                 -- Options menu state
                 optionsMenuOpen = false,
                 optionsFrame = nil,
@@ -93,6 +94,10 @@ local TitleScreen = Node.extend(function(parent)
                 state.music:Destroy()
                 state.music = nil
             end
+            if state.blinkLoop then
+                task.cancel(state.blinkLoop)
+                state.blinkLoop = nil
+            end
             if state.screenGui then
                 state.screenGui:Destroy()
             end
@@ -109,6 +114,8 @@ local TitleScreen = Node.extend(function(parent)
     local BRACKET_WIDTH = 4      -- Width of bracket bars
     local BRACKET_CORNER = 8     -- Corner radius
     local BRACKET_GAP = 6        -- Gap between bracket and button
+    local BRACKET_COLOR = Color3.fromRGB(255, 255, 255)  -- White (matches text)
+    local BLINK_RATE = 0.5       -- Seconds per blink cycle
 
     -- Create bracket-style selection borders for a button
     -- Returns { left = Frame, right = Frame }
@@ -120,7 +127,7 @@ local TitleScreen = Node.extend(function(parent)
         leftBracket.Name = "LeftBracket"
         leftBracket.Size = UDim2.fromOffset(BRACKET_WIDTH, buttonHeight)
         leftBracket.Position = UDim2.fromOffset(-BRACKET_GAP - BRACKET_WIDTH, 0)
-        leftBracket.BackgroundColor3 = ORANGE_BORDER
+        leftBracket.BackgroundColor3 = BRACKET_COLOR
         leftBracket.BorderSizePixel = 0
         leftBracket.Visible = false
         leftBracket.ZIndex = button.ZIndex + 1
@@ -135,7 +142,7 @@ local TitleScreen = Node.extend(function(parent)
         rightBracket.Name = "RightBracket"
         rightBracket.Size = UDim2.fromOffset(BRACKET_WIDTH, buttonHeight)
         rightBracket.Position = UDim2.new(1, BRACKET_GAP, 0, 0)
-        rightBracket.BackgroundColor3 = ORANGE_BORDER
+        rightBracket.BackgroundColor3 = BRACKET_COLOR
         rightBracket.BorderSizePixel = 0
         rightBracket.Visible = false
         rightBracket.ZIndex = button.ZIndex + 1
@@ -154,6 +161,58 @@ local TitleScreen = Node.extend(function(parent)
         local rightBracket = button:FindFirstChild("RightBracket")
         if leftBracket then leftBracket.Visible = visible end
         if rightBracket then rightBracket.Visible = visible end
+    end
+
+    -- Start blinking animation for active button text and brackets
+    local function startBlinkLoop(state)
+        if state.blinkLoop then return end
+
+        state.blinkLoop = task.spawn(function()
+            local blinkOn = true
+            while state.isVisible and not state.optionsMenuOpen do
+                -- Get active button text and brackets
+                local activeText = state.buttonTexts[state.selectedIndex]
+                local activeButton = state.buttons[state.selectedIndex]
+
+                if activeText and activeButton then
+                    -- Toggle visibility
+                    blinkOn = not blinkOn
+                    local transparency = blinkOn and 0 or 0.7
+
+                    PixelFont.setTransparency(activeText, transparency)
+
+                    -- Also blink brackets
+                    local leftBracket = activeButton:FindFirstChild("LeftBracket")
+                    local rightBracket = activeButton:FindFirstChild("RightBracket")
+                    if leftBracket then leftBracket.BackgroundTransparency = transparency end
+                    if rightBracket then rightBracket.BackgroundTransparency = transparency end
+                end
+
+                task.wait(BLINK_RATE)
+            end
+        end)
+    end
+
+    local function stopBlinkLoop(state)
+        if state.blinkLoop then
+            task.cancel(state.blinkLoop)
+            state.blinkLoop = nil
+        end
+        -- Reset all text to fully visible
+        if state.buttonTexts then
+            for _, textFrame in ipairs(state.buttonTexts) do
+                PixelFont.setTransparency(textFrame, 0)
+            end
+        end
+        -- Reset all brackets to fully visible
+        if state.buttons then
+            for _, button in ipairs(state.buttons) do
+                local leftBracket = button:FindFirstChild("LeftBracket")
+                local rightBracket = button:FindFirstChild("RightBracket")
+                if leftBracket then leftBracket.BackgroundTransparency = 0 end
+                if rightBracket then rightBracket.BackgroundTransparency = 0 end
+            end
+        end
     end
 
     -- Options menu uses bracket borders on the clear data button (created in createOptionsMenu)
@@ -358,6 +417,8 @@ local TitleScreen = Node.extend(function(parent)
     end
 
     local function showOptionsMenu(state)
+        -- Stop blink animation
+        stopBlinkLoop(state)
         -- Hide main menu buttons and text
         for _, button in ipairs(state.buttons or {}) do
             button.Visible = false
@@ -389,6 +450,8 @@ local TitleScreen = Node.extend(function(parent)
         for _, textFrame in ipairs(state.buttonTexts or {}) do
             textFrame.Visible = true
         end
+        -- Restart blink animation
+        startBlinkLoop(state)
     end
 
     local function showOptionsConfirm(state)
@@ -416,16 +479,21 @@ local TitleScreen = Node.extend(function(parent)
 
     local function updateButtonHighlight(state)
         for i, button in ipairs(state.buttons) do
+            local textFrame = state.buttonTexts[i]
             if i == state.selectedIndex then
                 -- Active: black, 50% transparent, show brackets
                 button.BackgroundColor3 = BUTTON_ACTIVE_COLOR
                 button.BackgroundTransparency = 0.5
                 setBracketVisible(button, true)
             else
-                -- Inactive: black, 50% transparent, hide brackets
+                -- Inactive: black, 50% transparent, hide brackets, reset text visibility
                 button.BackgroundColor3 = BUTTON_INACTIVE_COLOR
                 button.BackgroundTransparency = 0.5
                 setBracketVisible(button, false)
+                -- Reset inactive button text to fully visible
+                if textFrame then
+                    PixelFont.setTransparency(textFrame, 0)
+                end
             end
         end
     end
@@ -905,6 +973,9 @@ local TitleScreen = Node.extend(function(parent)
         -- Set initial selection (Start button)
         state.selectedIndex = 1
         -- Initial highlight already set via isActive parameter in createMenuButton
+
+        -- Start blink animation for active button
+        startBlinkLoop(state)
 
         -- Footer text - copyright line (starts invisible for fade-in)
         local copyrightStr = "(C) 2025-2026 PURE FICTION RECORDS/ALPHARABBIT GAMES"

@@ -48,7 +48,7 @@ local TitleScreen = Node.extend(function(parent)
 
     local ORANGE_BORDER = Color3.fromRGB(255, 140, 0)
     local FADE_DURATION = 0.5
-    local BUILD_NUMBER = 202
+    local BUILD_NUMBER = 203
     local TITLE_MUSIC_ID = "rbxassetid://115218802234328"
     local GAMEPLAY_MUSIC_ID = "rbxassetid://127750735513287"
     local PIXEL_SCALE = 5  -- 40px equivalent (8 * 5)
@@ -1056,7 +1056,9 @@ local TitleScreen = Node.extend(function(parent)
         local footerPanel = Instance.new("Frame")
         footerPanel.Name = "FooterPanel"
         footerPanel.Size = UDim2.fromOffset(footerPanelWidth, footerPanelHeight)
-        footerPanel.Position = UDim2.new(0.5, -footerPanelWidth / 2, 0.88, 0)
+        -- Anchor to bottom of screen with fixed margin
+        local bottomMargin = 24
+        footerPanel.Position = UDim2.new(0.5, -footerPanelWidth / 2, 1, -footerPanelHeight - bottomMargin)
         footerPanel.BackgroundColor3 = PANEL_COLOR
         footerPanel.BackgroundTransparency = 0.3
         footerPanel.BorderSizePixel = 0

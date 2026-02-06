@@ -34,6 +34,7 @@ local SoundService = game:GetService("SoundService")
 local Node = require(script.Parent.Parent.Node)
 local System = require(script.Parent.Parent.System)
 local PixelFont = require(script.Parent.Parent.PixelFont)
+local TitleDiorama = require(script.Parent.TitleDiorama)
 
 --------------------------------------------------------------------------------
 -- TITLESCREEN NODE
@@ -48,7 +49,7 @@ local TitleScreen = Node.extend(function(parent)
 
     local ORANGE_BORDER = Color3.fromRGB(255, 140, 0)
     local FADE_DURATION = 0.5
-    local BUILD_NUMBER = 206
+    local BUILD_NUMBER = 207
     local TITLE_MUSIC_ID = "rbxassetid://115218802234328"
     local GAMEPLAY_MUSIC_ID = "rbxassetid://127750735513287"
     local PIXEL_SCALE = 5  -- 40px equivalent (8 * 5)
@@ -68,6 +69,10 @@ local TitleScreen = Node.extend(function(parent)
                 music = nil,        -- Background music Sound instance
                 blinkLoop = nil,    -- Active button text blink animation
                 menuPanel = nil,    -- Shared background panel for menu buttons
+                diorama = nil,      -- 3D background diorama model
+                dioramaCamera = nil, -- Camera for diorama view
+                dioramaRotation = nil, -- RenderStepped connection for rotation
+                originalCamera = nil, -- Store original camera to restore later
                 -- Options menu state
                 optionsMenuOpen = false,
                 optionsFrame = nil,
@@ -98,6 +103,24 @@ local TitleScreen = Node.extend(function(parent)
             if state.blinkLoop then
                 task.cancel(state.blinkLoop)
                 state.blinkLoop = nil
+            end
+            -- Cleanup diorama
+            if state.dioramaRotation then
+                state.dioramaRotation:Disconnect()
+                state.dioramaRotation = nil
+            end
+            if state.diorama then
+                TitleDiorama.destroy(state.diorama)
+                state.diorama = nil
+            end
+            if state.dioramaCamera then
+                state.dioramaCamera:Destroy()
+                state.dioramaCamera = nil
+            end
+            -- Restore original camera
+            if state.originalCamera then
+                workspace.CurrentCamera = state.originalCamera
+                state.originalCamera = nil
             end
             if state.screenGui then
                 state.screenGui:Destroy()
@@ -697,7 +720,7 @@ local TitleScreen = Node.extend(function(parent)
         end
     end
 
-    local function fadeOutBackgroundImage(self, callback)
+    local function fadeOutBackgroundOverlay(self, callback)
         local state = getState(self)
         if not state.screenGui then
             if callback then callback() end
@@ -710,11 +733,11 @@ local TitleScreen = Node.extend(function(parent)
             return
         end
 
-        -- Fade only the image, keep black background visible
+        -- Fade the overlay to show more of the diorama
         local tween = TweenService:Create(
             background,
             TweenInfo.new(FADE_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-            { ImageTransparency = 1 }
+            { BackgroundTransparency = 0.7 }
         )
 
         tween.Completed:Connect(function()
@@ -846,15 +869,25 @@ local TitleScreen = Node.extend(function(parent)
         music:Play()
         state.music = music
 
-        -- Create full-screen background image
-        local background = Instance.new("ImageLabel")
+        -- Create 3D diorama background
+        state.diorama = TitleDiorama.create()
+
+        -- Set up rotating camera
+        state.originalCamera = workspace.CurrentCamera
+        state.dioramaCamera = TitleDiorama.createCamera()
+        state.dioramaCamera.Parent = workspace
+        workspace.CurrentCamera = state.dioramaCamera
+
+        -- Start camera rotation
+        state.dioramaRotation = TitleDiorama.startRotation(state.dioramaCamera)
+
+        -- Create semi-transparent background overlay for UI readability
+        local background = Instance.new("Frame")
         background.Name = "Background"
         background.Size = UDim2.new(1, 0, 1, 0)
         background.Position = UDim2.new(0, 0, 0, 0)
-        background.Image = "rbxassetid://114898388494877"
-        background.ScaleType = Enum.ScaleType.Crop
         background.BackgroundColor3 = Color3.new(0, 0, 0)
-        background.BackgroundTransparency = 0
+        background.BackgroundTransparency = 0.3  -- Semi-transparent to see diorama
         background.BorderSizePixel = 0
         background.ZIndex = 1
         background.Parent = screenGui
@@ -1163,21 +1196,39 @@ local TitleScreen = Node.extend(function(parent)
             state.footerTexts = {}
 
             -- Step 3: Fade out background image (keep black background)
-            fadeOutBackgroundImage(self, function()
+            fadeOutBackgroundOverlay(self, function()
                 -- Step 4: Show "Starting...." text for 2 seconds
                 showLoadingText(self, function()
                     -- Step 5: Fade out black background to reveal dungeon
                     fadeOutBlackBackground(self, function()
-                        -- Step 6: Restore Roblox CoreGui/topbar by releasing input claim
+                        -- Step 6: Cleanup diorama and restore camera
+                        if state.dioramaRotation then
+                            state.dioramaRotation:Disconnect()
+                            state.dioramaRotation = nil
+                        end
+                        if state.diorama then
+                            TitleDiorama.destroy(state.diorama)
+                            state.diorama = nil
+                        end
+                        if state.dioramaCamera then
+                            state.dioramaCamera:Destroy()
+                            state.dioramaCamera = nil
+                        end
+                        if state.originalCamera then
+                            workspace.CurrentCamera = state.originalCamera
+                            state.originalCamera = nil
+                        end
+
+                        -- Step 7: Restore Roblox CoreGui/topbar by releasing input claim
                         if state.inputClaim then
                             state.inputClaim:release()
                             state.inputClaim = nil
                         end
 
-                        -- Step 7: Start gameplay music (after 2 second delay)
+                        -- Step 8: Start gameplay music (after 2 second delay)
                         startGameplayMusic()
 
-                        -- Step 8: Destroy and cleanup
+                        -- Step 9: Destroy and cleanup
                         if state.screenGui then
                             state.screenGui:Destroy()
                             state.screenGui = nil

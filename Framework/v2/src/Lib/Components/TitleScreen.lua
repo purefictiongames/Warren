@@ -48,7 +48,7 @@ local TitleScreen = Node.extend(function(parent)
 
     local ORANGE_BORDER = Color3.fromRGB(255, 140, 0)
     local FADE_DURATION = 0.5
-    local BUILD_NUMBER = 201
+    local BUILD_NUMBER = 202
     local TITLE_MUSIC_ID = "rbxassetid://115218802234328"
     local GAMEPLAY_MUSIC_ID = "rbxassetid://127750735513287"
     local PIXEL_SCALE = 5  -- 40px equivalent (8 * 5)
@@ -68,6 +68,7 @@ local TitleScreen = Node.extend(function(parent)
                 music = nil,        -- Background music Sound instance
                 blinkLoop = nil,    -- Active button text blink animation
                 menuPanel = nil,    -- Shared background panel for menu buttons
+                footerPanel = nil,  -- Shared background panel for footer text
                 -- Options menu state
                 optionsMenuOpen = false,
                 optionsFrame = nil,
@@ -423,6 +424,9 @@ local TitleScreen = Node.extend(function(parent)
         if state.menuPanel then
             state.menuPanel.Visible = false
         end
+        if state.footerPanel then
+            state.footerPanel.Visible = false
+        end
         -- Show options frame
         if state.optionsFrame then
             state.optionsMenuOpen = true
@@ -449,6 +453,9 @@ local TitleScreen = Node.extend(function(parent)
         end
         if state.menuPanel then
             state.menuPanel.Visible = true
+        end
+        if state.footerPanel then
+            state.footerPanel.Visible = true
         end
         -- Restart blink animation
         startBlinkLoop(state)
@@ -589,6 +596,21 @@ local TitleScreen = Node.extend(function(parent)
             end
         end
 
+        -- Fade in footer panel (same style as menu panel)
+        if state.footerPanel then
+            state.footerPanel.BackgroundTransparency = 1  -- Start invisible
+            table.insert(tweens, TweenService:Create(state.footerPanel, tweenInfo, {
+                BackgroundTransparency = 0.3,
+            }))
+            local stroke = state.footerPanel:FindFirstChildOfClass("UIStroke")
+            if stroke then
+                stroke.Transparency = 1  -- Start invisible
+                table.insert(tweens, TweenService:Create(stroke, tweenInfo, {
+                    Transparency = 0,
+                }))
+            end
+        end
+
         -- Fade in button pixel text
         for _, textFrame in ipairs(state.buttonTexts) do
             PixelFont.fadeIn(textFrame, FADE_DURATION)
@@ -648,6 +670,19 @@ local TitleScreen = Node.extend(function(parent)
             }))
             -- Also fade the border stroke
             local stroke = state.menuPanel:FindFirstChildOfClass("UIStroke")
+            if stroke then
+                table.insert(tweens, TweenService:Create(stroke, tweenInfo, {
+                    Transparency = 1,
+                }))
+            end
+        end
+
+        -- Fade out footer panel (shared background for footer)
+        if state.footerPanel then
+            table.insert(tweens, TweenService:Create(state.footerPanel, tweenInfo, {
+                BackgroundTransparency = 1,
+            }))
+            local stroke = state.footerPanel:FindFirstChildOfClass("UIStroke")
             if stroke then
                 table.insert(tweens, TweenService:Create(stroke, tweenInfo, {
                     Transparency = 1,
@@ -1008,30 +1043,58 @@ local TitleScreen = Node.extend(function(parent)
         -- Start blink animation for active button
         startBlinkLoop(state)
 
-        -- Footer text - copyright line (starts invisible for fade-in)
-        local copyrightStr = "(C) 2025-2026 PURE FICTION RECORDS/ALPHARABBIT GAMES"
+        -- Footer panel (same style as menu panel)
+        local copyrightStr = "(C) 2025-2026 PURE FICTION RECORDS"
+        local buildStr = "DEMO BUILD " .. BUILD_NUMBER
+
+        -- Calculate footer dimensions using same metrics as menu
+        local footerTextHeight = textHeight
+        local footerLineHeight = footerTextHeight + buttonPadding * 2
+        local footerPanelHeight = footerLineHeight * 2 + buttonSpacing + menuPadding * 2
+        local footerPanelWidth = 420  -- Wide enough for copyright text
+
+        local footerPanel = Instance.new("Frame")
+        footerPanel.Name = "FooterPanel"
+        footerPanel.Size = UDim2.fromOffset(footerPanelWidth, footerPanelHeight)
+        footerPanel.Position = UDim2.new(0.5, -footerPanelWidth / 2, 0.88, 0)
+        footerPanel.BackgroundColor3 = PANEL_COLOR
+        footerPanel.BackgroundTransparency = 0.3
+        footerPanel.BorderSizePixel = 0
+        footerPanel.ZIndex = 1
+        footerPanel.Parent = screenGui
+
+        local footerCorner = Instance.new("UICorner")
+        footerCorner.CornerRadius = UDim.new(0, 4)
+        footerCorner.Parent = footerPanel
+
+        local footerStroke = Instance.new("UIStroke")
+        footerStroke.Color = PANEL_BORDER_COLOR
+        footerStroke.Thickness = 1
+        footerStroke.Parent = footerPanel
+
+        state.footerPanel = footerPanel
+
+        -- Copyright line (inside footer panel)
         local copyrightText = PixelFont.createText(copyrightStr, {
-            scale = PIXEL_SCALE_SMALL,
+            scale = PIXEL_SCALE,
             color = Color3.fromRGB(255, 255, 255),
         })
         copyrightText.Name = "CopyrightText"
-        local copyrightWidth = PixelFont.getTextWidth(copyrightStr, PIXEL_SCALE_SMALL, 0)
-        copyrightText.Position = UDim2.new(0.5, -copyrightWidth / 2, 0.92, 0)
+        local copyrightWidth = copyrightText.Size.X.Offset
+        copyrightText.Position = UDim2.new(0.5, -copyrightWidth / 2, 0, menuPadding + buttonPadding)
         copyrightText.ZIndex = 2
-        PixelFont.setTransparency(copyrightText, 1)  -- Start invisible for fade
-        copyrightText.Parent = screenGui
+        copyrightText.Parent = footerPanel
 
-        -- Footer text - build number (starts invisible for fade-in)
-        local buildStr = "DEMO BUILD " .. BUILD_NUMBER
+        -- Build number (inside footer panel)
         local buildText = PixelFont.createText(buildStr, {
-            scale = PIXEL_SCALE_SMALL,
+            scale = PIXEL_SCALE,
             color = Color3.fromRGB(255, 255, 255),
         })
         buildText.Name = "BuildText"
-        local buildWidth = PixelFont.getTextWidth(buildStr, PIXEL_SCALE_SMALL, 0)
-        buildText.Position = UDim2.new(0.5, -buildWidth / 2, 0.95, 0)
+        local buildWidth = buildText.Size.X.Offset
+        buildText.Position = UDim2.new(0.5, -buildWidth / 2, 0, menuPadding + footerLineHeight + buttonSpacing + buttonPadding)
         buildText.ZIndex = 2
-        PixelFont.setTransparency(buildText, 1)  -- Start invisible for fade
+        buildText.Parent = footerPanel
         buildText.Parent = screenGui
 
         -- Store footer text references

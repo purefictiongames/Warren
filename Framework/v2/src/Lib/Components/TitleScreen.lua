@@ -48,7 +48,7 @@ local TitleScreen = Node.extend(function(parent)
 
     local ORANGE_BORDER = Color3.fromRGB(255, 140, 0)
     local FADE_DURATION = 0.5
-    local BUILD_NUMBER = 194
+    local BUILD_NUMBER = 195
     local TITLE_MUSIC_ID = "rbxassetid://115218802234328"
     local GAMEPLAY_MUSIC_ID = "rbxassetid://127750735513287"
     local PIXEL_SCALE = 3  -- 24px equivalent (8 * 3)
@@ -110,11 +110,12 @@ local TitleScreen = Node.extend(function(parent)
     -- BUTTON SELECTION
     ----------------------------------------------------------------------------
 
-    local BRACKET_WIDTH = 4      -- Width of bracket bars
-    local BRACKET_CORNER = 8     -- Corner radius
-    local BRACKET_GAP = 6        -- Gap between bracket and button
+    local BRACKET_WIDTH = 1      -- Width of bracket bars
+    local BRACKET_GAP = 3        -- Gap between bracket and button
     local BRACKET_COLOR = Color3.fromRGB(255, 255, 255)  -- White (matches text)
     local BLINK_RATE = 0.5       -- Seconds per blink cycle
+    local PANEL_COLOR = Color3.fromRGB(40, 50, 70)  -- Dark blue-slate
+    local PANEL_BORDER_COLOR = Color3.fromRGB(80, 100, 140)  -- Steel blue border
 
     -- Create bracket-style selection borders for a button
     -- Returns { left = Frame, right = Frame }
@@ -132,10 +133,6 @@ local TitleScreen = Node.extend(function(parent)
         leftBracket.ZIndex = button.ZIndex + 1
         leftBracket.Parent = button
 
-        local leftCorner = Instance.new("UICorner")
-        leftCorner.CornerRadius = UDim.new(0, BRACKET_CORNER)
-        leftCorner.Parent = leftBracket
-
         -- Right bracket
         local rightBracket = Instance.new("Frame")
         rightBracket.Name = "RightBracket"
@@ -146,10 +143,6 @@ local TitleScreen = Node.extend(function(parent)
         rightBracket.Visible = false
         rightBracket.ZIndex = button.ZIndex + 1
         rightBracket.Parent = button
-
-        local rightCorner = Instance.new("UICorner")
-        rightCorner.CornerRadius = UDim.new(0, BRACKET_CORNER)
-        rightCorner.Parent = rightBracket
 
         return { left = leftBracket, right = rightBracket }
     end
@@ -886,15 +879,20 @@ local TitleScreen = Node.extend(function(parent)
         menuPanel.Name = "MenuPanel"
         menuPanel.Size = UDim2.fromOffset(panelWidth, panelHeight)
         menuPanel.Position = UDim2.new(0.5, -panelWidth / 2, 0.52, -menuPadding)
-        menuPanel.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-        menuPanel.BackgroundTransparency = 0.5
+        menuPanel.BackgroundColor3 = PANEL_COLOR
+        menuPanel.BackgroundTransparency = 0.3
         menuPanel.BorderSizePixel = 0
         menuPanel.ZIndex = 1
         menuPanel.Parent = screenGui
 
         local panelCorner = Instance.new("UICorner")
-        panelCorner.CornerRadius = UDim.new(0, 12)
+        panelCorner.CornerRadius = UDim.new(0, 4)
         panelCorner.Parent = menuPanel
+
+        local panelStroke = Instance.new("UIStroke")
+        panelStroke.Color = PANEL_BORDER_COLOR
+        panelStroke.Thickness = 1
+        panelStroke.Parent = menuPanel
 
         state.menuPanel = menuPanel
 

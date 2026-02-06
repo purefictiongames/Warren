@@ -48,7 +48,7 @@ local TitleScreen = Node.extend(function(parent)
 
     local ORANGE_BORDER = Color3.fromRGB(255, 140, 0)
     local FADE_DURATION = 0.5
-    local BUILD_NUMBER = 199
+    local BUILD_NUMBER = 200
     local TITLE_MUSIC_ID = "rbxassetid://115218802234328"
     local GAMEPLAY_MUSIC_ID = "rbxassetid://127750735513287"
     local PIXEL_SCALE = 5  -- 40px equivalent (8 * 5)
@@ -577,8 +577,16 @@ local TitleScreen = Node.extend(function(parent)
         if state.menuPanel then
             state.menuPanel.BackgroundTransparency = 1  -- Start invisible
             table.insert(tweens, TweenService:Create(state.menuPanel, tweenInfo, {
-                BackgroundTransparency = 0.5,
+                BackgroundTransparency = 0.3,
             }))
+            -- Also fade in the border stroke
+            local stroke = state.menuPanel:FindFirstChildOfClass("UIStroke")
+            if stroke then
+                stroke.Transparency = 1  -- Start invisible
+                table.insert(tweens, TweenService:Create(stroke, tweenInfo, {
+                    Transparency = 0,
+                }))
+            end
         end
 
         -- Fade in button pixel text
@@ -638,6 +646,13 @@ local TitleScreen = Node.extend(function(parent)
             table.insert(tweens, TweenService:Create(state.menuPanel, tweenInfo, {
                 BackgroundTransparency = 1,
             }))
+            -- Also fade the border stroke
+            local stroke = state.menuPanel:FindFirstChildOfClass("UIStroke")
+            if stroke then
+                table.insert(tweens, TweenService:Create(stroke, tweenInfo, {
+                    Transparency = 1,
+                }))
+            end
         end
 
         -- Fade out button pixel text

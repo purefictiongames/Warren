@@ -48,7 +48,7 @@ local TitleScreen = Node.extend(function(parent)
 
     local ORANGE_BORDER = Color3.fromRGB(255, 140, 0)
     local FADE_DURATION = 0.5
-    local BUILD_NUMBER = 197
+    local BUILD_NUMBER = 198
     local TITLE_MUSIC_ID = "rbxassetid://115218802234328"
     local GAMEPLAY_MUSIC_ID = "rbxassetid://127750735513287"
     local PIXEL_SCALE = 5  -- 40px equivalent (8 * 5)
@@ -871,7 +871,7 @@ local TitleScreen = Node.extend(function(parent)
         -- Shared background panel for menu buttons
         -- Calculate dimensions based on expected button sizes
         local menuPadding = 8
-        local buttonSpacing = 3  -- Gap between buttons
+        local buttonSpacing = 2  -- Gap between buttons
         local textHeight = 8 * PIXEL_SCALE  -- 40px (8 = base pixel font size)
         local buttonPadding = 8
         local singleButtonHeight = textHeight + buttonPadding * 2

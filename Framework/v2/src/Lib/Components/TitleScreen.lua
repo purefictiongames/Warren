@@ -48,7 +48,7 @@ local TitleScreen = Node.extend(function(parent)
 
     local ORANGE_BORDER = Color3.fromRGB(255, 140, 0)
     local FADE_DURATION = 0.5
-    local BUILD_NUMBER = 193
+    local BUILD_NUMBER = 194
     local TITLE_MUSIC_ID = "rbxassetid://115218802234328"
     local GAMEPLAY_MUSIC_ID = "rbxassetid://127750735513287"
     local PIXEL_SCALE = 3  -- 24px equivalent (8 * 3)
@@ -67,6 +67,7 @@ local TitleScreen = Node.extend(function(parent)
                 inputClaim = nil,   -- InputCapture claim for hiding CoreGui
                 music = nil,        -- Background music Sound instance
                 blinkLoop = nil,    -- Active button text blink animation
+                menuPanel = nil,    -- Shared background panel for menu buttons
                 -- Options menu state
                 optionsMenuOpen = false,
                 optionsFrame = nil,
@@ -109,8 +110,6 @@ local TitleScreen = Node.extend(function(parent)
     -- BUTTON SELECTION
     ----------------------------------------------------------------------------
 
-    local BUTTON_ACTIVE_COLOR = Color3.fromRGB(0, 0, 0)  -- Black
-    local BUTTON_INACTIVE_COLOR = Color3.fromRGB(0, 0, 0)  -- Black
     local BRACKET_WIDTH = 4      -- Width of bracket bars
     local BRACKET_CORNER = 8     -- Corner radius
     local BRACKET_GAP = 6        -- Gap between bracket and button
@@ -419,12 +418,15 @@ local TitleScreen = Node.extend(function(parent)
     local function showOptionsMenu(state)
         -- Stop blink animation
         stopBlinkLoop(state)
-        -- Hide main menu buttons and text
+        -- Hide main menu buttons, text, and panel
         for _, button in ipairs(state.buttons or {}) do
             button.Visible = false
         end
         for _, textFrame in ipairs(state.buttonTexts or {}) do
             textFrame.Visible = false
+        end
+        if state.menuPanel then
+            state.menuPanel.Visible = false
         end
         -- Show options frame
         if state.optionsFrame then
@@ -443,12 +445,15 @@ local TitleScreen = Node.extend(function(parent)
             state.optionsConfirmOpen = false
             state.optionsConfirmFrame.Visible = false
         end
-        -- Show main menu buttons and text
+        -- Show main menu buttons, text, and panel
         for _, button in ipairs(state.buttons or {}) do
             button.Visible = true
         end
         for _, textFrame in ipairs(state.buttonTexts or {}) do
             textFrame.Visible = true
+        end
+        if state.menuPanel then
+            state.menuPanel.Visible = true
         end
         -- Restart blink animation
         startBlinkLoop(state)
@@ -481,14 +486,10 @@ local TitleScreen = Node.extend(function(parent)
         for i, button in ipairs(state.buttons) do
             local textFrame = state.buttonTexts[i]
             if i == state.selectedIndex then
-                -- Active: black, 50% transparent, show brackets
-                button.BackgroundColor3 = BUTTON_ACTIVE_COLOR
-                button.BackgroundTransparency = 0.5
+                -- Active: show brackets (button background is transparent, shared panel behind)
                 setBracketVisible(button, true)
             else
-                -- Inactive: black, 50% transparent, hide brackets, reset text visibility
-                button.BackgroundColor3 = BUTTON_INACTIVE_COLOR
-                button.BackgroundTransparency = 0.5
+                -- Inactive: hide brackets, reset text visibility
                 setBracketVisible(button, false)
                 -- Reset inactive button text to fully visible
                 if textFrame then
@@ -577,14 +578,12 @@ local TitleScreen = Node.extend(function(parent)
         local tweenInfo = TweenInfo.new(FADE_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
         local tweens = {}
 
-        -- Fade in buttons (TextButton backgrounds only)
-        -- Both active and inactive fade to 0.5 transparency
-        for i, button in ipairs(state.buttons) do
-            if button:IsA("TextButton") then
-                table.insert(tweens, TweenService:Create(button, tweenInfo, {
-                    BackgroundTransparency = 0.5,
-                }))
-            end
+        -- Fade in menu panel (shared background for buttons)
+        if state.menuPanel then
+            state.menuPanel.BackgroundTransparency = 1  -- Start invisible
+            table.insert(tweens, TweenService:Create(state.menuPanel, tweenInfo, {
+                BackgroundTransparency = 0.5,
+            }))
         end
 
         -- Fade in button pixel text
@@ -639,13 +638,11 @@ local TitleScreen = Node.extend(function(parent)
         local tweenInfo = TweenInfo.new(FADE_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
         local tweens = {}
 
-        -- Fade out buttons (TextButton backgrounds only)
-        for _, button in ipairs(state.buttons) do
-            if button:IsA("TextButton") then
-                table.insert(tweens, TweenService:Create(button, tweenInfo, {
-                    BackgroundTransparency = 1,
-                }))
-            end
+        -- Fade out menu panel (shared background for buttons)
+        if state.menuPanel then
+            table.insert(tweens, TweenService:Create(state.menuPanel, tweenInfo, {
+                BackgroundTransparency = 1,
+            }))
         end
 
         -- Fade out button pixel text
@@ -876,6 +873,31 @@ local TitleScreen = Node.extend(function(parent)
         studioIcon.ZIndex = 2
         studioIcon.Parent = screenGui
 
+        -- Shared background panel for menu buttons
+        -- Calculate dimensions based on expected button sizes
+        local menuPadding = 16
+        local buttonSpacing = 8  -- Gap between buttons
+        local textHeight = 8 * PIXEL_SCALE  -- 24px (8 = base pixel font size)
+        local singleButtonHeight = textHeight + menuPadding * 2  -- 56px
+        local panelHeight = singleButtonHeight * 2 + buttonSpacing + menuPadding * 2
+        local panelWidth = 180  -- Wide enough for OPTIONS button plus some margin
+
+        local menuPanel = Instance.new("Frame")
+        menuPanel.Name = "MenuPanel"
+        menuPanel.Size = UDim2.fromOffset(panelWidth, panelHeight)
+        menuPanel.Position = UDim2.new(0.5, -panelWidth / 2, 0.52, -menuPadding)
+        menuPanel.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+        menuPanel.BackgroundTransparency = 0.5
+        menuPanel.BorderSizePixel = 0
+        menuPanel.ZIndex = 1
+        menuPanel.Parent = screenGui
+
+        local panelCorner = Instance.new("UICorner")
+        panelCorner.CornerRadius = UDim.new(0, 12)
+        panelCorner.Parent = menuPanel
+
+        state.menuPanel = menuPanel
+
         -- Helper to create a menu button with PixelFont
         -- Uses separate TextButton (for clicks) and pixel text Frame (for display)
         local function createMenuButton(name, text, positionY, isActive)
@@ -891,19 +913,12 @@ local TitleScreen = Node.extend(function(parent)
             local buttonWidth = textWidth + padding * 2
             local buttonHeight = textHeight + padding * 2
 
-            -- Create button (background + click handler)
+            -- Create button (click handler only, background is shared panel)
             local button = Instance.new("TextButton")
             button.Name = name
             button.Text = ""
             button.AutoButtonColor = false
-            -- Set initial state based on isActive
-            if isActive then
-                button.BackgroundColor3 = Color3.fromRGB(0, 0, 0)  -- Black
-                button.BackgroundTransparency = 0.5
-            else
-                button.BackgroundColor3 = Color3.fromRGB(0, 0, 0)  -- Black
-                button.BackgroundTransparency = 0.5
-            end
+            button.BackgroundTransparency = 1  -- Fully transparent (shared panel behind)
             button.BorderSizePixel = 0
             button.Size = UDim2.fromOffset(buttonWidth, buttonHeight)
             button.Position = UDim2.new(0.5, -buttonWidth / 2, positionY, 0)
@@ -917,11 +932,6 @@ local TitleScreen = Node.extend(function(parent)
 
             -- DEBUG: Start text visible to test
             -- PixelFont.setTransparency(buttonText, 1)
-
-            -- Corner rounding
-            local corner = Instance.new("UICorner")
-            corner.CornerRadius = UDim.new(0, 8)
-            corner.Parent = button
 
             -- Bracket selection borders
             createBracketBorders(button)

@@ -48,7 +48,7 @@ local TitleScreen = Node.extend(function(parent)
 
     local ORANGE_BORDER = Color3.fromRGB(255, 140, 0)
     local FADE_DURATION = 0.5
-    local BUILD_NUMBER = 191
+    local BUILD_NUMBER = 192
     local TITLE_MUSIC_ID = "rbxassetid://115218802234328"
     local GAMEPLAY_MUSIC_ID = "rbxassetid://127750735513287"
     local PIXEL_SCALE = 3  -- 24px equivalent (8 * 3)
@@ -66,11 +66,8 @@ local TitleScreen = Node.extend(function(parent)
                 inputConnection = nil,
                 inputClaim = nil,   -- InputCapture claim for hiding CoreGui
                 music = nil,        -- Background music Sound instance
-                -- Color wave effect for active button text
-                colorWaveLoop = nil,
                 -- Options menu state
                 optionsMenuOpen = false,
-                optionsColorWaveLoop = nil,
                 optionsFrame = nil,
                 optionsConfirmOpen = false,
                 optionsConfirmFrame = nil,
@@ -96,15 +93,6 @@ local TitleScreen = Node.extend(function(parent)
                 state.music:Destroy()
                 state.music = nil
             end
-            -- Stop color wave loops
-            if state.colorWaveLoop then
-                task.cancel(state.colorWaveLoop)
-                state.colorWaveLoop = nil
-            end
-            if state.optionsColorWaveLoop then
-                task.cancel(state.optionsColorWaveLoop)
-                state.optionsColorWaveLoop = nil
-            end
             if state.screenGui then
                 state.screenGui:Destroy()
             end
@@ -118,163 +106,57 @@ local TitleScreen = Node.extend(function(parent)
 
     local BUTTON_ACTIVE_COLOR = Color3.fromRGB(0, 0, 0)  -- Black
     local BUTTON_INACTIVE_COLOR = Color3.fromRGB(0, 0, 0)  -- Black
+    local BRACKET_WIDTH = 4      -- Width of bracket bars
+    local BRACKET_CORNER = 8     -- Corner radius
+    local BRACKET_GAP = 6        -- Gap between bracket and button
 
-    -- Rainbow/spectrum colors for text animation
-    local SPECTRUM_COLORS = {
-        Color3.fromRGB(255, 255, 255),  -- White
-        Color3.fromRGB(200, 255, 255),  -- Light cyan
-        Color3.fromRGB(0, 255, 255),    -- Cyan
-        Color3.fromRGB(0, 200, 255),    -- Cyan-blue
-        Color3.fromRGB(100, 150, 255),  -- Light blue
-        Color3.fromRGB(0, 200, 255),    -- Cyan-blue
-        Color3.fromRGB(0, 255, 255),    -- Cyan
-        Color3.fromRGB(200, 255, 255),  -- Light cyan
-    }
+    -- Create bracket-style selection borders for a button
+    -- Returns { left = Frame, right = Frame }
+    local function createBracketBorders(button)
+        local buttonHeight = button.Size.Y.Offset
 
-    -- Get color from spectrum based on position (0-1)
-    local function getSpectrumColor(t)
-        t = t % 1  -- Wrap to 0-1
-        local index = t * #SPECTRUM_COLORS
-        local i1 = math.floor(index) % #SPECTRUM_COLORS + 1
-        local i2 = (i1 % #SPECTRUM_COLORS) + 1
-        local blend = index % 1
+        -- Left bracket
+        local leftBracket = Instance.new("Frame")
+        leftBracket.Name = "LeftBracket"
+        leftBracket.Size = UDim2.fromOffset(BRACKET_WIDTH, buttonHeight)
+        leftBracket.Position = UDim2.fromOffset(-BRACKET_GAP - BRACKET_WIDTH, 0)
+        leftBracket.BackgroundColor3 = ORANGE_BORDER
+        leftBracket.BorderSizePixel = 0
+        leftBracket.Visible = false
+        leftBracket.ZIndex = button.ZIndex + 1
+        leftBracket.Parent = button
 
-        local c1 = SPECTRUM_COLORS[i1]
-        local c2 = SPECTRUM_COLORS[i2]
+        local leftCorner = Instance.new("UICorner")
+        leftCorner.CornerRadius = UDim.new(0, BRACKET_CORNER)
+        leftCorner.Parent = leftBracket
 
-        return Color3.new(
-            c1.R + (c2.R - c1.R) * blend,
-            c1.G + (c2.G - c1.G) * blend,
-            c1.B + (c2.B - c1.B) * blend
-        )
+        -- Right bracket
+        local rightBracket = Instance.new("Frame")
+        rightBracket.Name = "RightBracket"
+        rightBracket.Size = UDim2.fromOffset(BRACKET_WIDTH, buttonHeight)
+        rightBracket.Position = UDim2.new(1, BRACKET_GAP, 0, 0)
+        rightBracket.BackgroundColor3 = ORANGE_BORDER
+        rightBracket.BorderSizePixel = 0
+        rightBracket.Visible = false
+        rightBracket.ZIndex = button.ZIndex + 1
+        rightBracket.Parent = button
+
+        local rightCorner = Instance.new("UICorner")
+        rightCorner.CornerRadius = UDim.new(0, BRACKET_CORNER)
+        rightCorner.Parent = rightBracket
+
+        return { left = leftBracket, right = rightBracket }
     end
 
-    -- Update text color wave for active button
-    local function updateTextColorWave(state, timeOffset)
-        local activeTextFrame = state.buttonTexts[state.selectedIndex]
-        if not activeTextFrame then return end
-
-        -- Get all character ImageLabels
-        local chars = {}
-        for _, child in ipairs(activeTextFrame:GetChildren()) do
-            if child:IsA("ImageLabel") and child.Name:match("^Char%d+$") then
-                local num = tonumber(child.Name:match("%d+"))
-                chars[num] = child
-            end
-        end
-
-        local charCount = #chars
-        if charCount == 0 then return end
-
-        -- Apply color wave - each char offset by its position
-        local waveSpeed = 0.5  -- How fast the wave moves (cycles per second)
-        local waveWidth = 0.4  -- How much of the spectrum is visible at once
-
-        for i, char in ipairs(chars) do
-            local charOffset = (i - 1) / charCount * waveWidth
-            local t = timeOffset * waveSpeed + charOffset
-            char.ImageColor3 = getSpectrumColor(t)
-        end
-
-        -- Reset inactive button text to white
-        for i, textFrame in ipairs(state.buttonTexts) do
-            if i ~= state.selectedIndex then
-                for _, child in ipairs(textFrame:GetChildren()) do
-                    if child:IsA("ImageLabel") then
-                        child.ImageColor3 = Color3.fromRGB(255, 255, 255)
-                    end
-                end
-            end
-        end
+    -- Show/hide bracket borders on a button
+    local function setBracketVisible(button, visible)
+        local leftBracket = button:FindFirstChild("LeftBracket")
+        local rightBracket = button:FindFirstChild("RightBracket")
+        if leftBracket then leftBracket.Visible = visible end
+        if rightBracket then rightBracket.Visible = visible end
     end
 
-    -- Start/stop color wave animation loop
-    local function startColorWaveLoop(state)
-        if state.colorWaveLoop then return end
-
-        local startTime = tick()
-        state.colorWaveLoop = task.spawn(function()
-            while state.isVisible do
-                local elapsed = tick() - startTime
-                updateTextColorWave(state, elapsed)
-                task.wait(1/30)  -- 30 FPS update
-            end
-        end)
-    end
-
-    local function stopColorWaveLoop(state)
-        if state.colorWaveLoop then
-            task.cancel(state.colorWaveLoop)
-            state.colorWaveLoop = nil
-        end
-        -- Reset all text to white
-        if state.buttonTexts then
-            for _, textFrame in ipairs(state.buttonTexts) do
-                for _, child in ipairs(textFrame:GetChildren()) do
-                    if child:IsA("ImageLabel") then
-                        child.ImageColor3 = Color3.fromRGB(255, 255, 255)
-                    end
-                end
-            end
-        end
-    end
-
-    -- Update color wave for options clear button
-    local function updateOptionsColorWave(state, timeOffset)
-        local textFrame = state.optionsClearBtnText
-        if not textFrame then return end
-
-        -- Get all character ImageLabels
-        local chars = {}
-        for _, child in ipairs(textFrame:GetChildren()) do
-            if child:IsA("ImageLabel") and child.Name:match("^Char%d+$") then
-                local num = tonumber(child.Name:match("%d+"))
-                chars[num] = child
-            end
-        end
-
-        local charCount = #chars
-        if charCount == 0 then return end
-
-        -- Apply color wave
-        local waveSpeed = 0.5
-        local waveWidth = 0.4
-
-        for i, char in ipairs(chars) do
-            local charOffset = (i - 1) / charCount * waveWidth
-            local t = timeOffset * waveSpeed + charOffset
-            char.ImageColor3 = getSpectrumColor(t)
-        end
-    end
-
-    -- Start/stop options color wave animation loop
-    local function startOptionsColorWaveLoop(state)
-        if state.optionsColorWaveLoop then return end
-
-        local startTime = tick()
-        state.optionsColorWaveLoop = task.spawn(function()
-            while state.optionsMenuOpen do
-                local elapsed = tick() - startTime
-                updateOptionsColorWave(state, elapsed)
-                task.wait(1/30)  -- 30 FPS update
-            end
-        end)
-    end
-
-    local function stopOptionsColorWaveLoop(state)
-        if state.optionsColorWaveLoop then
-            task.cancel(state.optionsColorWaveLoop)
-            state.optionsColorWaveLoop = nil
-        end
-        -- Reset text to white
-        if state.optionsClearBtnText then
-            for _, child in ipairs(state.optionsClearBtnText:GetChildren()) do
-                if child:IsA("ImageLabel") then
-                    child.ImageColor3 = Color3.fromRGB(255, 255, 255)
-                end
-            end
-        end
-    end
+    -- Options menu uses bracket borders on the clear data button (created in createOptionsMenu)
 
     ----------------------------------------------------------------------------
     -- OPTIONS MENU
@@ -487,14 +369,10 @@ local TitleScreen = Node.extend(function(parent)
         if state.optionsFrame then
             state.optionsMenuOpen = true
             state.optionsFrame.Visible = true
-            -- Start color wave for clear button
-            startOptionsColorWaveLoop(state)
         end
     end
 
     local function hideOptionsMenu(state)
-        -- Stop color wave
-        stopOptionsColorWaveLoop(state)
         if state.optionsFrame then
             state.optionsMenuOpen = false
             state.optionsFrame.Visible = false
@@ -514,8 +392,6 @@ local TitleScreen = Node.extend(function(parent)
     end
 
     local function showOptionsConfirm(state)
-        -- Stop color wave while in confirm
-        stopOptionsColorWaveLoop(state)
         -- Hide options menu (buttons already hidden from showOptionsMenu)
         if state.optionsFrame then
             state.optionsFrame.Visible = false
@@ -535,33 +411,23 @@ local TitleScreen = Node.extend(function(parent)
         -- Show options menu again (if still in options mode)
         if state.optionsFrame and state.optionsMenuOpen then
             state.optionsFrame.Visible = true
-            -- Restart color wave
-            startOptionsColorWaveLoop(state)
         end
     end
 
     local function updateButtonHighlight(state)
         for i, button in ipairs(state.buttons) do
-            local stroke = button:FindFirstChildOfClass("UIStroke")
             if i == state.selectedIndex then
-                -- Active: black, 50% transparent
+                -- Active: black, 50% transparent, show brackets
                 button.BackgroundColor3 = BUTTON_ACTIVE_COLOR
                 button.BackgroundTransparency = 0.5
-                if stroke then
-                    stroke.Enabled = true
-                    stroke.Color = ORANGE_BORDER
-                end
+                setBracketVisible(button, true)
             else
-                -- Inactive: black, 50% transparent
+                -- Inactive: black, 50% transparent, hide brackets
                 button.BackgroundColor3 = BUTTON_INACTIVE_COLOR
                 button.BackgroundTransparency = 0.5
-                if stroke then
-                    stroke.Enabled = false
-                end
+                setBracketVisible(button, false)
             end
         end
-
-        -- Sparkles will automatically follow active button since they check state.selectedIndex
     end
 
     local function selectButton(state, index)
@@ -989,13 +855,9 @@ local TitleScreen = Node.extend(function(parent)
             corner.CornerRadius = UDim.new(0, 8)
             corner.Parent = button
 
-            -- Selection border (1px orange)
-            local stroke = Instance.new("UIStroke")
-            stroke.Name = "SelectionStroke"
-            stroke.Color = ORANGE_BORDER
-            stroke.Thickness = 2
-            stroke.Enabled = isActive  -- Enabled if active
-            stroke.Parent = button
+            -- Bracket selection borders
+            createBracketBorders(button)
+            setBracketVisible(button, isActive)
 
             -- Hover effect - select on hover, colors handled by updateButtonHighlight
             button.MouseEnter:Connect(function()
@@ -1043,9 +905,6 @@ local TitleScreen = Node.extend(function(parent)
         -- Set initial selection (Start button)
         state.selectedIndex = 1
         -- Initial highlight already set via isActive parameter in createMenuButton
-
-        -- Start color wave animation for active button text
-        startColorWaveLoop(state)
 
         -- Footer text - copyright line (starts invisible for fade-in)
         local copyrightStr = "(C) 2025-2026 PURE FICTION RECORDS/ALPHARABBIT GAMES"
@@ -1189,9 +1048,6 @@ local TitleScreen = Node.extend(function(parent)
             end
             state.buttons = {}
             state.buttonTexts = {}
-
-            -- Stop color wave animation
-            stopColorWaveLoop(state)
 
             for _, footerText in ipairs(state.footerTexts) do
                 footerText:Destroy()

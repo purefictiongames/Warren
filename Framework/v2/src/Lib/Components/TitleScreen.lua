@@ -48,7 +48,7 @@ local TitleScreen = Node.extend(function(parent)
 
     local ORANGE_BORDER = Color3.fromRGB(255, 140, 0)
     local FADE_DURATION = 0.5
-    local BUILD_NUMBER = 198
+    local BUILD_NUMBER = 199
     local TITLE_MUSIC_ID = "rbxassetid://115218802234328"
     local GAMEPLAY_MUSIC_ID = "rbxassetid://127750735513287"
     local PIXEL_SCALE = 5  -- 40px equivalent (8 * 5)
@@ -881,7 +881,8 @@ local TitleScreen = Node.extend(function(parent)
         local menuPanel = Instance.new("Frame")
         menuPanel.Name = "MenuPanel"
         menuPanel.Size = UDim2.fromOffset(panelWidth, panelHeight)
-        menuPanel.Position = UDim2.new(0.5, -panelWidth / 2, 0.52, -menuPadding)
+        -- Center panel at 57% down the screen
+        menuPanel.Position = UDim2.new(0.5, -panelWidth / 2, 0.57, -panelHeight / 2)
         menuPanel.BackgroundColor3 = PANEL_COLOR
         menuPanel.BackgroundTransparency = 0.3
         menuPanel.BorderSizePixel = 0
@@ -901,7 +902,8 @@ local TitleScreen = Node.extend(function(parent)
 
         -- Helper to create a menu button with PixelFont
         -- Uses separate TextButton (for clicks) and pixel text Frame (for display)
-        local function createMenuButton(name, text, positionY, isActive)
+        -- yOffset is vertical position within the panel
+        local function createMenuButton(name, text, yOffset, isActive)
             -- Create pixel text first to get dimensions
             local buttonText = PixelFont.createText(text, {
                 scale = PIXEL_SCALE,
@@ -922,14 +924,15 @@ local TitleScreen = Node.extend(function(parent)
             button.BackgroundTransparency = 1  -- Fully transparent (shared panel behind)
             button.BorderSizePixel = 0
             button.Size = UDim2.fromOffset(buttonWidth, buttonHeight)
-            button.Position = UDim2.new(0.5, -buttonWidth / 2, positionY, 0)
+            -- Position centered horizontally within panel, offset vertically
+            button.Position = UDim2.new(0.5, -buttonWidth / 2, 0, yOffset)
             button.ZIndex = 2
-            button.Parent = screenGui
+            button.Parent = menuPanel
 
-            -- Position text centered over the button (as sibling, not child)
-            buttonText.Position = UDim2.new(0.5, -textWidth / 2, positionY, padding)
+            -- Position text centered within the button
+            buttonText.Position = UDim2.fromOffset((buttonWidth - textWidth) / 2, padding)
             buttonText.ZIndex = 3
-            buttonText.Parent = screenGui
+            buttonText.Parent = button
 
             -- DEBUG: Start text visible to test
             -- PixelFont.setTransparency(buttonText, 1)
@@ -954,8 +957,9 @@ local TitleScreen = Node.extend(function(parent)
             return button, buttonText
         end
 
-        -- Create Start button
-        local startButton, startText = createMenuButton("StartButton", "START", 0.52, true)  -- Active by default
+        -- Create Start button (positioned at top of panel with padding)
+        local startYOffset = menuPadding
+        local startButton, startText = createMenuButton("StartButton", "START", startYOffset, true)
         startButton.Activated:Connect(function()
             if not state.isVisible then return end
 
@@ -970,8 +974,9 @@ local TitleScreen = Node.extend(function(parent)
             })
         end)
 
-        -- Create Options button
-        local optionsButton, optionsText = createMenuButton("OptionsButton", "OPTIONS", 0.63, false)  -- Inactive
+        -- Create Options button (positioned below Start with spacing)
+        local optionsYOffset = menuPadding + singleButtonHeight + buttonSpacing
+        local optionsButton, optionsText = createMenuButton("OptionsButton", "OPTIONS", optionsYOffset, false)
         optionsButton.Activated:Connect(function()
             if not state.isVisible then return end
             showOptionsMenu(state)

@@ -121,7 +121,7 @@ local ScreenTransition = Node.extend(function(parent)
     -- FADE ANIMATIONS
     ----------------------------------------------------------------------------
 
-    local FADE_DURATION = 0.5
+    local FADE_DURATION = 2.0
 
     local function fadeToBlack(self, callback)
         local state = getState(self)

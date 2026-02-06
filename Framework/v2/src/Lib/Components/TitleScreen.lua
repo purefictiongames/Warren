@@ -49,7 +49,7 @@ local TitleScreen = Node.extend(function(parent)
 
     local ORANGE_BORDER = Color3.fromRGB(255, 140, 0)
     local FADE_DURATION = 0.5
-    local BUILD_NUMBER = 207
+    local BUILD_NUMBER = 217
     local TITLE_MUSIC_ID = "rbxassetid://115218802234328"
     local GAMEPLAY_MUSIC_ID = "rbxassetid://127750735513287"
     local PIXEL_SCALE = 5  -- 40px equivalent (8 * 5)
@@ -104,24 +104,17 @@ local TitleScreen = Node.extend(function(parent)
                 task.cancel(state.blinkLoop)
                 state.blinkLoop = nil
             end
-            -- Cleanup diorama
+            -- Cleanup camera (diorama is owned by RegionManager, don't destroy it)
             if state.dioramaRotation then
                 state.dioramaRotation:Disconnect()
                 state.dioramaRotation = nil
             end
-            if state.diorama then
-                TitleDiorama.destroy(state.diorama)
-                state.diorama = nil
-            end
+            state.diorama = nil  -- Just clear reference, don't destroy
             if state.dioramaCamera then
                 state.dioramaCamera:Destroy()
                 state.dioramaCamera = nil
             end
-            -- Restore original camera
-            if state.originalCamera then
-                workspace.CurrentCamera = state.originalCamera
-                state.originalCamera = nil
-            end
+            state.originalCamera = nil  -- Don't restore - let Roblox handle it
             if state.screenGui then
                 state.screenGui:Destroy()
             end
@@ -720,7 +713,7 @@ local TitleScreen = Node.extend(function(parent)
         end
     end
 
-    local function fadeOutBackgroundOverlay(self, callback)
+    local function fadeToBlack(self, callback)
         local state = getState(self)
         if not state.screenGui then
             if callback then callback() end
@@ -733,11 +726,11 @@ local TitleScreen = Node.extend(function(parent)
             return
         end
 
-        -- Fade the overlay to show more of the diorama
+        -- Fade to black to hide diorama before showing loading text
         local tween = TweenService:Create(
             background,
             TweenInfo.new(FADE_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-            { BackgroundTransparency = 0.7 }
+            { BackgroundTransparency = 0 }
         )
 
         tween.Completed:Connect(function()
@@ -854,9 +847,11 @@ local TitleScreen = Node.extend(function(parent)
         screenGui.IgnoreGuiInset = true
         screenGui.Parent = playerGui
 
-        -- Hide Roblox CoreGui and topbar during title screen
+        -- Hide Roblox CoreGui and disable player movement during title screen
         state.inputClaim = System.InputCapture.claim({}, {
             hideCoreGui = true,
+            disableCharacter = true,
+            disablePlayerModule = true,
         })
 
         -- Create and play background music
@@ -869,27 +864,29 @@ local TitleScreen = Node.extend(function(parent)
         music:Play()
         state.music = music
 
-        -- Create 3D diorama background
-        state.diorama = TitleDiorama.create()
+        -- Find the diorama container created by RegionManager (server-side)
+        -- It may take a moment to replicate, so we wait for it
+        state.diorama = workspace:WaitForChild("TitleDiorama", 10)
 
-        -- Set up rotating camera
+        -- Set up rotating camera for the diorama
         state.originalCamera = workspace.CurrentCamera
         state.dioramaCamera = TitleDiorama.createCamera()
         state.dioramaCamera.Parent = workspace
         workspace.CurrentCamera = state.dioramaCamera
 
-        -- Start camera rotation
-        state.dioramaRotation = TitleDiorama.startRotation(state.dioramaCamera)
+        -- Start camera rotation with color cycling
+        state.dioramaRotation = TitleDiorama.startRotation(state.dioramaCamera, state.diorama)
 
-        -- Create semi-transparent background overlay for UI readability
+        -- Background frame (used for fade transitions, starts fully transparent)
+        -- High ZIndex so it covers everything when fading to/from black
         local background = Instance.new("Frame")
         background.Name = "Background"
         background.Size = UDim2.new(1, 0, 1, 0)
         background.Position = UDim2.new(0, 0, 0, 0)
         background.BackgroundColor3 = Color3.new(0, 0, 0)
-        background.BackgroundTransparency = 0.3  -- Semi-transparent to see diorama
+        background.BackgroundTransparency = 1  -- Fully transparent - diorama is visible
         background.BorderSizePixel = 0
-        background.ZIndex = 1
+        background.ZIndex = 100  -- Above all other title screen elements
         background.Parent = screenGui
 
         -- Create logo image (centered above buttons, starts invisible for fade-in)
@@ -1165,6 +1162,12 @@ local TitleScreen = Node.extend(function(parent)
         fadeInContent(self)
     end
 
+    --[[
+        Simplified fadeOut for new architecture.
+        Just fades out UI elements and cleans up camera.
+        ScreenTransition handles the actual screen fade-to-black.
+        RegionManager handles diorama destruction.
+    --]]
     local function fadeOut(self, callback)
         local state = getState(self)
         if not state.screenGui then
@@ -1178,66 +1181,59 @@ local TitleScreen = Node.extend(function(parent)
             state.inputConnection = nil
         end
 
-        -- Step 1: Fade out content (buttons and footer text)
-        fadeOutContent(self, function()
-            -- Step 2: Destroy buttons, text, and particle effects
-            for _, button in ipairs(state.buttons) do
-                button:Destroy()
-            end
-            for _, textFrame in ipairs(state.buttonTexts) do
-                textFrame:Destroy()
-            end
-            state.buttons = {}
-            state.buttonTexts = {}
+        -- Stop blink animation
+        stopBlinkLoop(state)
 
-            for _, footerText in ipairs(state.footerTexts) do
-                footerText:Destroy()
-            end
-            state.footerTexts = {}
-
-            -- Step 3: Fade out background image (keep black background)
-            fadeOutBackgroundOverlay(self, function()
-                -- Step 4: Show "Starting...." text for 2 seconds
-                showLoadingText(self, function()
-                    -- Step 5: Fade out black background to reveal dungeon
-                    fadeOutBlackBackground(self, function()
-                        -- Step 6: Cleanup diorama and restore camera
-                        if state.dioramaRotation then
-                            state.dioramaRotation:Disconnect()
-                            state.dioramaRotation = nil
-                        end
-                        if state.diorama then
-                            TitleDiorama.destroy(state.diorama)
-                            state.diorama = nil
-                        end
-                        if state.dioramaCamera then
-                            state.dioramaCamera:Destroy()
-                            state.dioramaCamera = nil
-                        end
-                        if state.originalCamera then
-                            workspace.CurrentCamera = state.originalCamera
-                            state.originalCamera = nil
-                        end
-
-                        -- Step 7: Restore Roblox CoreGui/topbar by releasing input claim
-                        if state.inputClaim then
-                            state.inputClaim:release()
-                            state.inputClaim = nil
-                        end
-
-                        -- Step 8: Start gameplay music (after 2 second delay)
-                        startGameplayMusic()
-
-                        -- Step 9: Destroy and cleanup
-                        if state.screenGui then
-                            state.screenGui:Destroy()
-                            state.screenGui = nil
-                        end
-                        state.isVisible = false
-                        if callback then callback() end
-                    end)
-                end)
+        -- Fade out music
+        if state.music then
+            local musicFadeTween = TweenService:Create(
+                state.music,
+                TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+                { Volume = 0 }
+            )
+            musicFadeTween:Play()
+            musicFadeTween.Completed:Connect(function()
+                if state.music then
+                    state.music:Stop()
+                    state.music:Destroy()
+                    state.music = nil
+                end
             end)
+        end
+
+        -- Fade out UI content quickly (ScreenTransition handles the main fade)
+        fadeOutContent(self, function()
+            -- Stop camera rotation
+            if state.dioramaRotation then
+                state.dioramaRotation:Disconnect()
+                state.dioramaRotation = nil
+            end
+
+            -- Clean up camera - Roblox will auto-create a new default camera
+            if state.dioramaCamera then
+                state.dioramaCamera:Destroy()
+                state.dioramaCamera = nil
+            end
+            state.diorama = nil  -- Don't destroy - RegionManager owns it
+            state.originalCamera = nil
+
+            -- Restore Roblox CoreGui/topbar
+            if state.inputClaim then
+                state.inputClaim:release()
+                state.inputClaim = nil
+            end
+
+            -- Start gameplay music (after delay)
+            startGameplayMusic()
+
+            -- Cleanup screen GUI
+            if state.screenGui then
+                state.screenGui:Destroy()
+                state.screenGui = nil
+            end
+            state.isVisible = false
+
+            if callback then callback() end
         end)
     end
 
@@ -1260,7 +1256,25 @@ local TitleScreen = Node.extend(function(parent)
         },
 
         In = {
-            -- Server signals to hide the title screen
+            --[[
+                Handle transition start signal.
+                When fromTitle=true, this means player pressed Start and we should
+                fade out the title screen UI. ScreenTransition handles the fade-to-black.
+            --]]
+            onTransitionStart = function(self, data)
+                local state = getState(self)
+                local player = Players.LocalPlayer
+
+                if data._targetPlayer and data._targetPlayer ~= player then return end
+                if not state.isVisible then return end
+
+                -- Only handle title-to-gameplay transitions
+                if data.fromTitle then
+                    fadeOut(self)
+                end
+            end,
+
+            -- Legacy handler - kept for backwards compatibility
             onHideTitle = function(self, data)
                 local state = getState(self)
                 local player = Players.LocalPlayer

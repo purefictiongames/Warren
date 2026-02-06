@@ -1572,7 +1572,8 @@ local RegionManager = Node.extend(function(parent)
                     -- Get spawn position from layout
                     local spawnPos
                     if layout and layout.spawn then
-                        spawnPos = Vector3.new(layout.spawn[1], layout.spawn[2] + 3, layout.spawn[3])
+                        local pos = layout.spawn.position
+                        spawnPos = Vector3.new(pos[1], pos[2] + 3, pos[3])
                     elseif layout and layout.rooms[1] then
                         local room1 = layout.rooms[1]
                         spawnPos = Vector3.new(

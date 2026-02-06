@@ -186,6 +186,10 @@ IPC.start()
 --------------------------------------------------------------------------------
 
 local function startInfiniteDungeon()
+    -- Disable auto-spawning - players spawn after pressing Start on title screen
+    local Players = game:GetService("Players")
+    Players.CharacterAutoLoads = false
+
     -- Set dark/nighttime lighting
     local Lighting = game:GetService("Lighting")
     Lighting.ClockTime = 0  -- Midnight
@@ -234,7 +238,6 @@ local function startInfiniteDungeon()
 
     -- Dungeon is now started via onStartPressed signal from TitleScreen
     -- (handled in RegionManager.In.onStartPressed)
-    local Players = game:GetService("Players")
     local dungeonOwner = nil  -- First player to join owns the dungeon
 
     local function onPlayerAdded(player)

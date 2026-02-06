@@ -48,10 +48,10 @@ local TitleScreen = Node.extend(function(parent)
 
     local ORANGE_BORDER = Color3.fromRGB(255, 140, 0)
     local FADE_DURATION = 0.5
-    local BUILD_NUMBER = 195
+    local BUILD_NUMBER = 196
     local TITLE_MUSIC_ID = "rbxassetid://115218802234328"
     local GAMEPLAY_MUSIC_ID = "rbxassetid://127750735513287"
-    local PIXEL_SCALE = 3  -- 24px equivalent (8 * 3)
+    local PIXEL_SCALE = 5  -- 40px equivalent (8 * 5)
     local PIXEL_SCALE_SMALL = 2  -- 16px equivalent
 
     local function getState(self)
@@ -119,14 +119,16 @@ local TitleScreen = Node.extend(function(parent)
 
     -- Create bracket-style selection borders for a button
     -- Returns { left = Frame, right = Frame }
-    local function createBracketBorders(button)
+    local function createBracketBorders(button, textHeight)
+        local bracketHeight = textHeight or button.Size.Y.Offset
         local buttonHeight = button.Size.Y.Offset
+        local yOffset = (buttonHeight - bracketHeight) / 2  -- Center vertically
 
         -- Left bracket
         local leftBracket = Instance.new("Frame")
         leftBracket.Name = "LeftBracket"
-        leftBracket.Size = UDim2.fromOffset(BRACKET_WIDTH, buttonHeight)
-        leftBracket.Position = UDim2.fromOffset(-BRACKET_GAP - BRACKET_WIDTH, 0)
+        leftBracket.Size = UDim2.fromOffset(BRACKET_WIDTH, bracketHeight)
+        leftBracket.Position = UDim2.fromOffset(-BRACKET_GAP - BRACKET_WIDTH, yOffset)
         leftBracket.BackgroundColor3 = BRACKET_COLOR
         leftBracket.BorderSizePixel = 0
         leftBracket.Visible = false
@@ -136,8 +138,8 @@ local TitleScreen = Node.extend(function(parent)
         -- Right bracket
         local rightBracket = Instance.new("Frame")
         rightBracket.Name = "RightBracket"
-        rightBracket.Size = UDim2.fromOffset(BRACKET_WIDTH, buttonHeight)
-        rightBracket.Position = UDim2.new(1, BRACKET_GAP, 0, 0)
+        rightBracket.Size = UDim2.fromOffset(BRACKET_WIDTH, bracketHeight)
+        rightBracket.Position = UDim2.new(1, BRACKET_GAP, 0, yOffset)
         rightBracket.BackgroundColor3 = BRACKET_COLOR
         rightBracket.BorderSizePixel = 0
         rightBracket.Visible = false
@@ -868,12 +870,13 @@ local TitleScreen = Node.extend(function(parent)
 
         -- Shared background panel for menu buttons
         -- Calculate dimensions based on expected button sizes
-        local menuPadding = 16
-        local buttonSpacing = 8  -- Gap between buttons
-        local textHeight = 8 * PIXEL_SCALE  -- 24px (8 = base pixel font size)
-        local singleButtonHeight = textHeight + menuPadding * 2  -- 56px
+        local menuPadding = 8
+        local buttonSpacing = 4  -- Gap between buttons
+        local textHeight = 8 * PIXEL_SCALE  -- 40px (8 = base pixel font size)
+        local buttonPadding = 8
+        local singleButtonHeight = textHeight + buttonPadding * 2
         local panelHeight = singleButtonHeight * 2 + buttonSpacing + menuPadding * 2
-        local panelWidth = 180  -- Wide enough for OPTIONS button plus some margin
+        local panelWidth = 220  -- Wide enough for OPTIONS button plus margin
 
         local menuPanel = Instance.new("Frame")
         menuPanel.Name = "MenuPanel"
@@ -907,7 +910,7 @@ local TitleScreen = Node.extend(function(parent)
 
             local textWidth = buttonText.Size.X.Offset
             local textHeight = buttonText.Size.Y.Offset
-            local padding = 16
+            local padding = 8
             local buttonWidth = textWidth + padding * 2
             local buttonHeight = textHeight + padding * 2
 
@@ -931,8 +934,8 @@ local TitleScreen = Node.extend(function(parent)
             -- DEBUG: Start text visible to test
             -- PixelFont.setTransparency(buttonText, 1)
 
-            -- Bracket selection borders
-            createBracketBorders(button)
+            -- Bracket selection borders (height matches text)
+            createBracketBorders(button, textHeight)
             setBracketVisible(button, isActive)
 
             -- Hover effect - select on hover, colors handled by updateButtonHighlight

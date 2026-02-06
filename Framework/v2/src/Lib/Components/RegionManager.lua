@@ -1655,27 +1655,42 @@ local RegionManager = Node.extend(function(parent)
             end,
 
             --[[
-                Handle map data request from MiniMap.
-                Responds with current layout and visited rooms.
+                Handle visited state request from MiniMap (when map is opened).
+                Sends current visited rooms, current room, and stats (no layout).
 
                 @param data table:
                     player: Player - The requesting player
-            --]]
-            --[[
-                Handle visited state request from MiniMap (when map is opened).
-                Sends current visited rooms, current room, and stats (no layout).
+                    regionNum: number? - Region number to look up (avoids stale activeRegionId)
             --]]
             onRequestVisitedState = function(self, data)
                 if not data or not data.player then return end
 
                 local state = getState(self)
                 local player = data.player
-                local activeRegion = state.regions[state.activeRegionId]
 
-                if not activeRegion or not activeRegion.layout then return end
+                -- Use regionNum from request if provided (avoids stale activeRegionId)
+                local regionNum = data.regionNum
+                local targetRegion = nil
 
-                local layout = activeRegion.layout
-                local regionNum = layout.regionNum or 1
+                if regionNum then
+                    -- Find region with matching regionNum
+                    for _, region in pairs(state.regions) do
+                        if region.layout and region.layout.regionNum == regionNum then
+                            targetRegion = region
+                            break
+                        end
+                    end
+                end
+
+                -- Fall back to activeRegion if no match found
+                if not targetRegion then
+                    targetRegion = state.regions[state.activeRegionId]
+                end
+
+                if not targetRegion or not targetRegion.layout then return end
+
+                local layout = targetRegion.layout
+                regionNum = regionNum or layout.regionNum or 1
 
                 -- Get visited rooms for this player/region
                 local playerVisited = state.visitedRooms[player]
@@ -1720,7 +1735,7 @@ local RegionManager = Node.extend(function(parent)
                     player = player,
                     visitedRooms = visitedRooms,
                     currentRoom = currentRoom,
-                    padLinks = activeRegion.padLinks or {},
+                    padLinks = targetRegion.padLinks or {},
                     stats = {
                         totalRooms = totalRooms,
                         exploredRooms = exploredRooms,

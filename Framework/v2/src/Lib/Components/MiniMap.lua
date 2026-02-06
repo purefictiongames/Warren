@@ -48,8 +48,9 @@
         miniMapReady({ player })
             - Signals RegionManager that minimap geometry is built
 
-        requestVisitedState({ player })
+        requestVisitedState({ player, regionNum })
             - Requests current visited rooms from RegionManager
+            - regionNum ensures correct region lookup (avoids stale activeRegionId)
 
     IN (receives):
         onBuildMiniMap({ layout, player })
@@ -394,6 +395,7 @@ local MiniMap = Node.extend(function(parent)
         state.pendingVisitedRequest = true
         self.Out:Fire("requestVisitedState", {
             player = player,
+            regionNum = state.regionNum,  -- Include regionNum to avoid stale activeRegionId lookup
         })
 
         -- Start input handling

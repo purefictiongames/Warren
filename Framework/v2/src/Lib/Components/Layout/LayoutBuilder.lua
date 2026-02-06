@@ -37,6 +37,7 @@
 
 local LayoutSchema = require(script.Parent.LayoutSchema)
 local LayoutContext = require(script.Parent.LayoutContext)
+local GeometryDef = require(script.Parent.GeometryDef)
 
 -- Geometry system for derived dimension values
 local Geometry = nil
@@ -450,7 +451,24 @@ local function calculateDoorPosition(roomA, roomB, config)
     }
 end
 
-local function planDoors(rooms, config)
+--[[
+    Plan doors between connected rooms.
+    When used with GeometryDef, adds doors that don't already exist.
+
+    @param def: GeometryDef to enrich (or rooms table for backwards compatibility)
+    @param config: Configuration table
+    @return doors array (for backwards compatibility) or nil if enriching GeometryDef
+--]]
+local function planDoors(def, config)
+    -- Support both GeometryDef and raw rooms table (backwards compatibility)
+    local isGeometryDef = type(def.addDoor) == "function"
+    local rooms = isGeometryDef and def:getRooms() or def
+
+    -- If using GeometryDef and doors already exist, skip
+    if isGeometryDef and def:hasDoors() then
+        return nil  -- Already has doors
+    end
+
     local doors = {}
     local doorId = 1
 
@@ -460,7 +478,7 @@ local function planDoors(rooms, config)
             if parentRoom then
                 local doorData = calculateDoorPosition(parentRoom, room, config)
                 if doorData then
-                    table.insert(doors, {
+                    local door = {
                         id = doorId,
                         fromRoom = room.parentId,
                         toRoom = id,
@@ -470,25 +488,59 @@ local function planDoors(rooms, config)
                         axis = doorData.axis,
                         widthAxis = doorData.widthAxis,
                         bottom = doorData.bottom,
-                    })
+                    }
+
+                    if isGeometryDef then
+                        def:addDoor(door)
+                    else
+                        table.insert(doors, door)
+                    end
                     doorId = doorId + 1
                 end
             end
         end
     end
 
-    return doors
+    return isGeometryDef and nil or doors
 end
 
 --------------------------------------------------------------------------------
 -- TRUSS PLANNING
 --------------------------------------------------------------------------------
 
-local function planTrusses(rooms, doors, config)
+--[[
+    Plan trusses at door openings that need them.
+    When used with GeometryDef, adds trusses that don't already exist.
+
+    @param def: GeometryDef to enrich (or rooms table for backwards compatibility)
+    @param doorsOrConfig: doors array (backwards compat) or config if using GeometryDef
+    @param config: Configuration table (backwards compat only)
+    @return trusses array (for backwards compatibility) or nil if enriching GeometryDef
+--]]
+local function planTrusses(def, doorsOrConfig, config)
+    -- Support both GeometryDef and raw tables (backwards compatibility)
+    local isGeometryDef = type(def.addTruss) == "function"
+    local rooms, doors, cfg
+
+    if isGeometryDef then
+        rooms = def:getRooms()
+        doors = def:getDoors()
+        cfg = doorsOrConfig  -- Second param is config when using GeometryDef
+    else
+        rooms = def
+        doors = doorsOrConfig
+        cfg = config
+    end
+
+    -- If using GeometryDef and trusses already exist, skip
+    if isGeometryDef and def:hasTrusses() then
+        return nil  -- Already has trusses
+    end
+
     local trusses = {}
     local trussId = 1
 
-    print(string.format("[Truss] Planning trusses for %d doors, threshold=%.1f", #doors, config.floorThreshold))
+    print(string.format("[Truss] Planning trusses for %d doors, threshold=%.1f", #doors, cfg.floorThreshold))
 
     for _, door in ipairs(doors) do
         local roomA = rooms[door.fromRoom]
@@ -513,13 +565,19 @@ local function planTrusses(rooms, doors, config)
             -- Place at -X edge of hole, inside the box
             local trussX = door.center[1] - door.width / 2 + 1  -- +1 for truss half-width
 
-            table.insert(trusses, {
+            local truss = {
                 id = trussId,
                 doorId = door.id,
                 position = { trussX, lowerFloor + trussHeight / 2, door.center[3] },
                 size = { 2, trussHeight, 2 },
                 type = "ceiling",
-            })
+            }
+
+            if isGeometryDef then
+                def:addTruss(truss)
+            else
+                table.insert(trusses, truss)
+            end
             trussId = trussId + 1
 
             print(string.format("[Truss] Ceiling: door %d, lowerFloor=%.1f, upperFloor=%.1f, height=%.1f",
@@ -537,19 +595,25 @@ local function planTrusses(rooms, doors, config)
                 local holeBottom = door.bottom
                 local dist = holeBottom - wallBottom
 
-                if dist > config.floorThreshold then
+                if dist > cfg.floorThreshold then
                     local trussPos = { door.center[1], wallBottom + dist / 2, door.center[3] }
 
                     local dirToRoom = room.position[door.axis] > door.center[door.axis] and 1 or -1
-                    trussPos[door.axis] = door.center[door.axis] + dirToRoom * (config.wallThickness / 2 + 1)
+                    trussPos[door.axis] = door.center[door.axis] + dirToRoom * (cfg.wallThickness / 2 + 1)
 
-                    table.insert(trusses, {
+                    local truss = {
                         id = trussId,
                         doorId = door.id,
                         position = trussPos,
                         size = { 2, dist, 2 },
                         type = "wall",
-                    })
+                    }
+
+                    if isGeometryDef then
+                        def:addTruss(truss)
+                    else
+                        table.insert(trusses, truss)
+                    end
                     trussId = trussId + 1
 
                     print(string.format("[Truss] Wall: door %d, room %d, wallBottom=%.1f, holeBottom=%.1f, dist=%.1f",
@@ -560,7 +624,7 @@ local function planTrusses(rooms, doors, config)
         end  -- if roomA and roomB
     end
 
-    return trusses
+    return isGeometryDef and nil or trusses
 end
 
 --------------------------------------------------------------------------------
@@ -569,7 +633,34 @@ end
 
 local WALL_ORDER = { "N", "S", "E", "W" }
 
-local function planLights(rooms, doors, config)
+--[[
+    Plan lights in each room.
+    When used with GeometryDef, adds lights that don't already exist.
+
+    @param def: GeometryDef to enrich (or rooms table for backwards compatibility)
+    @param doorsOrConfig: doors array (backwards compat) or config if using GeometryDef
+    @param config: Configuration table (backwards compat only)
+    @return lights array (for backwards compatibility) or nil if enriching GeometryDef
+--]]
+local function planLights(def, doorsOrConfig, config)
+    -- Support both GeometryDef and raw tables (backwards compatibility)
+    local isGeometryDef = type(def.addLight) == "function"
+    local rooms, doors
+
+    if isGeometryDef then
+        rooms = def:getRooms()
+        doors = def:getDoors()
+        -- config not used for lights currently
+    else
+        rooms = def
+        doors = doorsOrConfig
+    end
+
+    -- If using GeometryDef and lights already exist, skip
+    if isGeometryDef and def:hasLights() then
+        return nil  -- Already has lights
+    end
+
     local lights = {}
     local lightId = 1
 
@@ -649,30 +740,53 @@ local function planLights(rooms, doors, config)
             lightSize = { 0.3, 1, stripWidth }
         end
 
-        table.insert(lights, {
+        local light = {
             id = lightId,
             roomId = id,
             position = lightPos,
             size = lightSize,
             wall = chosenWall,
-        })
+        }
+
+        if isGeometryDef then
+            def:addLight(light)
+        else
+            table.insert(lights, light)
+        end
         lightId = lightId + 1
     end
 
-    return lights
+    return isGeometryDef and nil or lights
 end
 
 --------------------------------------------------------------------------------
 -- PAD PLANNING
 --------------------------------------------------------------------------------
 
-local function planPads(ctx)
+--[[
+    Plan teleport pads in rooms.
+    Works with both LayoutContext and GeometryDef.
+
+    @param ctx: LayoutContext or GeometryDef to enrich
+    @param config: Configuration table (optional if ctx has getConfig)
+    @return pads array (for backwards compatibility) or nil if enriching GeometryDef
+--]]
+local function planPads(ctx, config)
+    -- Support both LayoutContext and GeometryDef
+    local isGeometryDef = type(ctx.addPad) == "function"
+
+    -- If using GeometryDef and pads already exist, skip
+    if isGeometryDef and ctx:hasPads() then
+        return nil  -- Already has pads
+    end
+
     local pads = {}
-    local config = ctx:getConfig()
+    local cfg = config or (ctx.getConfig and ctx:getConfig()) or ctx.config or {}
     local roomCount = ctx:getRoomCount()
 
     -- Use direct padCount if provided, otherwise calculate from roomsPerPad
-    local padCount = config.padCount or (1 + math.floor(roomCount / config.roomsPerPad))
+    local roomsPerPad = cfg.roomsPerPad or 25
+    local padCount = cfg.padCount or (1 + math.floor(roomCount / roomsPerPad))
 
     -- Select rooms for pads (start from room 2, room 1 is spawn)
     local step = math.max(1, math.floor((roomCount - 1) / padCount))
@@ -699,19 +813,26 @@ local function planPads(ctx)
                     -- Adjust Y to be slightly above floor for pad
                     safePos[2] = safePos[2] + 0.1
 
-                    table.insert(pads, {
+                    local pad = {
                         id = "pad_" .. padNum,
                         roomId = roomId,
                         position = safePos,
                         isSpawn = false,
-                    })
+                    }
+
+                    if isGeometryDef then
+                        ctx:addPad(pad)
+                    else
+                        table.insert(pads, pad)
+                    end
                     print(string.format("[LayoutBuilder] Placed pad_%d in room %d at (%.1f, %.1f, %.1f)",
                         padNum, roomId, safePos[1], safePos[2], safePos[3]))
                     padNum = padNum + 1
                 else
                     -- No safe position - skip this room and try next
+                    local doorCount = ctx.getDoorsForRoom and #ctx:getDoorsForRoom(roomId) or 0
                     warn(string.format("[LayoutBuilder] No safe position for pad in room %d (has %d doors, checking ceiling trusses)",
-                        roomId, #ctx:getDoorsForRoom(roomId)))
+                        roomId, doorCount))
                     -- Try the next room instead
                     roomId = roomId + 1
                     if roomId <= roomCount then
@@ -720,12 +841,17 @@ local function planPads(ctx)
                             safePos = ctx:findSafeFloorPosition(roomId)
                             if safePos then
                                 safePos[2] = safePos[2] + 0.1
-                                table.insert(pads, {
+                                local pad = {
                                     id = "pad_" .. padNum,
                                     roomId = roomId,
                                     position = safePos,
                                     isSpawn = false,
-                                })
+                                }
+                                if isGeometryDef then
+                                    ctx:addPad(pad)
+                                else
+                                    table.insert(pads, pad)
+                                end
                                 print(string.format("[LayoutBuilder] Placed pad_%d in fallback room %d at (%.1f, %.1f, %.1f)",
                                     padNum, roomId, safePos[1], safePos[2], safePos[3]))
                                 padNum = padNum + 1
@@ -738,7 +864,7 @@ local function planPads(ctx)
         end
     end
 
-    return pads
+    return isGeometryDef and nil or pads
 end
 
 --------------------------------------------------------------------------------
@@ -790,6 +916,143 @@ local function generateSeeds(masterSeed)
         trusses = masterSeed + 20000,          -- Future: truss variations
         lights = masterSeed + 30000,           -- Future: light placement
     }
+end
+
+--[[
+    Enriches a GeometryDef by running planning stages that fill in missing data.
+    Each stage only runs if its data doesn't already exist in the def.
+
+    This is the core composable function - it allows partial definitions to be
+    progressively enriched through the pipeline.
+
+    @param def: GeometryDef to enrich (modified in place)
+    @param config: Optional config overrides
+    @return The same GeometryDef (for chaining)
+--]]
+function LayoutBuilder.enrich(def, config)
+    -- Merge config with def's existing config
+    local cfg = def.config or {}
+    if config then
+        for k, v in pairs(config) do
+            cfg[k] = v
+        end
+        def.config = cfg
+    end
+
+    -- Ensure derived values exist
+    cfg.gap = cfg.gap or 2 * (cfg.wallThickness or 1)
+    cfg.cutterDepth = cfg.cutterDepth or (cfg.wallThickness or 1) * 8
+    cfg.floorThreshold = cfg.floorThreshold or 5
+
+    -- Plan doors if not present (requires rooms with parentId relationships)
+    if not def:hasDoors() and def:hasRooms() then
+        planDoors(def, cfg)
+        print("[LayoutBuilder.enrich] Planned " .. #def:getDoors() .. " doors")
+    end
+
+    -- Plan trusses if not present (requires doors)
+    if not def:hasTrusses() and def:hasDoors() then
+        planTrusses(def, cfg)
+        print("[LayoutBuilder.enrich] Planned " .. #def:getTrusses() .. " trusses")
+    end
+
+    -- Plan lights if not present (requires rooms and doors)
+    if not def:hasLights() and def:hasRooms() then
+        planLights(def, cfg)
+        print("[LayoutBuilder.enrich] Planned " .. #def:getLights() .. " lights")
+    end
+
+    -- Plan pads if not present (requires rooms, doors, trusses)
+    if not def:hasPads() and def:hasRooms() then
+        planPads(def, cfg)
+        print("[LayoutBuilder.enrich] Planned " .. #def:getPads() .. " pads")
+    end
+
+    -- Set spawn if not present (at room 1's floor level)
+    if not def:hasSpawn() then
+        local room1 = def:getRoom(1)
+        if room1 then
+            local floorY = room1.position[2] - room1.dims[2] / 2 + 3
+            def:setSpawn({
+                position = { room1.position[1], floorY, room1.position[3] },
+                roomId = 1,
+            })
+        end
+    end
+
+    return def
+end
+
+--[[
+    Creates a layout from predefined room volumes.
+    Uses GeometryDef internally for composable enrichment.
+
+    Usage:
+        local layout = LayoutBuilder.fromRooms({
+            rooms = {
+                [1] = { id = 1, position = {0, 12, 0}, dims = {40, 24, 40} },
+                [2] = { id = 2, position = {0, 10, 34}, dims = {30, 20, 24}, parentId = 1, attachFace = "N" },
+            },
+            config = {
+                regionNum = 0,
+                wallThickness = 1,
+                doorSize = 12,
+            }
+        })
+
+    @param options.rooms: Table of predefined rooms (keyed by id)
+    @param options.doors: Optional predefined doors (if omitted, calculated from rooms)
+    @param options.trusses: Optional predefined trusses
+    @param options.lights: Optional predefined lights
+    @param options.pads: Optional predefined pads
+    @param options.spawn: Optional predefined spawn
+    @param options.config: Layout configuration (merged with defaults)
+    @return Layout table ready for LayoutInstantiator
+--]]
+function LayoutBuilder.fromRooms(options)
+    local userConfig = options.config or {}
+
+    -- Create GeometryDef with predefined data
+    local def = GeometryDef.new({
+        seed = userConfig.seed or 0,
+        regionNum = userConfig.regionNum or 1,
+        config = {
+            wallThickness = userConfig.wallThickness or 1,
+            doorSize = userConfig.doorSize or 12,
+            floorThreshold = userConfig.floorThreshold or 5,
+            material = userConfig.material or "Brick",
+            color = userConfig.color or { 140, 110, 90 },
+            padCount = userConfig.padCount,
+            roomsPerPad = userConfig.roomsPerPad or 25,
+            useTerrainShell = userConfig.useTerrainShell,
+        },
+        rooms = options.rooms or {},
+        doors = options.doors or {},
+        trusses = options.trusses or {},
+        lights = options.lights or {},
+        pads = options.pads or {},
+        spawn = options.spawn,
+    })
+
+    -- Debug: show what we started with
+    local roomCount = def:getRoomCount()
+    local doorCount = #def:getDoors()
+    print(string.format("[LayoutBuilder.fromRooms] Starting with %d rooms, %d doors",
+        roomCount, doorCount))
+
+    -- Enrich to fill in missing data
+    LayoutBuilder.enrich(def)
+
+    -- Export to layout format
+    local layout = def:toLayout()
+
+    -- Validate
+    local ok, err = LayoutSchema.validate(layout)
+    if not ok then
+        warn("[LayoutBuilder.fromRooms] Generated invalid layout: " .. err)
+    end
+
+    return layout
 end
 
 function LayoutBuilder.generate(config)

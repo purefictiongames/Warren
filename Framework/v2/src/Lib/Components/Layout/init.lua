@@ -66,10 +66,12 @@ Layout.Context = require(script.LayoutContext)
 Layout.Builder = require(script.LayoutBuilder)
 Layout.Instantiator = require(script.LayoutInstantiator)
 Layout.Serializer = require(script.LayoutSerializer)
+Layout.GeometryDef = require(script.GeometryDef)
 
 -- Convenience re-exports
 Layout.VERSION = Layout.Schema.VERSION
 Layout.generate = Layout.Builder.generate
+Layout.enrich = Layout.Builder.enrich  -- Composable enrichment of GeometryDef
 Layout.instantiate = Layout.Instantiator.instantiate
 Layout.encode = Layout.Serializer.encode
 Layout.decode = Layout.Serializer.decode

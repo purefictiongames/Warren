@@ -616,24 +616,37 @@ function LayoutInstantiator.instantiate(layout, options)
     local pads = {}
 
     -- Clear existing terrain and set material colors from palette
+    print(string.format("[LayoutInstantiator] useTerrainShell=%s", tostring(useTerrainShell)))
     if useTerrainShell then
+        print("[LayoutInstantiator] Clearing terrain...")
         workspace.Terrain:Clear()
         workspace.Terrain:SetMaterialColor(Enum.Material.Rock, palette.wallColor)
         workspace.Terrain:SetMaterialColor(Enum.Material.CrackedLava, palette.floorColor)
+        print("[LayoutInstantiator] Terrain cleared, material colors set")
     end
 
     -- PASS 1: Build all room shells, hide walls, fill terrain
     local roomZones = {}
     local allWalls = {}  -- Store walls for later reference
+    local roomCount = 0
+    for _ in pairs(layout.rooms) do roomCount = roomCount + 1 end
+    print(string.format("[LayoutInstantiator] Building %d room shells...", roomCount))
+
     for id, room in pairs(layout.rooms) do
+        print(string.format("[LayoutInstantiator] Building room %s at (%.1f, %.1f, %.1f) dims (%.1f, %.1f, %.1f)",
+            tostring(id), room.position[1], room.position[2], room.position[3],
+            room.dims[1], room.dims[2], room.dims[3]))
         local roomContainer, walls = buildShell(room, config, container)
         roomContainers[id] = roomContainer
         allWalls[id] = walls
+        print(string.format("[LayoutInstantiator] Room %s shell built: %d walls", tostring(id),
+            (function() local c=0 for _ in pairs(walls) do c=c+1 end return c end)()))
 
         -- Style walls to match terrain
         if useTerrainShell then
             styleWallsAsTerrain(walls, palette)
             -- Fill terrain shell (solid block, no carving yet)
+            print(string.format("[LayoutInstantiator] Filling terrain shell for room %s", tostring(id)))
             fillTerrainShell(room.position, room.dims, 0, wallMaterial)
         end
 
@@ -654,9 +667,11 @@ function LayoutInstantiator.instantiate(layout, options)
 
     -- PASS 2: Carve all room interiors (after all shells are filled)
     if useTerrainShell then
+        print("[LayoutInstantiator] Carving room interiors...")
         for id, room in pairs(layout.rooms) do
             carveTerrainInterior(room.position, room.dims, 0)
         end
+        print("[LayoutInstantiator] Carving complete")
     end
 
     -- PASS 3: Paint lava veins through granite walls (doubled - lower threshold)
@@ -753,6 +768,17 @@ function LayoutInstantiator.instantiate(layout, options)
     if layout.spawn then
         spawnPoint = createSpawn(layout.spawn, container, options.regionId)
     end
+
+    -- Debug: verify what's in the container
+    local childCount = #container:GetChildren()
+    local partCount = 0
+    for _, desc in ipairs(container:GetDescendants()) do
+        if desc:IsA("BasePart") then
+            partCount = partCount + 1
+        end
+    end
+    print(string.format("[LayoutInstantiator] Final container: %d children, %d total parts, parent=%s",
+        childCount, partCount, tostring(container.Parent and container.Parent.Name or "nil")))
 
     return {
         container = container,

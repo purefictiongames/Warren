@@ -116,6 +116,91 @@ local JumpPad = require(script.Parent.JumpPad)
 local DATASTORE_NAME = "DungeonData_v1"
 local dungeonStore = nil
 
+--------------------------------------------------------------------------------
+-- TITLE DIORAMA LAYOUT (region_0)
+--------------------------------------------------------------------------------
+
+-- Room dimensions for the title screen diorama
+local TITLE_HUB_SIZE = { 40, 24, 40 }        -- Main viewing room
+local TITLE_SIDE_ROOM_SIZE = { 30, 20, 24 }  -- Horizontal room (north)
+local TITLE_UPPER_ROOM_SIZE = { 24, 16, 24 } -- Room above hub
+local TITLE_WALL_THICKNESS = 1
+
+--[[
+    Creates the layout for the title diorama (region_0).
+    Uses GeometryDef directly - same pipeline as gameplay.
+--]]
+local function createTitleDioramaLayout()
+    print("[RegionManager] createTitleDioramaLayout called")
+
+    -- Calculate room positions
+    -- Hub room centered at origin, floor at Y=0
+    local hubCenter = { 0, TITLE_HUB_SIZE[2] / 2, 0 }
+
+    -- Side room north of hub (shares floor level)
+    local sideZ = TITLE_HUB_SIZE[3] / 2 + TITLE_SIDE_ROOM_SIZE[3] / 2 + TITLE_WALL_THICKNESS * 2
+    local sideCenter = { 0, TITLE_SIDE_ROOM_SIZE[2] / 2, sideZ }
+
+    -- Upper room above hub
+    local upperY = TITLE_HUB_SIZE[2] + TITLE_WALL_THICKNESS * 2 + TITLE_UPPER_ROOM_SIZE[2] / 2
+    local upperCenter = { 0, upperY, 0 }
+
+    print(string.format("[RegionManager] Hub: (%.1f, %.1f, %.1f)", hubCenter[1], hubCenter[2], hubCenter[3]))
+    print(string.format("[RegionManager] Side: (%.1f, %.1f, %.1f)", sideCenter[1], sideCenter[2], sideCenter[3]))
+    print(string.format("[RegionManager] Upper: (%.1f, %.1f, %.1f)", upperCenter[1], upperCenter[2], upperCenter[3]))
+
+    -- Create GeometryDef with predefined rooms (same approach as procedural generation)
+    local def = Layout.GeometryDef.new({
+        seed = 0,
+        regionNum = 0,  -- Title screen uses palette 0 (cycles to palette 10)
+        config = {
+            wallThickness = TITLE_WALL_THICKNESS,
+            doorSize = 12,
+            floorThreshold = 5,
+            useTerrainShell = true,
+        },
+        rooms = {
+            [1] = {
+                id = 1,
+                position = hubCenter,
+                dims = TITLE_HUB_SIZE,
+                parentId = nil,
+                attachFace = nil,
+            },
+            [2] = {
+                id = 2,
+                position = sideCenter,
+                dims = TITLE_SIDE_ROOM_SIZE,
+                parentId = 1,
+                attachFace = "N",
+            },
+            [3] = {
+                id = 3,
+                position = upperCenter,
+                dims = TITLE_UPPER_ROOM_SIZE,
+                parentId = 1,
+                attachFace = "U",
+            },
+        },
+    })
+
+    -- Enrich: fill in doors, trusses, lights, pads, spawn
+    Layout.enrich(def)
+
+    -- Export to layout format for instantiation
+    local layout = def:toLayout()
+
+    -- Debug: verify layout structure
+    print(string.format("[RegionManager] Layout created: %d rooms, %d doors, %d trusses, %d lights",
+        def:getRoomCount(), #def:getDoors(), #def:getTrusses(), #def:getLights()))
+
+    return layout
+end
+
+--------------------------------------------------------------------------------
+-- DATA STORE ACCESS
+--------------------------------------------------------------------------------
+
 -- Initialize DataStore (deferred to avoid errors in Studio without API access)
 local function getDataStore()
     if not dungeonStore then
@@ -1293,6 +1378,18 @@ local RegionManager = Node.extend(function(parent)
         Sys = {
             onInit = function(self)
                 local _ = getState(self)
+
+                -- Load the title diorama (region_0) immediately on server start
+                -- This ensures the 3D background is ready before players join
+                print("[RegionManager] onInit: Loading title region...")
+                local success, err = pcall(function()
+                    self:loadTitleRegion()
+                end)
+                if not success then
+                    warn("[RegionManager] ERROR in loadTitleRegion: " .. tostring(err))
+                else
+                    print("[RegionManager] onInit: Title region loaded successfully")
+                end
             end,
 
             onStart = function(self) end,
@@ -1314,7 +1411,8 @@ local RegionManager = Node.extend(function(parent)
         In = {
             --[[
                 Handle start pressed signal from TitleScreen.
-                Starts the dungeon for the player and hides the title screen.
+                Triggers transition from title screen (region_0) to gameplay (region_1).
+                Uses the standard transition system: transitionStart → fadeOutComplete → build → transitionEnd
 
                 @param data table:
                     player: Player - The player who pressed start
@@ -1333,106 +1431,21 @@ local RegionManager = Node.extend(function(parent)
                     System.Debug.info("RegionManager", "Start pressed by", player.Name)
                 end
 
-                -- Start dungeon for this player
-                local regionId = self:startFirstRegion(player)
+                -- Store pending transition (will be processed in onFadeOutComplete)
+                state.pendingTransitions[player] = {
+                    isFromTitle = true,  -- Special case: transitioning from title to gameplay
+                }
 
-                -- Log layout info for debugging
-                local region = state.regions[regionId]
-                if region and region.layout then
-                    local layout = region.layout
-                    local roomCount = 0
-                    for _ in pairs(layout.rooms) do roomCount = roomCount + 1 end
-
-                    if System and System.Debug then
-                        System.Debug.info("RegionManager", string.format(
-                            "Layout: %d rooms, %d doors, %d trusses, %d lights, %d pads",
-                            roomCount,
-                            #layout.doors,
-                            #layout.trusses,
-                            #layout.lights,
-                            #layout.pads
-                        ))
-                    end
-
-                    -- Fire buildMiniMap to client (builds while title fades out)
-                    self.Out:Fire("buildMiniMap", {
-                        _targetPlayer = player,
-                        player = player,
-                        layout = layout,
-                    })
-                end
-
-                -- Fire hideTitle signal to client to fade out title screen
-                self.Out:Fire("hideTitle", {
+                -- Fire transitionStart to fade screen to black
+                -- This also tells TitleScreen to fade out its UI elements
+                self.Out:Fire("transitionStart", {
                     _targetPlayer = player,
                     player = player,
+                    fromTitle = true,  -- Let client know this is title → gameplay
                 })
 
-                -- Fire transitionEnd after title fades (enables minimap, etc.)
-                task.delay(0.6, function()
-                    self.Out:Fire("transitionEnd", {
-                        _targetPlayer = player,
-                        player = player,
-                    })
-                end)
-
-                -- Handle character setup (moved from Bootstrap.server.lua)
-                local function onCharacterAdded(character)
-                    -- Wait for character to fully load and settle
-                    task.wait(0.5)
-
-                    local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
-                    if not humanoidRootPart then return end
-
-                    local activeRegion = state.regions[state.activeRegionId]
-                    local layout = activeRegion and activeRegion.layout
-
-                    local pos = humanoidRootPart.Position
-
-                    -- Check if player is inside any room
-                    local isInside = false
-                    if layout then
-                        for _, room in pairs(layout.rooms) do
-                            local minX = room.position[1] - room.dims[1] / 2
-                            local maxX = room.position[1] + room.dims[1] / 2
-                            local minY = room.position[2] - room.dims[2] / 2
-                            local maxY = room.position[2] + room.dims[2] / 2
-                            local minZ = room.position[3] - room.dims[3] / 2
-                            local maxZ = room.position[3] + room.dims[3] / 2
-
-                            if pos.X >= minX and pos.X <= maxX and
-                               pos.Y >= minY and pos.Y <= maxY and
-                               pos.Z >= minZ and pos.Z <= maxZ then
-                                isInside = true
-                                break
-                            end
-                        end
-                    end
-
-                    if not isInside and layout then
-                        -- Player spawned outside - teleport to room 1 center
-                        local room1 = layout.rooms[1]
-                        if room1 then
-                            local targetPos = Vector3.new(
-                                room1.position[1],
-                                room1.position[2] - room1.dims[2] / 2 + 3,
-                                room1.position[3]
-                            )
-                            humanoidRootPart.CFrame = CFrame.new(targetPos)
-                        end
-                    end
-
-                    -- Send initial area info to client
-                    self:sendInitialAreaInfo(player, 1)
-                end
-
-                if player.Character then
-                    onCharacterAdded(player.Character)
-                end
-                player.CharacterAdded:Connect(onCharacterAdded)
-
                 if System and System.Debug then
-                    System.Debug.info("RegionManager", "Dungeon ready for", player.Name)
+                    System.Debug.info("RegionManager", "Title transition started for", player.Name)
                 end
             end,
 
@@ -1507,6 +1520,92 @@ local RegionManager = Node.extend(function(parent)
 
                 local System = self._System
 
+                -- Handle title-to-gameplay transition (player pressed Start)
+                if pending.isFromTitle then
+                    if System and System.Debug then
+                        System.Debug.info("RegionManager", "Fade complete for", player.Name, "- starting gameplay")
+                    end
+
+                    -- Unload title diorama (region_0)
+                    self:unloadTitleRegion()
+
+                    -- Build gameplay region (region_1)
+                    local regionId = self:startFirstRegion(player)
+                    local region = state.regions[regionId]
+                    local layout = region and region.layout
+
+                    if layout then
+                        local roomCount = 0
+                        for _ in pairs(layout.rooms) do roomCount = roomCount + 1 end
+
+                        if System and System.Debug then
+                            System.Debug.info("RegionManager", string.format(
+                                "Layout: %d rooms, %d doors, %d trusses, %d lights, %d pads",
+                                roomCount,
+                                #layout.doors,
+                                #layout.trusses,
+                                #layout.lights,
+                                #layout.pads
+                            ))
+                        end
+                    end
+
+                    -- Store pending minimap build
+                    state.pendingMiniMapBuild[player] = {
+                        container = region and region.container,
+                    }
+
+                    -- Update pending transition with target region for onTransitionComplete
+                    state.pendingTransitions[player] = {
+                        targetRegionId = regionId,
+                        isFromTitle = true,
+                    }
+
+                    -- Fire buildMiniMap to client
+                    self.Out:Fire("buildMiniMap", {
+                        _targetPlayer = player,
+                        player = player,
+                        layout = layout,
+                    })
+
+                    -- Spawn the player character now that region is built
+                    -- Get spawn position from layout
+                    local spawnPos
+                    if layout and layout.spawn then
+                        spawnPos = Vector3.new(layout.spawn[1], layout.spawn[2] + 3, layout.spawn[3])
+                    elseif layout and layout.rooms[1] then
+                        local room1 = layout.rooms[1]
+                        spawnPos = Vector3.new(
+                            room1.position[1],
+                            room1.position[2] - room1.dims[2] / 2 + 3,
+                            room1.position[3]
+                        )
+                    else
+                        spawnPos = Vector3.new(0, 25, 0)  -- Fallback
+                    end
+
+                    -- Load player character
+                    player:LoadCharacter()
+
+                    -- Wait for character and teleport to spawn
+                    task.spawn(function()
+                        local character = player.Character or player.CharacterAdded:Wait()
+                        local hrp = character:WaitForChild("HumanoidRootPart", 5)
+                        if hrp then
+                            hrp.CFrame = CFrame.new(spawnPos)
+                        end
+
+                        -- Send initial area info
+                        self:sendInitialAreaInfo(player, 1)
+                    end)
+
+                    if System and System.Debug then
+                        System.Debug.info("RegionManager", "Gameplay started for", player.Name)
+                    end
+
+                    return
+                end
+
                 -- Handle exit-to-title transition
                 if pending.isExitToTitle then
                     if System and System.Debug then
@@ -1523,8 +1622,8 @@ local RegionManager = Node.extend(function(parent)
                         end
                     end
 
-                    -- Reset dungeon state (keep save data)
-                    state.activeRegionId = nil
+                    -- Reload title diorama
+                    self:loadTitleRegion()
 
                     -- Signal client to close exit screen
                     self.Out:Fire("returnToTitle", {
@@ -1814,6 +1913,7 @@ local RegionManager = Node.extend(function(parent)
             hideTitle = {},
             showTitle = {},
             returnToTitle = {},
+            titleRegionReady = {},  -- Fires when title diorama (region_0) is built
             transitionStart = {},
             loadingComplete = {},
             transitionEnd = {},
@@ -1828,6 +1928,112 @@ local RegionManager = Node.extend(function(parent)
             local state = getState(self)
             for key, value in pairs(config) do
                 state.config[key] = value
+            end
+        end,
+
+        --[[
+            Load the title diorama as region_0.
+            Called on server init before any players join.
+            Creates the 3D background for the title screen using the same
+            pipeline as gameplay regions.
+        --]]
+        loadTitleRegion = function(self)
+            local state = getState(self)
+            local System = self._System
+
+            if System and System.Debug then
+                System.Debug.info("RegionManager", "Loading title diorama (region_0)")
+            end
+
+            -- Delete baseplate
+            local baseplate = workspace:FindFirstChild("Baseplate")
+            if baseplate then
+                baseplate:Destroy()
+            end
+
+            -- Create the title diorama layout
+            print("[RegionManager] Creating title diorama layout...")
+            local layout = createTitleDioramaLayout()
+
+            if not layout then
+                warn("[RegionManager] ERROR: createTitleDioramaLayout returned nil!")
+                return nil
+            end
+
+            local roomCount = 0
+            if layout.rooms then
+                for _ in pairs(layout.rooms) do roomCount = roomCount + 1 end
+            end
+            print(string.format("[RegionManager] Layout has %d rooms", roomCount))
+
+            -- Store as region_0 (not counted in regionCount - it's a special region)
+            local regionId = "region_0"
+            state.regions[regionId] = {
+                id = regionId,
+                layout = layout,
+                mapType = "title",  -- Special type for title diorama
+                padLinks = {},
+                isActive = true,
+                isTitleRegion = true,  -- Mark as title region
+                container = nil,
+                pads = nil,
+            }
+
+            -- Instantiate the diorama
+            print("[RegionManager] Instantiating title diorama...")
+            local result = Layout.instantiate(layout, {
+                name = "TitleDiorama",
+                regionId = regionId,
+            })
+
+            print(string.format("[RegionManager] Instantiate result: container=%s",
+                tostring(result and result.container or "nil")))
+
+            -- Store container reference
+            state.regions[regionId].container = result.container
+
+            -- Don't create JumpPads for title region - no teleporting on title screen
+
+            state.activeRegionId = regionId
+
+            if System and System.Debug then
+                System.Debug.info("RegionManager", "Title diorama loaded")
+            end
+
+            -- Signal clients that title region is ready
+            self.Out:Fire("titleRegionReady", {
+                container = result.container,
+            })
+
+            return regionId
+        end,
+
+        --[[
+            Unload the title diorama and transition to gameplay.
+            Called when player presses Start.
+        --]]
+        unloadTitleRegion = function(self)
+            local state = getState(self)
+            local System = self._System
+
+            local titleRegion = state.regions["region_0"]
+            if not titleRegion then return end
+
+            if System and System.Debug then
+                System.Debug.info("RegionManager", "Unloading title diorama")
+            end
+
+            -- Destroy the container
+            if titleRegion.container then
+                titleRegion.container:Destroy()
+                titleRegion.container = nil
+            end
+
+            -- Remove from regions
+            state.regions["region_0"] = nil
+
+            if state.activeRegionId == "region_0" then
+                state.activeRegionId = nil
             end
         end,
 

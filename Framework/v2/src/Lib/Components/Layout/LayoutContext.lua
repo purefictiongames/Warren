@@ -307,6 +307,8 @@ function LayoutContext:toLayout()
         -- Derived values from GeometryContext (for use by LayoutInstantiator, TerrainManager)
         gap = self.config.gap or (2 * (self.config.wallThickness or 1)),
         cutterDepth = self.config.cutterDepth or ((self.config.wallThickness or 1) * 8),
+        -- Terrain shell option (defaults to true in LayoutInstantiator if not specified)
+        useTerrainShell = self.config.useTerrainShell,
     }
 
     -- Store domain-specific seeds for future regeneration

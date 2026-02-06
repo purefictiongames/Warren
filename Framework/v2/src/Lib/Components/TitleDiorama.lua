@@ -94,6 +94,27 @@ local function createTruss(position, height, parent)
     return truss
 end
 
+local function createLight(position, brightness, range, color, parent)
+    -- Create an anchored part to hold the light
+    local lightPart = Instance.new("Part")
+    lightPart.Name = "LightSource"
+    lightPart.Size = Vector3.new(1, 1, 1)
+    lightPart.Position = position
+    lightPart.Anchored = true
+    lightPart.CanCollide = false
+    lightPart.Transparency = 1
+    lightPart.Parent = parent
+
+    local light = Instance.new("PointLight")
+    light.Brightness = brightness or 2
+    light.Range = range or 40
+    light.Color = color or Color3.new(1, 1, 1)
+    light.Shadows = true
+    light.Parent = lightPart
+
+    return lightPart
+end
+
 --------------------------------------------------------------------------------
 -- ROOM BUILDERS
 --------------------------------------------------------------------------------
@@ -246,6 +267,20 @@ function TitleDiorama.create()
     local trussTop = upperCenter.Y - UPPER_ROOM_SIZE.Y / 2
     local trussHeight = trussTop - trussBottom
     createTruss(Vector3.new(4, trussBottom + trussHeight / 2, 4), trussHeight, diorama)
+
+    -- Lighting
+    -- Main hub light (above center)
+    createLight(Vector3.new(0, HUB_SIZE.Y * 0.7, 0), 2, 50, Color3.fromRGB(200, 220, 255), diorama)
+
+    -- Side room light
+    createLight(Vector3.new(0, SIDE_ROOM_SIZE.Y * 0.7, sideCenter.Z), 1.5, 35, Color3.fromRGB(200, 220, 255), diorama)
+
+    -- Upper room light
+    createLight(Vector3.new(0, upperCenter.Y + 4, 0), 1.5, 30, Color3.fromRGB(200, 220, 255), diorama)
+
+    -- Portal glow lights (purple tint)
+    createLight(Vector3.new(0, 3, 0), 1, 15, Color3.fromRGB(180, 100, 255), diorama)
+    createLight(Vector3.new(0, 3, sideCenter.Z), 1, 15, Color3.fromRGB(180, 100, 255), diorama)
 
     diorama.Parent = workspace
     return diorama

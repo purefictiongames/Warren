@@ -1562,3 +1562,46 @@ The breadboard model is now operational. Nodes can be defined, registered, wired
 - **Major Pivots:** 8
 - **Days to Working Game Loop:** 2
 - **Documentation Pages:** 4 (added IPC_NODE_SPEC)
+
+---
+
+---
+
+### Feb 7, 2026 - Rename: LibPureFiction → Warren
+
+**Context: Alpha Rabbit Branding**
+
+Renamed the entire project from LibPureFiction to **Warren** as part of branding under the Alpha Rabbit identity. Clean break — no backwards compatibility shims, no aliases.
+
+---
+
+**Scope of Changes**
+
+| Area | What Changed |
+|------|-------------|
+| GitHub repos | `purefictiongames/LibPureFiction` → `purefictiongames/Warren`, `LibPureFiction-Core` → `Warren-Core` |
+| Rojo project files | `"name"` field in both `default.project.json` files |
+| Rojo tree path | `"Lib"` key → `"Warren"` + directory rename `src/Lib` → `src/Warren` |
+| Lua require paths | `game.ReplicatedStorage.Lib` → `game.ReplicatedStorage.Warren` (~75 in game repo, ~7 in Core) |
+| Lua WaitForChild | `WaitForChild("Lib")` → `WaitForChild("Warren")` (~36 occurrences) |
+| Lua globals | `_G.Lib` → `_G.Warren` |
+| Lua file headers | `LibPureFiction Framework v2` → `Warren Framework v2` (100+ files) |
+| DataStore name | `"LibPureFiction_Logs"` → `"Warren_Logs"` in System.lua |
+| Documentation | All `.md` files across both repos (30+ files) |
+| Website | `/var/www/itgetsworse/libpurefiction/` → `/warren/`, display text + internal links in 21 HTML files |
+| AlphaRabbit | 3 files (summaries + blog manifest) |
+| Wally package | `libpurefiction/system` → `warren/system`, author updated |
+| IP statement files | Filenames renamed to include "Warren" |
+| Git remotes | Both repos updated to new GitHub URLs |
+| Local directories | `~/LibPureFiction` → `~/Warren`, `~/LibPureFiction-Core` → `~/Warren-Core` |
+
+**Execution Order:** GitHub renames first (so redirects catch any in-flight references), then Core repo, game repo, website, AlphaRabbit, local directory renames last.
+
+**Gotcha Found During Execution:** Some Lua files used `ReplicatedStorage.Lib` without the `game.` prefix (common in test files and demos). The initial `sed` pass targeting `game.ReplicatedStorage.Lib` missed ~20 occurrences. Caught during post-replacement grep and fixed with a second pass.
+
+**Commits:**
+- Warren-Core: `b6c0cde` — 48 files changed
+- Warren: `3e79c22` — 181 files changed
+- AlphaRabbit: `2f54290` — 3 files changed
+
+**Verification:** `grep -ri "LibPureFiction"` across all locations returns zero results. GitHub repos accessible at new URLs. Git remotes updated.

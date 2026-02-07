@@ -104,10 +104,10 @@ Created explicit documentation of the signal architecture rules.
 
 ## Files Modified This Session
 
-1. `Framework/v2/src/Lib/Node.lua` - Added sync mode to OutChannel:Fire
-2. `Framework/v2/src/Lib/System.lua` - Added auto-ack in IPC dispatch
-3. `Framework/v2/src/Lib/Demos/Turret_Demo.lua` - Complete refactor to signal architecture
-4. `Framework/v2/src/Lib/Components/Launcher.lua` - Fixed anti-gravity (BodyForce instead of AssemblyGravityModifier)
+1. `Framework/v2/src/Warren/Node.lua` - Added sync mode to OutChannel:Fire
+2. `Framework/v2/src/Warren/System.lua` - Added auto-ack in IPC dispatch
+3. `Framework/v2/src/Warren/Demos/Turret_Demo.lua` - Complete refactor to signal architecture
+4. `Framework/v2/src/Warren/Components/Launcher.lua` - Fixed anti-gravity (BodyForce instead of AssemblyGravityModifier)
 5. `Framework/v2/ARCHITECTURE.md` - Created signal architecture documentation
 
 ## Next Steps (New Chat)
@@ -128,7 +128,7 @@ Created explicit documentation of the signal architecture rules.
 
 ```lua
 -- Run the turret demo
-local Demos = require(game.ReplicatedStorage.Lib.Demos)
+local Demos = require(game.ReplicatedStorage.Warren.Demos)
 local demo = Demos.Turret.run()
 
 -- Cleanup

@@ -56,11 +56,11 @@ Essentially: spawn is just a special pad.
 
 ## Files Modified
 
-- `Framework/v2/src/Lib/Components/Layout/LayoutBuilder.lua`
+- `Framework/v2/src/Warren/Components/Layout/LayoutBuilder.lua`
   - `planTrusses()` - fixed ceiling truss height calculation
   - `planSpawn()` - multiple iterations, currently uses door-based + BFS
 
-- `Framework/v2/src/Lib/Components/Layout/LayoutInstantiator.lua`
+- `Framework/v2/src/Warren/Components/Layout/LayoutInstantiator.lua`
   - `createSpawn()` - currently has raycast logic that should be removed
   - `findSpawnPosition()` - added raycast-based room iteration, should be removed
 

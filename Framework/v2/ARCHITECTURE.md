@@ -1,4 +1,4 @@
-# LibPureFiction v2 Architecture
+# Warren v2 Architecture
 
 ## CRITICAL: Event-Driven Signal Architecture
 

@@ -1,6 +1,6 @@
 # Node Design Pattern
 
-LibPureFiction Framework v2 - Canonical Node Architecture
+Warren Framework v2 - Canonical Node Architecture
 
 ## Overview
 
@@ -290,7 +290,7 @@ NodeA.Out.stateChanged  → (any subscriber)
 
 ```lua
 --[[
-    LibPureFiction Framework v2
+    Warren Framework v2
     {ComponentName}.lua - {Brief Description}
 
     Copyright (c) 2025 Adam Stearns / Pure Fiction Records LLC

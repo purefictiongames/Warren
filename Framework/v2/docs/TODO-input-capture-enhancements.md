@@ -96,5 +96,5 @@ Automatically create touch controls from Control mapping.
 ## Notes
 
 The Turret_Demo serves as the reference implementation for this system. See:
-- `Framework/v2/src/Lib/Demos/Turret_Demo.lua` - TurretManualController
-- `Framework/v2/src/Lib/System.lua` - InputCapture.claimForNode()
+- `Framework/v2/src/Warren/Demos/Turret_Demo.lua` - TurretManualController
+- `Framework/v2/src/Warren/System.lua` - InputCapture.claimForNode()

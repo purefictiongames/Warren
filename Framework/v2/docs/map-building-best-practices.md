@@ -25,7 +25,7 @@ Lessons learned from building the Lichtervelde Cathedral using Factory/GeometryS
 ### 5. Quick Iteration Loop
 ```lua
 if workspace:FindFirstChild("Name") then workspace.Name:Destroy() end
-local Lib = require(game.ReplicatedStorage.Lib)
+local Lib = require(game.ReplicatedStorage.Warren)
 Lib.Layouts.clearCache()
 local model = Lib.Factory.geometry(Lib.Layouts.LayoutName)
 ```
@@ -147,7 +147,7 @@ return {
 ### Test Command Template
 ```lua
 if workspace:FindFirstChild("MODEL") then workspace.MODEL:Destroy() end
-local Lib = require(game.ReplicatedStorage.Lib)
+local Lib = require(game.ReplicatedStorage.Warren)
 Lib.Layouts.clearCache()
 local model = Lib.Factory.geometry(Lib.Layouts.LAYOUT)
 -- Optional: compile

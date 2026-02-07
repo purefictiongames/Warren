@@ -1,8 +1,8 @@
-# LibPureFiction Framework v2 - Architecture
+# Warren Framework v2 - Architecture
 
 ## Overview
 
-LibPureFiction is a Roblox game framework designed for developer ergonomics. It follows an **Arduino-like model** where games are composed of modular components wired together through a unified messaging bus.
+Warren is a Roblox game framework designed for developer ergonomics. It follows an **Arduino-like model** where games are composed of modular components wired together through a unified messaging bus.
 
 ## Design Principles
 
@@ -16,7 +16,7 @@ LibPureFiction is a Roblox game framework designed for developer ergonomics. It 
 ## Package Structure
 
 ```
-LibPureFiction/
+Warren/
 ├── src/
 │   ├── Lib/
 │   │   ├── init.lua              <- Main entry (exports System, Node, Components)
@@ -66,7 +66,7 @@ SomeGame/
 ├── src/
 │   ├── Manifest.lua         <- Structure + wiring
 │   └── Style.lua            <- Presentation
-├── wally.toml               <- Depends on LibPureFiction
+├── wally.toml               <- Depends on Warren
 └── default.project.json
 ```
 
@@ -304,7 +304,7 @@ SchemaValidator is used by Orchestrator for message contract validation.
 ### Usage
 
 ```lua
-local Lib = require(game.ReplicatedStorage.Lib)
+local Lib = require(game.ReplicatedStorage.Warren)
 local PathFollower = Lib.Components.PathFollower
 
 -- Register with Asset system
@@ -322,7 +322,7 @@ local pf = Lib.System.IPC.createInstance("PathFollower", {
 Extend Node for game-specific components:
 
 ```lua
-local Node = require(game.ReplicatedStorage.Lib).Node
+local Node = require(game.ReplicatedStorage.Warren).Node
 
 local MyComponent = Node.extend({
     name = "MyComponent",
@@ -371,7 +371,7 @@ This enables synchronous request/response patterns while keeping the IPC archite
 Node.lua includes a built-in Registry for tracking and querying active nodes:
 
 ```lua
-local Node = require(game.ReplicatedStorage.Lib).Node
+local Node = require(game.ReplicatedStorage.Warren).Node
 
 -- Register a node (automatic on creation)
 Node.Registry.register(myNode)
@@ -452,7 +452,7 @@ The Orchestrator is a meta-component that manages other components through decla
 ### Basic Usage
 
 ```lua
-local Lib = require(game.ReplicatedStorage.Lib)
+local Lib = require(game.ReplicatedStorage.Warren)
 local Orchestrator = Lib.Components.Orchestrator
 
 local orch = Orchestrator:new({ id = "GameOrchestrator" })
@@ -507,7 +507,7 @@ See `docs/ORCHESTRATOR_DESIGN.md` for full specification.
 
 ## Licensing
 
-LibPureFiction is proprietary software. Games built using this framework under subcontract receive license rights as part of the service agreement.
+Warren is proprietary software. Games built using this framework under subcontract receive license rights as part of the service agreement.
 
 ---
 

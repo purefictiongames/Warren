@@ -38,7 +38,7 @@ function DropperModule.initialize(config)
 
 	-- Dependencies
 	local Visibility = require(ReplicatedStorage:WaitForChild("System.Visibility"))
-	local libFolder = ReplicatedStorage:WaitForChild("Lib")
+	local libFolder = ReplicatedStorage:WaitForChild("Warren")
 	local runtimeAssets = game.Workspace:WaitForChild("RuntimeAssets")
 
 	-- Get configuration from model attributes

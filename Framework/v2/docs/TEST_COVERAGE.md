@@ -1,4 +1,4 @@
-# LibPureFiction v2 - Test Coverage
+# Warren v2 - Test Coverage
 
 ## Running Tests
 
@@ -6,23 +6,23 @@ In Roblox Studio Command Bar (after game starts):
 
 ```lua
 -- Run all tests
-_G.Lib.Tests.IPC.runAll()
+_G.Warren.Tests.IPC.runAll()
 
 -- Run specific group
-_G.Lib.Tests.IPC.runGroup("Node")
-_G.Lib.Tests.IPC.runGroup("IPC Messaging")
+_G.Warren.Tests.IPC.runGroup("Node")
+_G.Warren.Tests.IPC.runGroup("IPC Messaging")
 
 -- Run single test
-_G.Lib.Tests.IPC.run("Node.extend creates class with name")
+_G.Warren.Tests.IPC.run("Node.extend creates class with name")
 
 -- List available groups
-_G.Lib.Tests.IPC.list()
+_G.Warren.Tests.IPC.list()
 ```
 
 Or using require:
 
 ```lua
-local Tests = require(game.ReplicatedStorage.Lib.Tests)
+local Tests = require(game.ReplicatedStorage.Warren.Tests)
 Tests.IPC.runAll()
 ```
 
@@ -363,7 +363,7 @@ Error detection.
 Successful run:
 ```
 ═══════════════════════════════════════════════════════
-  LibPureFiction v2 - IPC & Node Test Suite
+  Warren v2 - IPC & Node Test Suite
 ═══════════════════════════════════════════════════════
 
 ▶ Node

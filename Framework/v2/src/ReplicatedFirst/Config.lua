@@ -1,5 +1,5 @@
 --[[
-    LibPureFiction Framework v2
+    Warren Framework v2
     Config.lua - Shared Configuration
 
     Copyright (c) 2025 Adam Stearns / Pure Fiction Records LLC

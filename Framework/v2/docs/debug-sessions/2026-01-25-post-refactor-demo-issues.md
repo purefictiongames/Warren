@@ -52,10 +52,10 @@ Rather than spend hours debugging the refactor's secondary effects, user decided
 
 ## Files Involved
 
-- `src/Lib/Components/Swivel.lua` - Physics-based rotation (HingeConstraint)
-- `src/Lib/Components/Launcher.lua` - Projectile firing with anti-gravity
-- `src/Lib/Demos/Swivel_Demo.lua` - Demo to be rebuilt
-- `src/Lib/Demos/Launcher_Demo.lua` - May also need fixes
+- `src/Warren/Components/Swivel.lua` - Physics-based rotation (HingeConstraint)
+- `src/Warren/Components/Launcher.lua` - Projectile firing with anti-gravity
+- `src/Warren/Demos/Swivel_Demo.lua` - Demo to be rebuilt
+- `src/Warren/Demos/Launcher_Demo.lua` - May also need fixes
 
 ## Next Steps (Fresh Session)
 

@@ -8,7 +8,7 @@
 
 ---
 
-# LibPureFiction Framework - Project Journal
+# Warren Framework - Project Journal
 
 **Project:** Roblox Game Framework with Self-Bootstrapping Asset System
 **Timeline:** December 25-30, 2025 (6 days)

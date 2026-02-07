@@ -8,7 +8,7 @@
 
 ---
 
-# LibPureFiction Framework - Project Journal
+# Warren Framework - Project Journal
 
 **Project:** Roblox Game Framework with Self-Bootstrapping Asset System
 **Timeline:** December 25-30, 2025 (6 days)
@@ -1283,8 +1283,8 @@ IPC.broadcast("init")            -- Lifecycle signal to all active nodes
 **Files Changed This Session:**
 
 **Debug/Log Simplification (Prior to Design Discussion):**
-- `src/Lib/System.lua` - Added context detection, centralized groups, Utils.mergeConfig()
-- `src/Lib/Config.lua` → moved to `src/ReplicatedFirst/Config.lua`
+- `src/Warren/System.lua` - Added context detection, centralized groups, Utils.mergeConfig()
+- `src/Warren/Config.lua` → moved to `src/ReplicatedFirst/Config.lua`
 - `src/Bootstrap.server.lua` - Updated to use shared Config
 - `default.project.json` - Added ReplicatedFirst mapping
 
@@ -1305,7 +1305,7 @@ Implemented the full IPC (Inter-Process Communication) and Node architecture bas
 
 ---
 
-**Node Base Class (`src/Lib/Node.lua`)**
+**Node Base Class (`src/Warren/Node.lua`)**
 
 Created the foundational Node class with:
 
@@ -1366,7 +1366,7 @@ local MarshmallowBag = Dispenser.extend({
 
 ---
 
-**IPC Subsystem (`src/Lib/System.lua`)**
+**IPC Subsystem (`src/Warren/System.lua`)**
 
 Added comprehensive IPC subsystem (~800 lines) following the IIFE closure pattern:
 
@@ -1518,9 +1518,9 @@ _G.IPC.sendTo("test1", "ping", { msg = "hello" })
 
 | File | Action | Lines |
 |------|--------|-------|
-| `src/Lib/Node.lua` | CREATE | ~400 |
-| `src/Lib/System.lua` | MODIFY | +800 |
-| `src/Lib/init.lua` | MODIFY | +3 |
+| `src/Warren/Node.lua` | CREATE | ~400 |
+| `src/Warren/System.lua` | MODIFY | +800 |
+| `src/Warren/init.lua` | MODIFY | +3 |
 | `src/Bootstrap.server.lua` | MODIFY | +15 |
 | `src/Bootstrap.client.lua` | CREATE | ~85 |
 | `default.project.json` | MODIFY | +10 |

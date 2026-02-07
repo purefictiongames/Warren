@@ -37,7 +37,7 @@ local Visibility = require(ReplicatedStorage:WaitForChild("System.Visibility"))
 System:RegisterAsset(assetName, function()
 	-- Dependencies
 	local runtimeAssets = game.Workspace:WaitForChild("RuntimeAssets")
-	local libFolder = ReplicatedStorage:WaitForChild("Lib")
+	local libFolder = ReplicatedStorage:WaitForChild("Warren")
 	local model = runtimeAssets:WaitForChild(assetName)
 
 	-- Get standardized events (created by bootstrap)

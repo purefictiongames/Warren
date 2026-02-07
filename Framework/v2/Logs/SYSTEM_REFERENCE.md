@@ -8,12 +8,12 @@
 
 ---
 
-# LibPureFiction Framework - System Reference
+# Warren Framework - System Reference
 
 **Version:** 2.2
 **Last Updated:** January 10, 2026
 
-A comprehensive technical reference for the LibPureFiction Roblox game framework.
+A comprehensive technical reference for the Warren Roblox game framework.
 
 ---
 
@@ -46,7 +46,7 @@ A comprehensive technical reference for the LibPureFiction Roblox game framework
 ## 1.2 Starting a New Session
 
 ```bash
-cd /path/to/LibPureFiction/Framework/v1
+cd /path/to/Warren/Framework/v1
 rojo serve
 ```
 

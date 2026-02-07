@@ -1,4 +1,4 @@
-# LibPureFiction Framework v2 - IPC & Node Architecture Specification
+# Warren Framework v2 - IPC & Node Architecture Specification
 
 > **Copyright (c) 2025 Adam Stearns / Pure Fiction Records LLC**
 > All rights reserved.

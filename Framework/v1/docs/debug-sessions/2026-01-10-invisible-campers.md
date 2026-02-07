@@ -96,7 +96,7 @@ for _, desc in ipairs(clone:GetDescendants()) do
 end
 ```
 
-**File Changed:** `src/Lib/Dropper/ReplicatedStorage/DropperModule.lua`
+**File Changed:** `src/Warren/Dropper/ReplicatedStorage/DropperModule.lua`
 
 ---
 
@@ -125,7 +125,7 @@ for _, desc in ipairs(clone:GetDescendants()) do
 end
 ```
 
-**File Changed:** `src/Lib/Dropper/ReplicatedStorage/DropperModule.lua`
+**File Changed:** `src/Warren/Dropper/ReplicatedStorage/DropperModule.lua`
 
 ---
 
@@ -237,9 +237,9 @@ SpawnOffset is `Vector3.new(0, 2, -3)` applied in SpawnPoint's local coordinates
 | File | Changes |
 |------|---------|
 | `src/System/ReplicatedStorage/GameManifest.lua` | Added TentTemplate attribute to WaveController, SpawnOffset to CampDropper |
-| `src/Lib/Dropper/ReplicatedStorage/DropperModule.lua` | Clear VisibleTransparency attributes, reset Transparency=0, debug logging |
-| `src/Lib/TimedEvaluator/ReplicatedStorage/TimedEvaluatorModule.lua` | Debug logging for showModel before/after |
-| `src/Lib/ArrayPlacer/StarterPlayerScripts/Script.client.lua` | Client-side debug logging for parts and billboard |
+| `src/Warren/Dropper/ReplicatedStorage/DropperModule.lua` | Clear VisibleTransparency attributes, reset Transparency=0, debug logging |
+| `src/Warren/TimedEvaluator/ReplicatedStorage/TimedEvaluatorModule.lua` | Debug logging for showModel before/after |
+| `src/Warren/ArrayPlacer/StarterPlayerScripts/Script.client.lua` | Client-side debug logging for parts and billboard |
 
 ## Related Commits
 

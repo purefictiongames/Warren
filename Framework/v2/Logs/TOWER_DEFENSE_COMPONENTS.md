@@ -5,7 +5,7 @@
 
 ## Philosophy
 
-This document identifies **new standalone components** to add to the LibPureFiction component library. These are additive modules - they don't replace existing components like TimedEvaluator or WaveController. The goal is a collection of composable pieces that can be mixed and matched for different game types.
+This document identifies **new standalone components** to add to the Warren component library. These are additive modules - they don't replace existing components like TimedEvaluator or WaveController. The goal is a collection of composable pieces that can be mixed and matched for different game types.
 
 ## Market Context
 

@@ -2,7 +2,7 @@
 
 > **Date:** January 25, 2026
 > **Status:** Violations Identified - Awaiting Remediation
-> **Component:** `src/Lib/Demos/Swivel_Demo.lua`
+> **Component:** `src/Warren/Demos/Swivel_Demo.lua`
 
 ---
 
@@ -10,7 +10,7 @@
 
 ### 1.1 Core Principles
 
-The LibPureFiction v2 framework follows a **signal-driven architecture** with these non-negotiable rules:
+The Warren v2 framework follows a **signal-driven architecture** with these non-negotiable rules:
 
 1. **Nodes communicate ONLY through signals** - Never direct method calls between nodes
 2. **Wiring is declarative** - Connections defined in configuration, not code

@@ -1,6 +1,6 @@
 # Factory & GeometrySpec - Declarative Geometry System
 
-LibPureFiction Framework v2
+Warren Framework v2
 
 ## Overview
 
@@ -21,7 +21,7 @@ Think of it as a stylesheet for 3D parts - define geometry as data, apply classe
 ## Quick Start
 
 ```lua
-local Lib = require(game.ReplicatedStorage.Lib)
+local Lib = require(game.ReplicatedStorage.Warren)
 local Factory = Lib.Factory
 
 -- Build from a saved layout
@@ -321,8 +321,8 @@ Import another layout as a child using `xref`. This enables modular, reusable bu
 ### Basic Usage
 
 ```lua
-local SuburbanHouse = require(game.ReplicatedStorage.Lib.Layouts.SuburbanHouse)
-local GarageLayout = require(game.ReplicatedStorage.Lib.Layouts.Garage)
+local SuburbanHouse = require(game.ReplicatedStorage.Warren.Layouts.SuburbanHouse)
+local GarageLayout = require(game.ReplicatedStorage.Warren.Layouts.Garage)
 
 return {
     name = "Neighborhood",
@@ -536,7 +536,7 @@ Build geometry visually in Studio, export to layout code.
 
 ```lua
 -- In Studio command bar
-local Lib = require(game.ReplicatedStorage.Lib)
+local Lib = require(game.ReplicatedStorage.Warren)
 Lib.Factory.scan(workspace.MyZone)
 -- Outputs layout code to console
 ```
@@ -866,7 +866,7 @@ return {
 ## Production Workflow
 
 ```lua
-local Lib = require(game.ReplicatedStorage.Lib)
+local Lib = require(game.ReplicatedStorage.Warren)
 
 -- 1. Build layout
 local map = Lib.Factory.geometry(Lib.Layouts.BeverlyMansion)

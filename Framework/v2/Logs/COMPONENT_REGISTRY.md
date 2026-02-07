@@ -1,4 +1,4 @@
-# LibPureFiction Component Registry
+# Warren Component Registry
 
 > Created: 2026-01-12
 > Purpose: Master list of reusable game components derived from popular Roblox genres

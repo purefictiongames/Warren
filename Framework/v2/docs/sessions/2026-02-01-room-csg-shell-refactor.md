@@ -98,9 +98,9 @@ function Room:mountToWall(face, offset, object)
 3. Test mounting (add lights using new helpers)
 
 ## Files to Modify
-- `Framework/v2/src/Lib/Components/Room.lua`
-- `Framework/v2/src/Lib/Components/DoorwayCutter.lua`
-- `Framework/v2/src/Lib/Demos/PathGraph_Demo.lua`
+- `Framework/v2/src/Warren/Components/Room.lua`
+- `Framework/v2/src/Warren/Components/DoorwayCutter.lua`
+- `Framework/v2/src/Warren/Demos/PathGraph_Demo.lua`
 
 ## Notes
 - Don't union rooms together - keep as separate shells for flexibility

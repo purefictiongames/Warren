@@ -81,8 +81,8 @@ Use `Geometry.toTSV()` for debugging - TSV format may not have this issue, or in
 ## Reproduction
 
 ```lua
-local Geometry = require(game.ReplicatedStorage.Lib.Factory.Geometry)
-local houseModule = game.ReplicatedStorage.Lib.Layouts.AtomicRanch.House
+local Geometry = require(game.ReplicatedStorage.Warren.Factory.Geometry)
+local houseModule = game.ReplicatedStorage.Warren.Layouts.AtomicRanch.House
 Geometry.scanPrint(require(houseModule))
 ```
 

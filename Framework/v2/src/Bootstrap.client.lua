@@ -1,5 +1,5 @@
 --[[
-    LibPureFiction Framework v2
+    Warren Framework v2
     Client Bootstrap
 
     Copyright (c) 2025 Adam Stearns / Pure Fiction Records LLC
@@ -22,7 +22,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
 -- Wait for Lib to be available (Rojo sync)
-local Lib = require(ReplicatedStorage:WaitForChild("Lib"))
+local Lib = require(ReplicatedStorage:WaitForChild("Warren"))
 local Debug = Lib.System.Debug
 
 --------------------------------------------------------------------------------
@@ -32,7 +32,7 @@ local Debug = Lib.System.Debug
 -- These are stripped in production (non-Studio) builds
 
 if RunService:IsStudio() then
-    _G.Lib = Lib
+    _G.Warren = Lib
     _G.Node = Lib.Node
     _G.Debug = Lib.System.Debug
     _G.Log = Lib.System.Log
@@ -60,7 +60,7 @@ Log.configure({
 -- BOOTSTRAP
 --------------------------------------------------------------------------------
 
-Debug.info("Bootstrap", "LibPureFiction v" .. Lib._VERSION)
+Debug.info("Bootstrap", "Warren v" .. Lib._VERSION)
 Debug.info("Bootstrap", "Client starting...")
 
 -- Initialize Log subsystem (generates session ID, starts auto-flush)
@@ -175,5 +175,5 @@ Debug.info("Bootstrap", "Client ready")
 -- Load Demos module which auto-detects and initializes any active demos
 -- This enables demos to work in Team Test mode without manual client setup
 
-local Demos = require(ReplicatedStorage:WaitForChild("Lib"):WaitForChild("Demos"))
+local Demos = require(ReplicatedStorage:WaitForChild("Warren"):WaitForChild("Demos"))
 Debug.info("Bootstrap", "Demos module loaded (auto-init enabled)")

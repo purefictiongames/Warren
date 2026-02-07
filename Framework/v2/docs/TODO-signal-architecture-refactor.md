@@ -93,7 +93,7 @@ controller.Out = {
 
 After refactoring, grep should show minimal direct calls:
 ```bash
-grep -r "\.In\.on[A-Z]" --include="*.lua" src/Lib/Demos/
+grep -r "\.In\.on[A-Z]" --include="*.lua" src/Warren/Demos/
 ```
 
 Acceptable matches:

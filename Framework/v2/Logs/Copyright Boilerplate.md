@@ -1,4 +1,4 @@
-# LibPureFiction — Intellectual Property Strategy
+# Warren — Intellectual Property Strategy
 
 **Status:** Proprietary / Internal  
 **Author:** Adam E Stearns

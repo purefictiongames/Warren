@@ -26,7 +26,7 @@ Created `COMPONENT_REGISTRY.md` documenting 34 components across 8 categories wi
 
 Established new folder pattern:
 ```
-Framework/v2/src/Lib/
+Framework/v2/src/Warren/
 ├── Components/
 │   ├── init.lua          # Exports all components
 │   └── PathFollower.lua  # First component
@@ -137,7 +137,7 @@ ResumeDelay: number (default 1)           -- Seconds before resume
 
 Run from Studio Command Bar:
 ```lua
-require(game.ReplicatedStorage.Lib.Tests.IPC_Node_Tests).runGroup("PathFollower Integration")
+require(game.ReplicatedStorage.Warren.Tests.IPC_Node_Tests).runGroup("PathFollower Integration")
 ```
 
 Integration tests create actual parts in workspace and verify navigation.

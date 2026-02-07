@@ -8,7 +8,7 @@
 
 ---
 
-# LibPureFiction Framework Architecture
+# Warren Framework Architecture
 
 ## Current: Stage-Wait Boot System with Dependency Resolution (v1.1)
 

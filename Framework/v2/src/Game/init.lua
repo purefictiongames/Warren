@@ -1,5 +1,5 @@
 --[[
-    LibPureFiction Framework v2
+    Warren Framework v2
     Game Module Index
 
     Copyright (c) 2025 Adam Stearns / Pure Fiction Records LLC

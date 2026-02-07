@@ -8,7 +8,7 @@
 
 ---
 
-# LibPureFiction Framework - Procedures Manual
+# Warren Framework - Procedures Manual
 
 **Purpose:** Operational guide for Claude instances working on this project
 **Version:** Draft 1.0
@@ -150,7 +150,7 @@ Add at the very top of every `.md` file:
 ### Reference Documents
 
 See `Logs/Copyright Boilerplate.md` for the canonical boilerplate text.
-See `Logs/LibPureFiction — Intellectual Property Statement.md` for full IP policy.
+See `Logs/Warren — Intellectual Property Statement.md` for full IP policy.
 
 ---
 

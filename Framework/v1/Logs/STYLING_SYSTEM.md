@@ -12,7 +12,7 @@
 
 **Version:** 2.0
 **Last Updated:** January 8, 2026
-**Audience:** Developers working with LibPureFiction Framework
+**Audience:** Developers working with Warren Framework
 
 ---
 

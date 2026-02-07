@@ -2,7 +2,7 @@
 
 ## Context
 
-This is a Roblox game built on a custom framework called LibPureFiction—a signal-driven, node-based architecture with strict encapsulation. The game is an infinite procedurally generated dungeon with exploration-based gameplay.
+This is a Roblox game built on a custom framework called Warren—a signal-driven, node-based architecture with strict encapsulation. The game is an infinite procedurally generated dungeon with exploration-based gameplay.
 
 ### Existing Architecture
 

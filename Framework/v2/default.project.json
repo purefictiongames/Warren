@@ -1,5 +1,5 @@
 {
-  "name": "LibPureFiction",
+  "name": "Warren",
   "tree": {
     "$className": "DataModel",
     "ReplicatedFirst": {
@@ -10,8 +10,8 @@
     },
     "ReplicatedStorage": {
       "$className": "ReplicatedStorage",
-      "Lib": {
-        "$path": "src/Lib"
+      "Warren": {
+        "$path": "src/Warren"
       },
       "Game": {
         "$path": "src/Game"

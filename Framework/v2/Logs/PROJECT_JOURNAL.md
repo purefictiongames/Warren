@@ -1549,6 +1549,52 @@ The breadboard model is now operational. Nodes can be defined, registered, wired
 
 ---
 
+### 2026-02-08 — The Great Rollback (Postmortem)
+
+**The Situation:** The game was broken. The live 3D diorama title screen — a cool idea where the title screen background was an actual dungeon scene rendered by the same pipeline that builds gameplay — had destabilized everything. A repo split to a Core submodule, a rename from `Lib` to `Warren`, and the diorama code itself had piled up into a state where nothing worked. Time to ship footage and screenshots, and the game won't even boot.
+
+**The Plan:** Simple. Roll back to the last working version, take our footage, move on.
+
+**What Actually Happened:**
+
+We tried rolling back to the pre-diorama commit (`4515b33`). Crashed. `LightBuilder is not a valid member of ModuleScript`. Tried `e1310a4`. Same error. Tried `22ae177` — all the way back to Feb 3, before the title screen even existed. Same error.
+
+This made no sense. How could *every commit* be broken?
+
+After six rollback attempts across four days of history, the answer emerged: **`LightBuilder.lua` and `TeleportPadBuilder.lua` were never committed to git.** Ever. They were authored directly in Roblox Studio and lived exclusively inside the `.rbxl` file. The `require` line referencing them was added on Feb 2 (`397f6c2`), but the actual module files never made it to disk.
+
+The game had been working because Rojo syncs *on top of* an existing Studio file. The `.rbxl` already had those modules baked in from a Studio session. Rojo overlaid everything else — the RegionManager, the TitleScreen, the Layout pipeline — but LightBuilder and TeleportPadBuilder were untouched passengers riding in the `.rbxl` the whole time.
+
+Open a fresh Studio file? They're gone. And that's exactly what we kept doing.
+
+**The Fix:**
+1. Found a backup `.rbxl` that still had the modules
+2. Copy-pasted the source out of Studio into `.lua` files on disk
+3. Committed them to git (only took 5 weeks to get around to it)
+4. Cherry-picked the minimap race condition fix, IPC multiplayer fix, and portal count fix from the abandoned branch
+5. Discovered `ExitScreen` was also missing from `Components/init.lua` — same pattern, Bootstrap registered it but the component index never exported it
+6. Force-pushed the clean history to GitHub
+
+**The Damage:**
+- Lost: The `Lib → Warren` rename, the Core submodule split, the GeometryDef pipeline, the diorama title screen, the email server setup commit
+- Saved: Full diffs archived in `scratchpad/rollback-digest-2026-02-08.md`
+- Gained: A stable, bootable game that actually works on a fresh Studio file
+
+**Root Causes:**
+1. **Studio-only modules.** If it's not in git, it doesn't exist. Rojo's one-way sync creates an illusion that everything is versioned when modules authored in Studio are actually riding invisibly in the `.rbxl`. One fresh file and they vanish.
+2. **Compound changes without checkpoints.** The diorama, repo split, and rename were done in rapid succession without verifying each step independently. By the time we noticed problems, three major architectural changes were tangled together.
+3. **The VPS split.** Work was happening on both Windows (local) and VPS (remote Claude), with the repo split done on the VPS. The two environments drifted apart, and the local copy was never fully synced.
+
+**Lessons:**
+- **Every module on disk, always.** If Rojo can't sync it from a file, it shouldn't exist. No more Studio-only code.
+- **Boot test on fresh file after every major change.** Takes 30 seconds. Would have caught this on Feb 2.
+- **One architectural change at a time.** Don't rename, split repos, and add a new feature in the same session.
+- **Build numbers are breadcrumbs.** "Demo Build 188" was the key that finally located the right commit. Those little version stamps pay for themselves.
+
+**Vibes:** Frustrating, then funny, then educational. The kind of session that makes you mass. Character building, as they say.
+
+---
+
 ## Statistics
 
 - **Session Logs Written:** 26

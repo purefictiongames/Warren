@@ -188,6 +188,13 @@ local RegionManager = Node.extend(function(parent)
                 skipDataLoad = {},
                 -- Global unlinked pad count for infinite expansion
                 unlinkedPadCount = 0,
+                -- Title diorama state
+                diorama = {
+                    layout = nil,
+                    container = nil,
+                    domTree = nil,
+                    isLoaded = false,
+                },
             }
         end
         return instanceStates[self.id]
@@ -1047,6 +1054,102 @@ local RegionManager = Node.extend(function(parent)
     end
 
     ----------------------------------------------------------------------------
+    -- TITLE DIORAMA
+    ----------------------------------------------------------------------------
+
+    local DIORAMA_SEED = 42
+    local DIORAMA_PAD_COUNT = 2  -- Same as first gameplay region (corridor)
+
+    local function buildDiorama(self)
+        local state = getState(self)
+        local Players = game:GetService("Players")
+
+        -- Generate layout using the exact same pipeline as gameplay
+        local layout = generateLayout(self, DIORAMA_SEED, 1, DIORAMA_PAD_COUNT)
+
+        -- Instantiate using the exact same pipeline as gameplay
+        local result = Layout.instantiate(layout, {
+            name = "TitleDiorama",
+            regionId = "diorama",
+        })
+
+        state.diorama.layout = layout
+        state.diorama.container = result.container
+        state.diorama.domTree = result.domTree
+        state.diorama.isLoaded = true
+
+        -- Anchor players that spawn during title screen (like gameplay teleport)
+        state.diorama.characterConnections = {}
+
+        local function onTitleCharacterAdded(player)
+            return function(character)
+                task.wait(0.5)  -- Wait for character to load
+                if state.diorama.isLoaded then
+                    anchorPlayer(player)
+                end
+            end
+        end
+
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player.Character then
+                anchorPlayer(player)
+            end
+            local conn = player.CharacterAdded:Connect(onTitleCharacterAdded(player))
+            table.insert(state.diorama.characterConnections, conn)
+        end
+
+        -- Also handle players joining after diorama is built
+        local joinConn = Players.PlayerAdded:Connect(function(player)
+            if not state.diorama.isLoaded then return end
+            local conn = player.CharacterAdded:Connect(onTitleCharacterAdded(player))
+            table.insert(state.diorama.characterConnections, conn)
+        end)
+        table.insert(state.diorama.characterConnections, joinConn)
+
+        local System = self._System
+        if System and System.Debug then
+            System.Debug.info("RegionManager", "Title diorama built")
+        end
+
+    end
+
+    local function destroyDiorama(self)
+        local state = getState(self)
+        if not state.diorama.isLoaded then return end
+
+        -- Disconnect title-screen character anchoring listeners
+        if state.diorama.characterConnections then
+            for _, conn in ipairs(state.diorama.characterConnections) do
+                conn:Disconnect()
+            end
+        end
+
+        -- Unmount DOM tree
+        if state.diorama.domTree and state.diorama.domTree.root then
+            Warren.Dom.unmount(state.diorama.domTree.root)
+        end
+
+        -- Destroy container
+        if state.diorama.container then
+            state.diorama.container:Destroy()
+        end
+
+        -- Terrain is cleared by Canvas.init() when the next region builds
+
+        state.diorama = {
+            layout = nil,
+            container = nil,
+            domTree = nil,
+            isLoaded = false,
+        }
+
+        local System = self._System
+        if System and System.Debug then
+            System.Debug.info("RegionManager", "Title diorama destroyed")
+        end
+    end
+
+    ----------------------------------------------------------------------------
     -- ASYNC REGION OPERATIONS (for screen transition flow)
     ----------------------------------------------------------------------------
 
@@ -1324,6 +1427,12 @@ local RegionManager = Node.extend(function(parent)
                     System.Debug.info("RegionManager", "Start pressed by", player.Name)
                 end
 
+                -- Unanchor player (was anchored during title screen)
+                unanchorPlayer(player)
+
+                -- Destroy title diorama before building gameplay dungeon
+                destroyDiorama(self)
+
                 -- Start dungeon for this player
                 local regionId = self:startFirstRegion(player)
 
@@ -1518,17 +1627,32 @@ local RegionManager = Node.extend(function(parent)
                     -- Reset dungeon state (keep save data)
                     state.activeRegionId = nil
 
+                    -- Rebuild title diorama
+                    buildDiorama(self)
+
+                    -- Teleport player to diorama spawn (they're already alive, not auto-spawning)
+                    local spawnPos = state.diorama.layout and state.diorama.layout.spawn
+                        and state.diorama.layout.spawn.position
+                    local character = player.Character
+                    local hrp = character and character:FindFirstChild("HumanoidRootPart")
+                    if hrp and spawnPos then
+                        hrp.CFrame = CFrame.new(spawnPos[1], spawnPos[2] + 3, spawnPos[3])
+                    end
+
                     -- Signal client to close exit screen
                     self.Out:Fire("returnToTitle", {
                         _targetPlayer = player,
                         player = player,
                     })
 
-                    -- Signal client to show title screen
+                    -- Signal client to show title screen (creates UI with black background)
                     self.Out:Fire("showTitle", {
                         _targetPlayer = player,
                         player = player,
                     })
+
+                    -- Now fire dioramaReady (UI exists, triggers preload + reveal)
+                    self.Out:Fire("dioramaReady", {})
 
                     -- Signal client to fade from black (reveals title screen)
                     self.Out:Fire("transitionEnd", {
@@ -1807,6 +1931,7 @@ local RegionManager = Node.extend(function(parent)
             hideTitle = {},
             showTitle = {},
             returnToTitle = {},
+            dioramaReady = {},
             transitionStart = {},
             loadingComplete = {},
             transitionEnd = {},
@@ -1822,6 +1947,12 @@ local RegionManager = Node.extend(function(parent)
             for key, value in pairs(config) do
                 state.config[key] = value
             end
+        end,
+
+        -- Build the title diorama (called from Bootstrap after configure)
+        buildTitleDiorama = function(self)
+            buildDiorama(self)
+            self.Out:Fire("dioramaReady", {})
         end,
 
         -- Start the dungeon for a player (loads existing or creates new)

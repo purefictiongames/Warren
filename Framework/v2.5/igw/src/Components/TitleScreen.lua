@@ -27,6 +27,7 @@
 --]]
 
 local Players = game:GetService("Players")
+local ContentProvider = game:GetService("ContentProvider")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local SoundService = game:GetService("SoundService")
@@ -49,10 +50,10 @@ local TitleScreen = Node.extend(function(parent)
 
     local ORANGE_BORDER = Color3.fromRGB(255, 140, 0)
     local FADE_DURATION = 0.5
-    local BUILD_NUMBER = 209
-    local WARREN_VERSION = "2.5.3"
-    local TITLE_MUSIC_ID = "rbxassetid://115218802234328"
-    local GAMEPLAY_MUSIC_ID = "rbxassetid://127750735513287"
+    local BUILD_NUMBER = 211
+    local WARREN_VERSION = "2.5.4"
+    local TITLE_MUSIC_ID = "rbxassetid://101893525666614"
+    local GAMEPLAY_MUSIC_ID = "rbxassetid://71410928893936"
     local PIXEL_SCALE = 5  -- 40px equivalent (8 * 5)
     local PIXEL_SCALE_SMALL = 2  -- 16px equivalent
 
@@ -75,6 +76,7 @@ local TitleScreen = Node.extend(function(parent)
                 optionsFrame = nil,
                 optionsConfirmOpen = false,
                 optionsConfirmFrame = nil,
+                dioramaRevealed = false,
             }
         end
         return instanceStates[self.id]
@@ -104,9 +106,11 @@ local TitleScreen = Node.extend(function(parent)
             if state.screenGui then
                 state.screenGui:Destroy()
             end
+            stopCameraOrbit(state)
         end
         instanceStates[self.id] = nil
     end
+
 
     ----------------------------------------------------------------------------
     -- BUTTON SELECTION
@@ -699,110 +703,232 @@ local TitleScreen = Node.extend(function(parent)
         end
     end
 
-    local function fadeOutBackgroundImage(self, callback)
-        local state = getState(self)
-        if not state.screenGui then
-            if callback then callback() end
-            return
+    ----------------------------------------------------------------------------
+    -- CAMERA ORBIT
+    ----------------------------------------------------------------------------
+
+    local ORBIT_HEIGHT = 3       -- Camera height above player
+    local ORBIT_SPEED = 10       -- Degrees per second counterclockwise
+
+    -- Color gradient: full palette stops (light + terrain) over one full rotation
+    local GRADIENT_STOPS = {
+        { light = Color3.fromRGB(255, 50, 20),   wall = Color3.fromRGB(120,110,100), floor = Color3.fromRGB(255,255,240) },
+        { light = Color3.fromRGB(255, 180, 50),  wall = Color3.fromRGB(130,110,85),  floor = Color3.fromRGB(255,220,100) },
+        { light = Color3.fromRGB(50, 255, 50),   wall = Color3.fromRGB(90,110,90),   floor = Color3.fromRGB(180,255,120) },
+        { light = Color3.fromRGB(100, 220, 255), wall = Color3.fromRGB(100,115,130), floor = Color3.fromRGB(220,255,255) },
+        { light = Color3.fromRGB(30, 120, 255),  wall = Color3.fromRGB(90,100,120),  floor = Color3.fromRGB(200,240,255) },
+        { light = Color3.fromRGB(180, 50, 255),  wall = Color3.fromRGB(100,90,115),  floor = Color3.fromRGB(255,150,255) },
+        { light = Color3.fromRGB(200, 30, 30),   wall = Color3.fromRGB(100,70,75),   floor = Color3.fromRGB(255,100,100) },
+    }
+
+    local SEGMENT_COUNT = #GRADIENT_STOPS
+    local SEGMENT_DEGREES = 360 / SEGMENT_COUNT
+    local SEGMENT_DURATION = SEGMENT_DEGREES / ORBIT_SPEED
+
+    local function collectDioramaLights()
+        local container = workspace:FindFirstChild("TitleDiorama")
+        if not container then return {} end
+
+        local pointLights = {}
+        for _, desc in ipairs(container:GetDescendants()) do
+            if desc:IsA("PointLight") then
+                table.insert(pointLights, desc)
+            end
         end
-
-        local background = state.screenGui:FindFirstChild("Background")
-        if not background then
-            if callback then callback() end
-            return
-        end
-
-        -- Fade only the image, keep black background visible
-        local tween = TweenService:Create(
-            background,
-            TweenInfo.new(FADE_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-            { ImageTransparency = 1 }
-        )
-
-        tween.Completed:Connect(function()
-            if callback then callback() end
-        end)
-
-        tween:Play()
+        return pointLights
     end
 
-    local function showLoadingText(self, callback)
-        local state = getState(self)
-        if not state.screenGui then
-            if callback then callback() end
-            return
-        end
+    local function startCameraOrbit(state)
+        state.cameraOrbitWanted = true
 
-        -- Create loading text with PixelFont
-        local loadingScale = 4  -- Larger for visibility
-        local loadingText = PixelFont.createText("STARTING....", {
-            scale = loadingScale,
-            color = Color3.fromRGB(255, 255, 255),  -- White
-        })
-        loadingText.Name = "LoadingText"
-        -- Center it on screen
-        local loadingWidth = PixelFont.getTextWidth("STARTING....", loadingScale, 0)
-        loadingText.Position = UDim2.new(0.5, -loadingWidth / 2, 0.5, -loadingScale * 4)
-        loadingText.ZIndex = 10
-        -- Start invisible
-        PixelFont.setTransparency(loadingText, 1)
-        loadingText.Parent = state.screenGui
+        task.spawn(function()
+            local player = Players.LocalPlayer
+            if not player then return end
 
-        -- Fade in the text
-        PixelFont.fadeIn(loadingText, 0.3, function()
-            -- Fade out music over 2 seconds
-            if state.music then
-                local musicFadeTween = TweenService:Create(
-                    state.music,
-                    TweenInfo.new(2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-                    { Volume = 0 }
-                )
-                musicFadeTween:Play()
+            -- Wait for character + HRP (may not exist yet on initial load)
+            local character = player.Character or player.CharacterAdded:Wait()
+            local hrp = character:WaitForChild("HumanoidRootPart", 10)
+            if not hrp then return end
+
+            -- Guard: orbit may have been stopped while waiting
+            if not state.cameraOrbitWanted then return end
+
+            local camera = workspace.CurrentCamera
+            if not camera then return end
+
+            camera.CameraType = Enum.CameraType.Scriptable
+
+            -- Guard against Roblox resetting CameraType (e.g. character respawn)
+            state.cameraTypeGuard = camera:GetPropertyChangedSignal("CameraType"):Connect(function()
+                if state.cameraOrbitWanted and camera.CameraType ~= Enum.CameraType.Scriptable then
+                    camera.CameraType = Enum.CameraType.Scriptable
+                end
+            end)
+
+            -- Cache light references for color gradient
+            local pointLights = collectDioramaLights()
+            local Lighting = game:GetService("Lighting")
+            local baseAmbient = Lighting.Ambient
+            local terrain = workspace.Terrain
+
+            -- Terrain material color proxies (SetMaterialColor can't be tweened directly)
+            local wallProxy = Instance.new("Color3Value")
+            local floorProxy = Instance.new("Color3Value")
+            wallProxy.Changed:Connect(function(color)
+                terrain:SetMaterialColor(Enum.Material.Rock, color)
+            end)
+            floorProxy.Changed:Connect(function(color)
+                terrain:SetMaterialColor(Enum.Material.CrackedLava, color)
+            end)
+            state.terrainProxies = { wallProxy, floorProxy }
+
+            local cameraPos = hrp.Position + Vector3.new(0, ORBIT_HEIGHT, 0)
+            local segmentTweenInfo = TweenInfo.new(SEGMENT_DURATION, Enum.EasingStyle.Linear)
+
+            -- Precompute target CFrames and colors for each segment boundary
+            local segmentTargets = {}
+            for i = 1, SEGMENT_COUNT do
+                local angle = math.rad((i - 1) * SEGMENT_DEGREES)
+                local dir = Vector3.new(math.cos(angle), 0, math.sin(angle))
+                local stop = GRADIENT_STOPS[i]
+                segmentTargets[i] = {
+                    cframe = CFrame.lookAt(cameraPos, cameraPos + dir),
+                    light = stop.light,
+                    wall = stop.wall,
+                    floor = stop.floor,
+                    ambientTint = baseAmbient:Lerp(stop.light, 0.2),
+                }
             end
 
-            -- Wait 2 seconds (same as music fade)
-            task.delay(2, function()
-                -- Stop and cleanup music
-                if state.music then
-                    state.music:Stop()
-                    state.music:Destroy()
-                    state.music = nil
+            -- Set initial position and colors
+            local first = segmentTargets[1]
+            camera.CFrame = first.cframe
+            wallProxy.Value = first.wall
+            floorProxy.Value = first.floor
+            for _, light in ipairs(pointLights) do
+                light.Color = first.light
+            end
+
+            -- Track all active tweens for clean cancellation
+            state.activeTweens = {}
+
+            -- Chain tweens: each segment rotates camera + shifts colors to next stop
+            local function tweenToSegment(index)
+                if not state.cameraOrbitWanted then return end
+
+                local nextIndex = (index % SEGMENT_COUNT) + 1
+                local target = segmentTargets[nextIndex]
+
+                -- Clear previous tween references
+                state.activeTweens = {}
+
+                -- Camera rotation tween
+                local camTween = TweenService:Create(camera, segmentTweenInfo, {
+                    CFrame = target.cframe,
+                })
+                table.insert(state.activeTweens, camTween)
+
+                -- Light color tweens
+                for _, light in ipairs(pointLights) do
+                    local t = TweenService:Create(light, segmentTweenInfo, { Color = target.light })
+                    table.insert(state.activeTweens, t)
+                    t:Play()
                 end
 
-                -- Fade out the text
-                PixelFont.fadeOut(loadingText, 0.3, function()
-                    loadingText:Destroy()
-                    if callback then callback() end
+                -- Terrain material color tweens (via proxies)
+                local wallTween = TweenService:Create(wallProxy, segmentTweenInfo, { Value = target.wall })
+                local floorTween = TweenService:Create(floorProxy, segmentTweenInfo, { Value = target.floor })
+                table.insert(state.activeTweens, wallTween)
+                table.insert(state.activeTweens, floorTween)
+                wallTween:Play()
+                floorTween:Play()
+
+                -- Ambient tint tween
+                local ambientTween = TweenService:Create(Lighting, segmentTweenInfo, { Ambient = target.ambientTint })
+                table.insert(state.activeTweens, ambientTween)
+                ambientTween:Play()
+
+                -- Chain to next segment on completion
+                camTween.Completed:Connect(function()
+                    tweenToSegment(nextIndex)
                 end)
-            end)
+                camTween:Play()
+            end
+
+            tweenToSegment(1)
         end)
     end
 
-    local function fadeOutBlackBackground(self, callback)
+    local function stopCameraOrbit(state)
+        state.cameraOrbitWanted = false
+
+        -- Cancel ALL active tweens (camera, lights, terrain, ambient)
+        if state.activeTweens then
+            for _, tween in ipairs(state.activeTweens) do
+                tween:Cancel()
+            end
+            state.activeTweens = nil
+        end
+
+        if state.cameraTypeGuard then
+            state.cameraTypeGuard:Disconnect()
+            state.cameraTypeGuard = nil
+        end
+
+        -- Destroy terrain proxies (stops any further material color changes)
+        if state.terrainProxies then
+            for _, proxy in ipairs(state.terrainProxies) do
+                proxy:Destroy()
+            end
+            state.terrainProxies = nil
+        end
+
+        -- Reset terrain material colors to defaults (prevents bleed into gameplay)
+        local terrain = workspace.Terrain
+        terrain:SetMaterialColor(Enum.Material.Rock, Color3.fromRGB(120, 110, 100))
+        terrain:SetMaterialColor(Enum.Material.CrackedLava, Color3.fromRGB(255, 255, 240))
+
+        local camera = workspace.CurrentCamera
+        if camera then
+            camera.CameraType = Enum.CameraType.Custom
+        end
+
+        -- Restore ambient
+        local Lighting = game:GetService("Lighting")
+        Lighting.Ambient = Color3.fromRGB(20, 20, 25)
+    end
+
+    ----------------------------------------------------------------------------
+    -- DIORAMA REVEAL
+    ----------------------------------------------------------------------------
+
+    local function revealDiorama(self)
         local state = getState(self)
-        if not state.screenGui then
-            if callback then callback() end
-            return
+        if state.dioramaRevealed then return end
+        state.dioramaRevealed = true
+
+        -- Preload diorama assets so textures are ready before reveal
+        local container = workspace:FindFirstChild("TitleDiorama")
+        if container then
+            ContentProvider:PreloadAsync(container:GetDescendants())
         end
 
-        local background = state.screenGui:FindFirstChild("Background")
-        if not background then
-            if callback then callback() end
-            return
+        -- Start cinematic camera orbit around player
+        startCameraOrbit(state)
+
+        -- Fade from black to reveal diorama + fade in UI content simultaneously
+        if state.screenGui then
+            local background = state.screenGui:FindFirstChild("Background")
+            if background then
+                local revealTween = TweenService:Create(
+                    background,
+                    TweenInfo.new(1.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+                    { BackgroundTransparency = 1 }
+                )
+                revealTween:Play()
+            end
         end
-
-        -- Fade out the black background to reveal gameplay
-        local tween = TweenService:Create(
-            background,
-            TweenInfo.new(FADE_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-            { BackgroundTransparency = 1 }
-        )
-
-        tween.Completed:Connect(function()
-            if callback then callback() end
-        end)
-
-        tween:Play()
+        fadeInContent(self)
     end
 
     ----------------------------------------------------------------------------
@@ -833,10 +959,16 @@ local TitleScreen = Node.extend(function(parent)
         screenGui.IgnoreGuiInset = true
         screenGui.Parent = playerGui
 
-        -- Hide Roblox CoreGui and topbar during title screen
+        -- Lock down input during title screen — only menu navigation gets through
         state.inputClaim = System.InputCapture.claim({}, {
             hideCoreGui = true,
+            disableCharacter = true,
+            sinkMovement = true,
+            sinkCamera = true,
+            disablePlayerModule = true,
         })
+
+        -- Camera lock deferred to onDioramaReady (after server builds + client preloads)
 
         -- Create and play background music
         local music = Instance.new("Sound")
@@ -848,13 +980,11 @@ local TitleScreen = Node.extend(function(parent)
         music:Play()
         state.music = music
 
-        -- Create full-screen background image
-        local background = Instance.new("ImageLabel")
+        -- Black overlay — starts opaque, fades to transparent when diorama is ready
+        local background = Instance.new("Frame")
         background.Name = "Background"
         background.Size = UDim2.new(1, 0, 1, 0)
         background.Position = UDim2.new(0, 0, 0, 0)
-        background.Image = "rbxassetid://114898388494877"
-        background.ScaleType = Enum.ScaleType.Crop
         background.BackgroundColor3 = Color3.new(0, 0, 0)
         background.BackgroundTransparency = 0
         background.BorderSizePixel = 0
@@ -1130,9 +1260,17 @@ local TitleScreen = Node.extend(function(parent)
 
         state.screenGui = screenGui
 
-        -- Fade in the content (title and buttons)
-        fadeInContent(self)
+        -- Wait for diorama container — fallback if dioramaReady signal was missed
+        -- (server may have fired before client subscribed)
+        task.spawn(function()
+            local container = workspace:WaitForChild("TitleDiorama", 30)
+            if not container then return end
+            if state.dioramaRevealed then return end
+            revealDiorama(self)
+        end)
     end
+
+    local TRANSITION_FADE_DURATION = 2  -- Seconds for fade to/from black
 
     local function fadeOut(self, callback)
         local state = getState(self)
@@ -1147,49 +1285,99 @@ local TitleScreen = Node.extend(function(parent)
             state.inputConnection = nil
         end
 
-        -- Step 1: Fade out content (buttons and footer text)
-        fadeOutContent(self, function()
-            -- Step 2: Destroy buttons, text, and particle effects
-            for _, button in ipairs(state.buttons) do
-                button:Destroy()
+        -- Create transition overlay (above title screen)
+        local player = Players.LocalPlayer
+        local playerGui = player and player:WaitForChild("PlayerGui")
+        local transitionGui = Instance.new("ScreenGui")
+        transitionGui.Name = "TitleTransition"
+        transitionGui.ResetOnSpawn = false
+        transitionGui.DisplayOrder = 1100  -- Above TitleScreen (1000)
+        transitionGui.IgnoreGuiInset = true
+        transitionGui.Parent = playerGui
+
+        local overlay = Instance.new("Frame")
+        overlay.Name = "Overlay"
+        overlay.Size = UDim2.new(1, 0, 1, 0)
+        overlay.BackgroundColor3 = Color3.new(0, 0, 0)
+        overlay.BackgroundTransparency = 1  -- Start transparent
+        overlay.BorderSizePixel = 0
+        overlay.ZIndex = 1
+        overlay.Parent = transitionGui
+
+        -- Step 1: 2-second fade to black
+        local fadeToBlack = TweenService:Create(overlay,
+            TweenInfo.new(TRANSITION_FADE_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+            { BackgroundTransparency = 0 })
+
+        fadeToBlack.Completed:Connect(function()
+            -- Step 2: Stop camera orbit (hidden behind black overlay)
+            stopCameraOrbit(state)
+
+            -- Step 3: Destroy title screen UI (no longer visible)
+            if state.inputClaim then
+                state.inputClaim:release()
+                state.inputClaim = nil
             end
-            for _, textFrame in ipairs(state.buttonTexts) do
-                textFrame:Destroy()
+            if state.screenGui then
+                state.screenGui:Destroy()
+                state.screenGui = nil
             end
-            state.buttons = {}
-            state.buttonTexts = {}
 
-            for _, footerText in ipairs(state.footerTexts) do
-                footerText:Destroy()
-            end
-            state.footerTexts = {}
+            -- Step 4: Show "STARTING...." text in the transition overlay
+            local loadingScale = 4
+            local loadingText = PixelFont.createText("STARTING....", {
+                scale = loadingScale,
+                color = Color3.fromRGB(255, 255, 255),
+            })
+            loadingText.Name = "LoadingText"
+            local loadingWidth = PixelFont.getTextWidth("STARTING....", loadingScale, 0)
+            loadingText.Position = UDim2.new(0.5, -loadingWidth / 2, 0.5, -loadingScale * 4)
+            loadingText.ZIndex = 10
+            PixelFont.setTransparency(loadingText, 1)
+            loadingText.Parent = transitionGui
 
-            -- Step 3: Fade out background image (keep black background)
-            fadeOutBackgroundImage(self, function()
-                -- Step 4: Show "Starting...." text for 2 seconds
-                showLoadingText(self, function()
-                    -- Step 5: Fade out black background to reveal dungeon
-                    fadeOutBlackBackground(self, function()
-                        -- Step 6: Restore Roblox CoreGui/topbar by releasing input claim
-                        if state.inputClaim then
-                            state.inputClaim:release()
-                            state.inputClaim = nil
-                        end
+            PixelFont.fadeIn(loadingText, 0.3, function()
+                -- Fade out title music over 2 seconds
+                if state.music then
+                    local musicFadeTween = TweenService:Create(
+                        state.music,
+                        TweenInfo.new(2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+                        { Volume = 0 })
+                    musicFadeTween:Play()
+                end
 
-                        -- Step 7: Start gameplay music (after 2 second delay)
-                        startGameplayMusic()
+                task.delay(2, function()
+                    -- Stop and cleanup music
+                    if state.music then
+                        state.music:Stop()
+                        state.music:Destroy()
+                        state.music = nil
+                    end
 
-                        -- Step 8: Destroy and cleanup
-                        if state.screenGui then
-                            state.screenGui:Destroy()
-                            state.screenGui = nil
-                        end
-                        state.isVisible = false
-                        if callback then callback() end
+                    -- Fade out loading text
+                    PixelFont.fadeOut(loadingText, 0.3, function()
+                        loadingText:Destroy()
+
+                        -- Step 5: 2-second fade from black to reveal gameplay
+                        local fadeFromBlack = TweenService:Create(overlay,
+                            TweenInfo.new(TRANSITION_FADE_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+                            { BackgroundTransparency = 1 })
+
+                        fadeFromBlack.Completed:Connect(function()
+                            -- Step 6: Start gameplay music
+                            startGameplayMusic()
+
+                            -- Step 7: Cleanup transition overlay
+                            transitionGui:Destroy()
+                            state.isVisible = false
+                            if callback then callback() end
+                        end)
+                        fadeFromBlack:Play()
                     end)
                 end)
             end)
         end)
+        fadeToBlack:Play()
     end
 
     ----------------------------------------------------------------------------
@@ -1211,6 +1399,11 @@ local TitleScreen = Node.extend(function(parent)
         },
 
         In = {
+            -- Server signals diorama is built — trigger reveal sequence
+            onDioramaReady = function(self, data)
+                revealDiorama(self)
+            end,
+
             -- Server signals to hide the title screen
             onHideTitle = function(self, data)
                 local state = getState(self)
@@ -1229,6 +1422,9 @@ local TitleScreen = Node.extend(function(parent)
 
                 if data.player and data.player ~= player then return end
                 if state.isVisible then return end
+
+                -- Reset reveal flag so dioramaReady triggers a fresh reveal
+                state.dioramaRevealed = false
 
                 -- Recreate the UI
                 state.isVisible = true

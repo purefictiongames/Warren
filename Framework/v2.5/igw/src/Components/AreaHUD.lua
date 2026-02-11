@@ -151,6 +151,11 @@ local AreaHUD = Node.extend(function(parent)
         Sys = {
             onInit = function(self)
                 createUI(self)
+                -- Start hidden (title screen is active on init)
+                local state = getState(self)
+                if state.screenGui then
+                    state.screenGui.Enabled = false
+                end
             end,
 
             onStart = function(self)
@@ -165,7 +170,7 @@ local AreaHUD = Node.extend(function(parent)
         In = {
             --[[
                 Handle area info signal from RegionManager.
-                Updates the HUD labels.
+                Updates the HUD labels and shows the HUD.
 
                 @param data table:
                     regionNum: number - Current area/region number
@@ -186,6 +191,22 @@ local AreaHUD = Node.extend(function(parent)
 
                 if state.roomLabel and data.roomNum then
                     PixelFont.updateText(state.roomLabel, "ROOM: " .. tostring(data.roomNum))
+                end
+
+                -- Show HUD when gameplay sends area info
+                if state.screenGui then
+                    state.screenGui.Enabled = true
+                end
+            end,
+
+            -- Hide HUD when returning to title screen
+            onShowTitle = function(self, data)
+                local state = getState(self)
+                local player = Players.LocalPlayer
+                if data.player and data.player ~= player then return end
+
+                if state.screenGui then
+                    state.screenGui.Enabled = false
                 end
             end,
         },

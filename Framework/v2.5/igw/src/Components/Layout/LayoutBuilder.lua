@@ -842,7 +842,7 @@ function LayoutBuilder.generate(config)
     -- Create central context for all planners to read/write
     local ctx = LayoutContext.new(cfg)
 
-    -- Plan rooms (writes to context)
+    -- Plan rooms (procedural tree growth from seed)
     ctx:setRooms(planRooms(cfg))
 
     -- Plan doors between connected rooms (reads rooms, writes doors)

@@ -221,6 +221,9 @@ local function startInfiniteDungeon()
         origin = { 0, 20, 0 },
     })
 
+    -- Build title diorama (3D scene behind title screen)
+    regionManager:buildTitleDiorama()
+
     -- Dungeon is now started via onStartPressed signal from TitleScreen
     -- (handled in RegionManager.In.onStartPressed)
     local Players = game:GetService("Players")

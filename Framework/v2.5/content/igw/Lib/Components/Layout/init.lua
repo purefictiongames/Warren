@@ -13,7 +13,8 @@
 
     - LayoutSchema: Type definitions and validation
     - LayoutBuilder: Generate layouts from seed (data only, no parts)
-    - LayoutInstantiator: Create parts from layout data
+    - LayoutInstantiator: Create parts from layout data (legacy)
+    - DomBuilder: DOM-based instantiation (v2.5)
     - LayoutSerializer: Encode/decode for storage
 
     ============================================================================
@@ -31,8 +32,8 @@
         spurCount = 4,
     })
 
-    -- Instantiate parts in world
-    local result = Layout.Instantiator.instantiate(layout, {
+    -- Instantiate parts in world (DOM-based)
+    local result = Layout.DomBuilder.instantiate(layout, {
         name = "Region_1",
     })
 
@@ -41,7 +42,7 @@
 
     -- Later: decode and reinstantiate
     local restored = Layout.Serializer.decode(encoded)
-    local result2 = Layout.Instantiator.instantiate(restored)
+    local result2 = Layout.DomBuilder.instantiate(restored)
     ```
 
     ============================================================================
@@ -49,13 +50,13 @@
     ============================================================================
 
     Generation Phase (once per new region):
-        Seed + Config → LayoutBuilder → Layout Table
+        Seed + Config -> LayoutBuilder -> Layout Table
 
     Instantiation Phase (on load/rebuild):
-        Layout Table → LayoutInstantiator → Parts
+        Layout Table -> DomBuilder -> DOM tree -> Renderer -> Parts
 
     Persistence:
-        Layout Table ↔ LayoutSerializer ↔ String (DataStore/sharing)
+        Layout Table <-> LayoutSerializer <-> String (DataStore/sharing)
 
 --]]
 
@@ -64,13 +65,14 @@ local Layout = {}
 Layout.Schema = require(script.LayoutSchema)
 Layout.Context = require(script.LayoutContext)
 Layout.Builder = require(script.LayoutBuilder)
-Layout.Instantiator = require(script.LayoutInstantiator)
+Layout.Instantiator = require(script.LayoutInstantiator)  -- Legacy fallback
+Layout.DomBuilder = require(script.DomBuilder)             -- v2.5 DOM-based
 Layout.Serializer = require(script.LayoutSerializer)
 
--- Convenience re-exports
+-- Convenience re-exports (point to DomBuilder by default)
 Layout.VERSION = Layout.Schema.VERSION
 Layout.generate = Layout.Builder.generate
-Layout.instantiate = Layout.Instantiator.instantiate
+Layout.instantiate = Layout.DomBuilder.instantiate
 Layout.encode = Layout.Serializer.encode
 Layout.decode = Layout.Serializer.decode
 

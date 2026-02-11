@@ -12,7 +12,7 @@
     RegionManager handles the infinite dungeon system by managing map regions:
     - Generates layouts from seeds (via Layout.Builder)
     - Stores seeds (not full layouts) for deterministic regeneration
-    - Instantiates layouts into parts (via Layout.Instantiator)
+    - Instantiates layouts into parts (via Layout.DomBuilder)
     - Manages two-way teleport links between pads
     - Swaps regions in/out of workspace (only one loaded at a time)
 
@@ -336,24 +336,9 @@ local RegionManager = Node.extend(function(parent)
         return os.time() + math.random(1, 100000)
     end
 
-    -- Color palette for different regions (distinct, varied tones)
-    local REGION_COLORS = {
-        { 140, 100, 80 },   -- Warm brown
-        { 80, 100, 140 },   -- Steel blue
-        { 160, 90, 90 },    -- Brick red
-        { 80, 130, 100 },   -- Forest green
-        { 130, 100, 150 },  -- Violet
-        { 170, 140, 90 },   -- Gold/tan
-        { 100, 140, 140 },  -- Teal
-        { 150, 120, 100 },  -- Terracotta
-        { 90, 90, 120 },    -- Slate
-        { 140, 130, 100 },  -- Sandstone
-    }
-
-    local function getRegionColor(regionNum)
-        -- Cycle through palette (no randomization)
-        return REGION_COLORS[((regionNum - 1) % #REGION_COLORS) + 1]
-    end
+    -- Palette colors now live in Styles.lua as palette classes (palette-classic-lava, etc.)
+    -- StyleBridge.getPaletteClass(regionNum) maps regionNum to the correct class.
+    -- REGION_COLORS removed — palette resolution happens at render time via DOM styles.
 
     local function generateLayout(self, seed, regionNum, padCount)
         local state = getState(self)
@@ -364,10 +349,8 @@ local RegionManager = Node.extend(function(parent)
         local origin = config.origin or { 0, 20, 0 }
         local offsetOrigin = { origin[1] + regionOffset, origin[2], origin[3] }
 
-        -- Get unique color for this region
-        local regionColor = getRegionColor(regionNum)
-
         -- Generate layout using Layout.Builder
+        -- Palette/color now resolved at instantiation time by DomBuilder
         local layout = Layout.generate({
             seed = seed,
             regionNum = regionNum,
@@ -383,7 +366,6 @@ local RegionManager = Node.extend(function(parent)
             loopCount = config.loopCount,
             scaleRange = config.scaleRange,
             material = config.material,
-            color = regionColor,
             padCount = padCount,  -- Direct pad count instead of roomsPerPad
         })
 
@@ -639,7 +621,7 @@ local RegionManager = Node.extend(function(parent)
         local state = getState(self)
         local region = state.regions[regionId]
 
-        -- Instantiate using Layout.Instantiator
+        -- Instantiate using DomBuilder (DOM-based, style-resolved)
         local result = Layout.instantiate(layout, {
             name = "Region_" .. regionId,
             regionId = regionId,
@@ -653,6 +635,7 @@ local RegionManager = Node.extend(function(parent)
             region.pads = result.pads
             region.roomCount = result.roomCount
             region.roomZones = result.roomZones
+            region.domTree = result.domTree
         end
 
         return result
@@ -673,7 +656,7 @@ local RegionManager = Node.extend(function(parent)
             return
         end
 
-        -- Destroy any existing Parts created by LayoutInstantiator for pads
+        -- Destroy any existing Parts created by DomBuilder for pads
         -- (JumpPad will create its own geometry)
         if region.pads then
             for _, padData in pairs(region.pads) do
@@ -1037,6 +1020,13 @@ local RegionManager = Node.extend(function(parent)
         -- Destroy JumpPad nodes for this region
         destroyJumpPadsForRegion(self, regionId)
 
+        -- Unmount DOM tree (cleans up node refs before destroying Instances)
+        if region.domTree and region.domTree.root then
+            local Lib = require(game.ReplicatedStorage.Lib)
+            Lib.Dom.unmount(region.domTree.root)
+            region.domTree = nil
+        end
+
         -- Destroy container
         if region.container then
             region.container:Destroy()
@@ -1355,6 +1345,7 @@ local RegionManager = Node.extend(function(parent)
                     end
 
                     -- Fire buildMiniMap to client (builds while title fades out)
+                    -- Note: domTree NOT sent — cyclic refs can't cross IPC boundary
                     self.Out:Fire("buildMiniMap", {
                         _targetPlayer = player,
                         player = player,
@@ -1577,6 +1568,7 @@ local RegionManager = Node.extend(function(parent)
                 }
 
                 -- Fire buildMiniMap to client - client will signal miniMapReady when done
+                -- Note: domTree NOT sent — cyclic refs can't cross IPC boundary
                 self.Out:Fire("buildMiniMap", {
                     _targetPlayer = player,
                     player = player,

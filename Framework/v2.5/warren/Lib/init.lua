@@ -51,7 +51,7 @@
 --]]
 
 local Lib = {
-    _VERSION = "2.5.1",
+    _VERSION = "2.5.2",
 }
 
 -- Core system module (Debug, IPC, State, Asset, Store, View)

@@ -205,6 +205,144 @@ return {
         green = {
             textColor = {80, 255, 80},
         },
+
+        ------------------------------------------------------------------------
+        -- CAVE - Element Roles
+        ------------------------------------------------------------------------
+
+        ["cave-wall"] = {
+            Material = "Cobblestone",
+            Anchored = true,
+            CanCollide = true,
+        },
+        ["cave-ceiling"] = {
+            Material = "Cobblestone",
+            Anchored = true,
+            CanCollide = true,
+        },
+        ["cave-floor"] = {
+            Material = "CrackedLava",
+            Anchored = true,
+            CanCollide = true,
+        },
+        ["cave-truss"] = {
+            Material = "DiamondPlate",
+            Anchored = true,
+            Color = {80, 80, 80},
+        },
+        ["cave-light-fixture"] = {
+            Material = "Neon",
+            Anchored = true,
+            CanCollide = false,
+        },
+        ["cave-light-spacer"] = {
+            Material = "Rock",
+            Anchored = true,
+            CanCollide = false,
+        },
+        ["cave-pad"] = {
+            Material = "Neon",
+            Anchored = true,
+            CanCollide = true,
+            Color = {180, 50, 255},
+        },
+        ["cave-pad-base"] = {
+            Material = "Neon",
+            Anchored = true,
+            CanCollide = true,
+        },
+        ["cave-zone"] = {
+            Anchored = true,
+            CanCollide = false,
+            CanTouch = true,
+            Transparency = 1,
+        },
+        ["cave-spawn"] = {
+            Anchored = true,
+            CanCollide = false,
+            Transparency = 1,
+            Neutral = true,
+        },
+        ["cave-point-light"] = {
+            Brightness = 0.7,
+            Range = 60,
+            Shadows = false,
+        },
+
+        ------------------------------------------------------------------------
+        -- CAVE - Palette Classes (10 themed color sets)
+        ------------------------------------------------------------------------
+
+        -- 1. Classic Lava: Gray stone, white-hot lava, red-orange glow
+        ["palette-classic-lava"] = {
+            wallColor = {120, 110, 100},
+            floorColor = {255, 255, 240},
+            lightColor = {255, 50, 20},
+            fixtureColor = {255, 120, 40},
+        },
+        -- 2. Blue Inferno: Blue-gray stone, cyan-white flame, blue glow
+        ["palette-blue-inferno"] = {
+            wallColor = {90, 100, 120},
+            floorColor = {200, 240, 255},
+            lightColor = {30, 120, 255},
+            fixtureColor = {100, 180, 255},
+        },
+        -- 3. Toxic Depths: Green-gray stone, bright green, green glow
+        ["palette-toxic-depths"] = {
+            wallColor = {90, 110, 90},
+            floorColor = {180, 255, 120},
+            lightColor = {50, 255, 50},
+            fixtureColor = {120, 255, 80},
+        },
+        -- 4. Void Abyss: Purple-gray stone, magenta glow, purple light
+        ["palette-void-abyss"] = {
+            wallColor = {100, 90, 115},
+            floorColor = {255, 150, 255},
+            lightColor = {180, 50, 255},
+            fixtureColor = {220, 100, 255},
+        },
+        -- 5. Golden Forge: Warm brown stone, golden-yellow lava, gold glow
+        ["palette-golden-forge"] = {
+            wallColor = {130, 110, 85},
+            floorColor = {255, 220, 100},
+            lightColor = {255, 180, 50},
+            fixtureColor = {255, 200, 80},
+        },
+        -- 6. Frozen Fire: Ice blue stone, white-cyan flame, cyan glow
+        ["palette-frozen-fire"] = {
+            wallColor = {100, 115, 130},
+            floorColor = {220, 255, 255},
+            lightColor = {100, 220, 255},
+            fixtureColor = {150, 240, 255},
+        },
+        -- 7. Blood Sanctum: Dark burgundy stone, crimson lava, deep red glow
+        ["palette-blood-sanctum"] = {
+            wallColor = {100, 70, 75},
+            floorColor = {255, 100, 100},
+            lightColor = {200, 30, 30},
+            fixtureColor = {255, 60, 60},
+        },
+        -- 8. Solar Furnace: Tan stone, bright white-yellow, warm white glow
+        ["palette-solar-furnace"] = {
+            wallColor = {140, 130, 110},
+            floorColor = {255, 255, 200},
+            lightColor = {255, 240, 200},
+            fixtureColor = {255, 250, 220},
+        },
+        -- 9. Nether Realm: Charcoal stone, deep orange, orange-red glow
+        ["palette-nether-realm"] = {
+            wallColor = {80, 75, 70},
+            floorColor = {255, 150, 50},
+            lightColor = {255, 100, 30},
+            fixtureColor = {255, 130, 50},
+        },
+        -- 10. Spectral Cavern: Slate gray stone, pale ghostly blue, cold white
+        ["palette-spectral-cavern"] = {
+            wallColor = {95, 100, 110},
+            floorColor = {200, 220, 255},
+            lightColor = {180, 200, 255},
+            fixtureColor = {200, 220, 255},
+        },
     },
 
     -- =========================================================================

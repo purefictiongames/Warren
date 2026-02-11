@@ -48,7 +48,8 @@ local TitleScreen = Node.extend(function(parent)
 
     local ORANGE_BORDER = Color3.fromRGB(255, 140, 0)
     local FADE_DURATION = 0.5
-    local BUILD_NUMBER = 207
+    local BUILD_NUMBER = 208
+    local WARREN_VERSION = "2.5.2"
     local TITLE_MUSIC_ID = "rbxassetid://115218802234328"
     local GAMEPLAY_MUSIC_ID = "rbxassetid://127750735513287"
     local PIXEL_SCALE = 5  -- 40px equivalent (8 * 5)
@@ -1010,7 +1011,7 @@ local TitleScreen = Node.extend(function(parent)
 
         -- Footer text (no background, 75% size of buttons)
         local copyrightStr = "(C) 2025-2026 PURE FICTION RECORDS/ALPHARABBIT GAMES"
-        local buildStr = "DEMO BUILD " .. BUILD_NUMBER .. "/Warren 2.5.1"
+        local buildStr = "DEMO BUILD " .. BUILD_NUMBER .. "/Warren " .. WARREN_VERSION
         local footerScale = 4  -- 75% of PIXEL_SCALE (5)
         local footerTextHeight = 8 * footerScale
         local footerSpacing = 4

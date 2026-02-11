@@ -375,7 +375,18 @@ local JumpPad = Zone.extend(function(parent)
         end,
 
         setPosition = function(self, position)
-            local part = getState(self).padPart
+            local state = getState(self)
+            -- Use DOM path if available
+            if state.domNode then
+                local Dom = require(game.ReplicatedStorage.Lib).Dom
+                local posTable = position
+                if typeof(position) == "Vector3" then
+                    posTable = {position.X, position.Y, position.Z}
+                end
+                Dom.setAttribute(state.domNode, "Position", posTable)
+                return
+            end
+            local part = state.padPart
             if part then
                 if typeof(position) == "Vector3" then
                     part.Position = position
@@ -386,7 +397,18 @@ local JumpPad = Zone.extend(function(parent)
         end,
 
         setColor = function(self, color)
-            local part = getState(self).padPart
+            local state = getState(self)
+            -- Use DOM path if available
+            if state.domNode then
+                local Dom = require(game.ReplicatedStorage.Lib).Dom
+                local colorTable = color
+                if typeof(color) == "Color3" then
+                    colorTable = {math.floor(color.R*255), math.floor(color.G*255), math.floor(color.B*255)}
+                end
+                Dom.setAttribute(state.domNode, "Color", colorTable)
+                return
+            end
+            local part = state.padPart
             if part then
                 if typeof(color) == "Color3" then
                     part.Color = color
@@ -394,6 +416,14 @@ local JumpPad = Zone.extend(function(parent)
                     part.Color = Color3.fromRGB(color[1], color[2], color[3])
                 end
             end
+        end,
+
+        --[[
+            Store a DOM node reference for this pad.
+            When set, setColor/setPosition will go through the DOM path.
+        ]]
+        setDomNode = function(self, domNode)
+            getState(self).domNode = domNode
         end,
 
         setParent = function(self, newParent)

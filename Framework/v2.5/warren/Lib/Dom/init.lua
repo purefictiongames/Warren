@@ -51,6 +51,7 @@
 
 local DomNode = require(script.DomNode)
 local DomTree = require(script.DomTree)
+local Renderer = require(script.Renderer)
 
 local Dom = {}
 
@@ -270,11 +271,22 @@ function Dom.appendChild(parent, child)
         end
         for _, c in ipairs(fragmentChildren) do
             DomTree.setParent(c._id, parent._id)
+            -- Mount transferred child if parent is mounted
+            if parent._mounted and not c._mounted and parent._instance then
+                Renderer.mount(c, parent._instance)
+            end
         end
         -- Remove the empty fragment from tree
         DomTree.removeNode(child._id)
     else
         DomTree.setParent(child._id, parent._id)
+        -- Mount child if parent is mounted
+        if parent._mounted and not child._mounted and parent._instance then
+            Renderer.mount(child, parent._instance)
+        elseif parent._mounted and child._mounted and child._instance then
+            -- Reparent existing Instance
+            Renderer.reparent(child, parent._instance)
+        end
     end
 end
 
@@ -288,6 +300,10 @@ end
 function Dom.removeChild(parent, child)
     if child._parent ~= parent then
         return nil
+    end
+    -- Unmount if mounted
+    if child._mounted then
+        Renderer.unmount(child)
     end
     DomTree.setParent(child._id, nil)
     return child
@@ -371,6 +387,9 @@ end
 ]]
 function Dom.setAttribute(node, key, value)
     node._attributes[key] = value
+    if node._mounted then
+        Renderer.applyAttribute(node, key, value)
+    end
 end
 
 --[[
@@ -424,6 +443,10 @@ function Dom.addClass(node, className)
     else
         node._classes = node._classes .. " " .. className
     end
+    -- Re-resolve styles on mounted nodes
+    if node._mounted then
+        Renderer.applyAllAttributes(node)
+    end
 end
 
 --[[
@@ -444,6 +467,10 @@ function Dom.removeClass(node, className)
         end
     end
     node._classes = table.concat(classes, " ")
+    -- Re-resolve styles on mounted nodes
+    if node._mounted then
+        Renderer.applyAllAttributes(node)
+    end
 end
 
 --[[
@@ -504,21 +531,35 @@ end
 --------------------------------------------------------------------------------
 
 --[[
-    Mark a node as mounted (live in the world).
+    Mount a node into the world under a parent Instance.
+
+    Creates Roblox Instances for the node and all descendants.
+    If no parentInstance given, just marks as mounted (Phase 1 compat).
 
     @param node table - DomNode
+    @param parentInstance Instance? - Parent Roblox Instance
 ]]
-function Dom.mount(node)
-    node._mounted = true
+function Dom.mount(node, parentInstance)
+    if parentInstance then
+        Renderer.mount(node, parentInstance)
+    else
+        node._mounted = true
+    end
 end
 
 --[[
-    Mark a node as unmounted.
+    Unmount a node from the world.
+
+    Destroys Roblox Instances for the node and all descendants.
 
     @param node table - DomNode
 ]]
 function Dom.unmount(node)
-    node._mounted = false
+    if node._instance then
+        Renderer.unmount(node)
+    else
+        node._mounted = false
+    end
 end
 
 --------------------------------------------------------------------------------
@@ -594,6 +635,25 @@ end
 ]]
 function Dom.isDomNode(value)
     return DomNode.isDomNode(value)
+end
+
+--[[
+    Set the style resolver for the Renderer.
+    Called as: resolver(node) -> table of resolved properties
+
+    @param fn function - Style resolver function
+]]
+function Dom.setStyleResolver(fn)
+    Renderer.setStyleResolver(fn)
+end
+
+--[[
+    Get the Renderer module (for advanced use / testing).
+
+    @return table - Renderer module
+]]
+function Dom.getRenderer()
+    return Renderer
 end
 
 --[[

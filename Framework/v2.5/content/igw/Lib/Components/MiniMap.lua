@@ -103,7 +103,6 @@ local MiniMap = Node.extend(function(parent)
     ----------------------------------------------------------------------------
 
     local createUI
-    local createToggleButton
     local toggleMap
     local openMap
     local closeMap
@@ -304,62 +303,7 @@ local MiniMap = Node.extend(function(parent)
         state.viewportCamera = camera
         state.worldModel = worldModel
 
-        -- Create toggle button if needed (touch/PC without gamepad)
-        createToggleButton(self)
-    end
-
-    createToggleButton = function(self)
-        local state = getState(self)
-        local player = Players.LocalPlayer
-        if not player then return end
-
-        -- Only show button if no gamepad connected
-        local gamepadConnected = UserInputService.GamepadEnabled
-
-        if gamepadConnected then
-            -- Gamepad users use Back/Select button
-            if state.toggleButton then
-                state.toggleButton:Destroy()
-                state.toggleButton = nil
-                state.toggleButtonText = nil
-            end
-            return
-        end
-
-        local playerGui = player:WaitForChild("PlayerGui")
-
-        -- Find or create button ScreenGui
-        local buttonGui = playerGui:FindFirstChild("MiniMapToggle")
-        if not buttonGui then
-            buttonGui = Instance.new("ScreenGui")
-            buttonGui.Name = "MiniMapToggle"
-            buttonGui.ResetOnSpawn = false
-            buttonGui.DisplayOrder = 5
-            buttonGui.Parent = playerGui
-        end
-
-        -- Create toggle button (bottom-left corner) using PixelFont
-        local button, buttonText = PixelFont.createButton("MAP", {
-            scale = 2,
-            color = Color3.fromRGB(255, 255, 255),
-            backgroundColor = Color3.fromRGB(40, 40, 50),
-            backgroundTransparency = 0.3,
-            padding = 10,
-        })
-        button.Name = "ToggleButton"
-        button.Position = UDim2.new(0, 20, 1, -70)
-        button.Parent = buttonGui
-
-        local corner = Instance.new("UICorner")
-        corner.CornerRadius = UDim.new(0, 8)
-        corner.Parent = button
-
-        button.MouseButton1Click:Connect(function()
-            toggleMap(self)
-        end)
-
-        state.toggleButton = button
-        state.toggleButtonText = buttonText
+        -- No on-screen toggle button — map opens via gamepad touchpad (ButtonSelect)
     end
 
     ----------------------------------------------------------------------------
@@ -1049,7 +993,7 @@ local MiniMap = Node.extend(function(parent)
                 return Enum.ContextActionResult.Sink
             end,
             false,
-            Enum.KeyCode.ButtonY
+            Enum.KeyCode.ButtonSelect
         )
     end
 
@@ -1094,7 +1038,7 @@ local MiniMap = Node.extend(function(parent)
                 state.toggleConnection = UserInputService.InputBegan:Connect(function(input, processed)
                     if processed then return end
                     -- Only handle toggle when map is closed (when open, ContextAction handles it)
-                    if not state.isOpen and input.KeyCode == Enum.KeyCode.ButtonY then
+                    if not state.isOpen and input.KeyCode == Enum.KeyCode.ButtonSelect then
                         toggleMap(self)
                     end
                 end)

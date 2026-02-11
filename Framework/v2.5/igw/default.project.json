@@ -1,0 +1,42 @@
+{
+  "name": "IGW",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedFirst": {
+      "$className": "ReplicatedFirst",
+      "Config": {
+        "$path": "ReplicatedFirst/Config.lua"
+      }
+    },
+    "ReplicatedStorage": {
+      "$className": "ReplicatedStorage",
+      "Warren": {
+        "$path": "../warren/src"
+      },
+      "Components": {
+        "$path": "src/Components"
+      },
+      "Admin": {
+        "$path": "src/Admin"
+      },
+      "Game": {
+        "$path": "Game"
+      }
+    },
+    "ServerScriptService": {
+      "$className": "ServerScriptService",
+      "Bootstrap": {
+        "$path": "Bootstrap.server.lua"
+      }
+    },
+    "StarterPlayer": {
+      "$className": "StarterPlayer",
+      "StarterPlayerScripts": {
+        "$className": "StarterPlayerScripts",
+        "Bootstrap": {
+          "$path": "Bootstrap.client.lua"
+        }
+      }
+    }
+  }
+}

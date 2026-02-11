@@ -1,0 +1,9 @@
+[package]
+name = "purefictiongames/igw"
+version = "0.1.0"
+registry = "https://registry.alpharabbitgames.com"
+realm = "shared"
+license = "UNLICENSED"
+
+[dependencies]
+Warren = "purefictiongames/warren@2.5.2"

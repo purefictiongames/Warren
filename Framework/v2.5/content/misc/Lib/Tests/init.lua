@@ -102,4 +102,7 @@ Tests.AttributeSet = safeRequire("AttributeSet_Tests", script:WaitForChild("Attr
 -- Privacy Pattern (Closure-Based Refactor)
 Tests.ClosurePrivacy = safeRequire("ClosurePrivacy_Tests", script:WaitForChild("ClosurePrivacy_Tests"))
 
+-- DOM Core
+Tests.Dom = safeRequire("Dom_Tests", script:WaitForChild("Dom_Tests"))
+
 return Tests

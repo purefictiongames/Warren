@@ -1010,7 +1010,7 @@ local TitleScreen = Node.extend(function(parent)
 
         -- Footer text (no background, 75% size of buttons)
         local copyrightStr = "(C) 2025-2026 PURE FICTION RECORDS/ALPHARABBIT GAMES"
-        local buildStr = "DEMO BUILD " .. BUILD_NUMBER .. "/Warren 2.5.0"
+        local buildStr = "DEMO BUILD " .. BUILD_NUMBER .. "/Warren 2.5.1"
         local footerScale = 4  -- 75% of PIXEL_SCALE (5)
         local footerTextHeight = 8 * footerScale
         local footerSpacing = 4

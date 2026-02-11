@@ -51,7 +51,7 @@
 --]]
 
 local Lib = {
-    _VERSION = "2.5.0-dev",
+    _VERSION = "2.5.1",
 }
 
 -- Core system module (Debug, IPC, State, Asset, Store, View)
@@ -65,6 +65,9 @@ Lib.Factory = require(script.Factory)
 
 -- GeometrySpec: Backwards compatibility wrapper (prefer Lib.Factory)
 Lib.GeometrySpec = require(script.GeometrySpec)
+
+-- Dom: DOM tree API (getElementById, appendChild, setAttribute, etc.)
+Lib.Dom = require(script.Dom)
 
 -- Content modules (Components, Admin, Layouts, etc.) are injected by the
 -- game's Rojo project file. They appear as children of this script at runtime

@@ -51,7 +51,7 @@
 --]]
 
 local Lib = {
-    _VERSION = "2.0.0-dev",
+    _VERSION = "2.5.0-dev",
 }
 
 -- Core system module (Debug, IPC, State, Asset, Store, View)
@@ -60,26 +60,22 @@ Lib.System = require(script.System)
 -- Node base class for game components
 Lib.Node = require(script.Node)
 
--- Reusable component library (PathFollower, etc.)
-Lib.Components = require(script.Components)
-
 -- Factory: Declarative instance builder (geometry, gui)
 Lib.Factory = require(script.Factory)
 
 -- GeometrySpec: Backwards compatibility wrapper (prefer Lib.Factory)
 Lib.GeometrySpec = require(script.GeometrySpec)
 
--- Standalone map layouts (used with Factory.geometry)
-Lib.Layouts = require(script.Layouts)
+-- Content modules (Components, Admin, Layouts, etc.) are injected by the
+-- game's Rojo project file. They appear as children of this script at runtime
+-- but live in separate directories on disk.
+local function optionalRequire(name)
+    local child = script:FindFirstChild(name)
+    return child and require(child) or nil
+end
 
--- Admin utilities (SaveData management, etc.)
--- Can be required directly in edit mode: require(game.ReplicatedStorage.Lib.Admin.SaveDataAdmin)
-Lib.Admin = require(script.Admin)
-
--- Test suite is NOT auto-loaded to avoid circular dependency
--- Access via: require(game.ReplicatedStorage.Lib.Tests)
-
--- Visual demos are NOT auto-loaded to avoid circular dependency
--- Access via: require(game.ReplicatedStorage.Lib.Demos)
+Lib.Components = optionalRequire("Components")
+Lib.Admin = optionalRequire("Admin")
+Lib.Layouts = optionalRequire("Layouts")
 
 return Lib

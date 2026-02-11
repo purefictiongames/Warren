@@ -1,26 +1,32 @@
 {
-  "name": "LibPureFiction",
+  "name": "Warren",
   "tree": {
     "$className": "DataModel",
     "ReplicatedFirst": {
       "$className": "ReplicatedFirst",
       "Config": {
-        "$path": "src/ReplicatedFirst/Config.lua"
+        "$path": "warren/ReplicatedFirst/Config.lua"
       }
     },
     "ReplicatedStorage": {
       "$className": "ReplicatedStorage",
       "Lib": {
-        "$path": "src/Lib"
+        "$path": "warren/Lib",
+        "Components": {
+          "$path": "content/igw/Lib/Components"
+        },
+        "Admin": {
+          "$path": "content/igw/Lib/Admin"
+        }
       },
       "Game": {
-        "$path": "src/Game"
+        "$path": "warren/Game"
       }
     },
     "ServerScriptService": {
       "$className": "ServerScriptService",
       "Bootstrap": {
-        "$path": "src/Bootstrap.server.lua"
+        "$path": "warren/Bootstrap.server.lua"
       }
     },
     "StarterPlayer": {
@@ -28,7 +34,7 @@
       "StarterPlayerScripts": {
         "$className": "StarterPlayerScripts",
         "Bootstrap": {
-          "$path": "src/Bootstrap.client.lua"
+          "$path": "warren/Bootstrap.client.lua"
         }
       }
     }

@@ -169,11 +169,5 @@ end
 
 Debug.info("Bootstrap", "Client ready")
 
---------------------------------------------------------------------------------
--- DEMOS AUTO-INITIALIZATION
---------------------------------------------------------------------------------
--- Load Demos module which auto-detects and initializes any active demos
--- This enables demos to work in Team Test mode without manual client setup
-
-local Demos = require(ReplicatedStorage:WaitForChild("Lib"):WaitForChild("Demos"))
-Debug.info("Bootstrap", "Demos module loaded (auto-init enabled)")
+-- Demos auto-initialization removed in v2.5 split.
+-- Demos live in content/misc/ and are not wired into IGW.

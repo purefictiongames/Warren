@@ -16,6 +16,13 @@ Components.ScreenTransition = require(script.ScreenTransition)
 Components.TitleScreen = require(script.TitleScreen)
 Components.ExitScreen = require(script.ExitScreen)
 
+-- Navigation
+Components.PlaceGraph = require(script.PlaceGraph)
+
+-- Lobby
+Components.LobbyManager = require(script.LobbyManager)
+Components.LobbyCountdown = require(script.LobbyCountdown)
+
 -- HUD
 Components.AreaHUD = require(script.AreaHUD)
 Components.MiniMap = require(script.MiniMap)

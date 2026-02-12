@@ -52,6 +52,7 @@ local Warren = require(game:GetService("ReplicatedStorage").Warren)
 local Node = Warren.Node
 local System = Warren.System
 local PixelFont = Warren.PixelFont
+local PlaceGraph = require(script.Parent.PlaceGraph)
 
 --------------------------------------------------------------------------------
 -- CONSTANTS
@@ -84,6 +85,7 @@ local ExitScreen = Node.extend(function(parent)
     ----------------------------------------------------------------------------
 
     local instanceStates = {}
+    local confirmExitToLobby  -- forward declaration
 
     local function getState(self)
         if not instanceStates[self.id] then
@@ -98,6 +100,7 @@ local ExitScreen = Node.extend(function(parent)
                 overlay = nil,
                 menuFrame = nil,
                 confirmFrame = nil,
+                confirmAction = nil,  -- "title" or "lobby" — which exit action was chosen
             }
         end
         return instanceStates[self.id]
@@ -239,50 +242,93 @@ local ExitScreen = Node.extend(function(parent)
         titleText.ZIndex = 3
         titleText.Parent = menuFrame
 
-        -- Return to Title Screen button - pixel button
-        local returnButton, returnButtonText = PixelFont.createButton("RETURN TO TITLE", {
-            scale = PIXEL_SCALE_SMALL,
-            color = Color3.fromRGB(255, 255, 255),
-            backgroundColor = Color3.fromRGB(50, 50, 60),
-            padding = 12,
-        })
-        returnButton.Name = "ReturnButton"
-        returnButton.Position = UDim2.new(0.5, -returnButton.Size.X.Offset / 2, 0.5, -returnButton.Size.Y.Offset / 2)
-        returnButton.ZIndex = 3
-        returnButton.Parent = menuFrame
+        -- Update visual selection across all buttons
+        local function updateSelection()
+            for i, btn in ipairs(state.buttons) do
+                local selected = (i == state.selectedIndex)
+                local stroke = btn:FindFirstChild("SelectionStroke")
+                if stroke then stroke.Enabled = selected end
+                TweenService:Create(btn,
+                    TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+                    { BackgroundColor3 = selected
+                        and Color3.fromRGB(80, 70, 100)
+                        or Color3.fromRGB(50, 50, 60) }
+                ):Play()
+            end
+        end
 
-        local returnCorner = Instance.new("UICorner")
-        returnCorner.CornerRadius = UDim.new(0, 8)
-        returnCorner.Parent = returnButton
+        -- Helper to create a menu button with hover + click
+        local function createExitButton(name, text, yPosition, onClick)
+            local btn, btnText = PixelFont.createButton(text, {
+                scale = PIXEL_SCALE_SMALL,
+                color = Color3.fromRGB(255, 255, 255),
+                backgroundColor = Color3.fromRGB(50, 50, 60),
+                padding = 12,
+            })
+            btn.Name = name
+            btn.Position = UDim2.new(0.5, -btn.Size.X.Offset / 2, 0, yPosition)
+            btn.ZIndex = 3
+            btn.Parent = menuFrame
 
-        -- Selection border (1px orange)
-        local stroke = Instance.new("UIStroke")
-        stroke.Name = "SelectionStroke"
-        stroke.Color = ORANGE_BORDER
-        stroke.Thickness = 2
-        stroke.Enabled = true  -- Start selected
-        stroke.Parent = returnButton
+            local corner = Instance.new("UICorner")
+            corner.CornerRadius = UDim.new(0, 8)
+            corner.Parent = btn
 
-        -- Hover effect
-        returnButton.MouseEnter:Connect(function()
-            TweenService:Create(
-                returnButton,
-                TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-                { BackgroundColor3 = Color3.fromRGB(70, 70, 90) }
-            ):Play()
-        end)
+            local stroke = Instance.new("UIStroke")
+            stroke.Name = "SelectionStroke"
+            stroke.Color = ORANGE_BORDER
+            stroke.Thickness = 2
+            stroke.Enabled = false
+            stroke.Parent = btn
 
-        returnButton.MouseLeave:Connect(function()
-            TweenService:Create(
-                returnButton,
-                TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-                { BackgroundColor3 = Color3.fromRGB(50, 50, 60) }
-            ):Play()
-        end)
+            btn.MouseEnter:Connect(function()
+                for i, b in ipairs(state.buttons) do
+                    if b == btn then
+                        state.selectedIndex = i
+                        updateSelection()
+                        break
+                    end
+                end
+            end)
 
-        returnButton.MouseButton1Click:Connect(function()
-            showConfirmation(self)
-        end)
+            btn.MouseLeave:Connect(function()
+                updateSelection()
+            end)
+
+            btn.MouseButton1Click:Connect(onClick)
+
+            return btn
+        end
+
+        if PlaceGraph.isGameplayServer() then
+            -- Reserved server: two buttons — Return to Lobby + Return to Title
+            menuFrame.Size = UDim2.new(0, 400, 0, 260)
+            menuFrame.Position = UDim2.new(0.5, -200, 0.5, -130)
+
+            local lobbyBtn = createExitButton("ReturnToLobbyButton", "RETURN TO LOBBY", 70, function()
+                state.confirmAction = "lobby"
+                showConfirmation(self)
+            end)
+
+            local titleBtn = createExitButton("ReturnToTitleButton", "RETURN TO TITLE", 130, function()
+                state.confirmAction = "title"
+                showConfirmation(self)
+            end)
+
+            state.buttons = { lobbyBtn, titleBtn }
+            state.selectedIndex = 1
+            updateSelection()
+        else
+            -- Normal mode: single Return to Title button
+            local returnButton = createExitButton("ReturnButton", "RETURN TO TITLE", 80, function()
+                state.confirmAction = "title"
+                showConfirmation(self)
+            end)
+
+            state.buttons = { returnButton }
+            state.selectedIndex = 1
+            updateSelection()
+        end
 
         -- Help text at bottom - pixel text
         local helpText = PixelFont.createText("B / CIRCLE TO CLOSE", {
@@ -373,7 +419,6 @@ local ExitScreen = Node.extend(function(parent)
         state.overlay = overlay
         state.menuFrame = menuFrame
         state.confirmFrame = confirmFrame
-        state.buttons = { returnButton }
     end
 
     ----------------------------------------------------------------------------
@@ -466,7 +511,7 @@ local ExitScreen = Node.extend(function(parent)
         end
     end
 
-    confirmExit = function(self)
+    local function doExit(self, signalName)
         local state = getState(self)
         local player = Players.LocalPlayer
 
@@ -484,7 +529,6 @@ local ExitScreen = Node.extend(function(parent)
         end
 
         -- Start fading out gameplay music (fade over 3 seconds)
-        -- The actual music cleanup happens after the transition completes
         local gameplayMusic = SoundService:FindFirstChild("GameplayMusic")
         if gameplayMusic then
             local fadeOutTween = TweenService:Create(
@@ -499,11 +543,24 @@ local ExitScreen = Node.extend(function(parent)
             fadeOutTween:Play()
         end
 
-        -- Fire exit signal to server (server will trigger fade to black)
-        self.Out:Fire("exitToTitle", {
+        -- Fire exit signal to server
+        self.Out:Fire(signalName, {
             _targetPlayer = player,
             player = player,
         })
+    end
+
+    confirmExit = function(self)
+        local state = getState(self)
+        if state.confirmAction == "lobby" then
+            doExit(self, "exitToLobby")
+        else
+            doExit(self, "exitToTitle")
+        end
+    end
+
+    confirmExitToLobby = function(self)
+        doExit(self, "exitToLobby")
     end
 
     ----------------------------------------------------------------------------
@@ -552,15 +609,37 @@ local ExitScreen = Node.extend(function(parent)
                         end
                     else
                         -- Menu controls
-                        -- A/X/Enter/Space = show confirmation
+                        -- A/X/Enter/Space = activate selected button
                         if keyCode == Enum.KeyCode.ButtonA
                             or keyCode == Enum.KeyCode.ButtonX
                             or keyCode == Enum.KeyCode.Return
                             or keyCode == Enum.KeyCode.Space then
+                            -- Determine which action based on selected button
+                            local selectedBtn = state.buttons[state.selectedIndex]
+                            if selectedBtn then
+                                if selectedBtn.Name == "ReturnToLobbyButton" then
+                                    state.confirmAction = "lobby"
+                                else
+                                    state.confirmAction = "title"
+                                end
+                            end
                             showConfirmation(self)
                         -- B/Circle = close exit screen
                         elseif keyCode == Enum.KeyCode.ButtonB then
                             closeExitScreen(self)
+                        -- Up/Down navigation (for dual buttons)
+                        elseif keyCode == Enum.KeyCode.Up or keyCode == Enum.KeyCode.W
+                            or keyCode == Enum.KeyCode.DPadUp then
+                            if #state.buttons > 1 then
+                                state.selectedIndex = math.max(1, state.selectedIndex - 1)
+                                updateSelection()
+                            end
+                        elseif keyCode == Enum.KeyCode.Down or keyCode == Enum.KeyCode.S
+                            or keyCode == Enum.KeyCode.DPadDown then
+                            if #state.buttons > 1 then
+                                state.selectedIndex = math.min(#state.buttons, state.selectedIndex + 1)
+                                updateSelection()
+                            end
                         end
                     end
                 end)
@@ -594,10 +673,12 @@ local ExitScreen = Node.extend(function(parent)
                     state.screenGui.Enabled = false
                 end
             end,
+
         },
 
         Out = {
             exitToTitle = {},
+            exitToLobby = {},
         },
     }
 end)

@@ -86,6 +86,12 @@ local IPC = Warren.System.IPC
 -- Wait for Game module (game-specific node implementations)
 local Game = require(ReplicatedStorage:WaitForChild("Game"))
 
+-- Resolve current Place context via PlaceGraph
+local PlaceGraph = Components.PlaceGraph
+local placeName, placeConfig = PlaceGraph.resolve(game.PlaceId)
+
+Debug.info("Bootstrap", "Place:", placeName, "→ initialView:", placeConfig.initialView)
+
 -- Register dungeon nodes with IPC
 IPC.registerNode(Components.JumpPad)
 IPC.registerNode(Components.RegionManager)
@@ -94,6 +100,8 @@ IPC.registerNode(Components.ExitScreen)        -- Client-side, but registered fo
 IPC.registerNode(Components.ScreenTransition)  -- Client-side, but registered for wiring
 IPC.registerNode(Components.AreaHUD)           -- Client-side, but registered for wiring
 IPC.registerNode(Components.MiniMap)           -- Client-side, but registered for wiring
+IPC.registerNode(Components.LobbyManager)      -- Server-side lobby pad management
+IPC.registerNode(Components.LobbyCountdown)    -- Client-side lobby countdown UI
 
 -- Register Game-level nodes (game-specific implementations)
 -- Example:
@@ -114,7 +122,7 @@ Asset.buildInheritanceTree()
 
 -- Dungeon mode: JumpPad signals route to RegionManager, screen transitions cross client/server
 IPC.defineMode("Dungeon", {
-    nodes = { "JumpPad", "RegionManager", "TitleScreen", "ExitScreen", "ScreenTransition", "AreaHUD", "MiniMap" },
+    nodes = { "JumpPad", "RegionManager", "TitleScreen", "ExitScreen", "ScreenTransition", "AreaHUD", "MiniMap", "LobbyManager", "LobbyCountdown" },
     wiring = {
         -- Server-side: JumpPad → RegionManager
         JumpPad = { "RegionManager" },
@@ -122,12 +130,14 @@ IPC.defineMode("Dungeon", {
         TitleScreen = { "RegionManager" },
         -- Cross-domain: ExitScreen (client) → RegionManager (server)
         ExitScreen = { "RegionManager" },
-        -- Cross-domain: RegionManager (server) → TitleScreen, ExitScreen, ScreenTransition, AreaHUD, MiniMap (client)
-        RegionManager = { "TitleScreen", "ExitScreen", "ScreenTransition", "AreaHUD", "MiniMap" },
+        -- Cross-domain: RegionManager (server) → TitleScreen, ExitScreen, ScreenTransition, AreaHUD, MiniMap, LobbyManager, LobbyCountdown (client)
+        RegionManager = { "TitleScreen", "ExitScreen", "ScreenTransition", "AreaHUD", "MiniMap", "LobbyManager", "LobbyCountdown" },
         -- Cross-domain: ScreenTransition (client) → RegionManager (server)
         ScreenTransition = { "RegionManager" },
         -- Cross-domain: MiniMap (client) → RegionManager (server)
         MiniMap = { "RegionManager" },
+        -- Server-side: LobbyManager → LobbyCountdown (client)
+        LobbyManager = { "LobbyCountdown" },
     },
 })
 
@@ -190,6 +200,11 @@ local function startInfiniteDungeon()
         id = "InfiniteDungeon",
     })
 
+    -- Create lobby manager (server-side pad detection, countdown, teleport)
+    IPC.createInstance("LobbyManager", {
+        id = "LobbyManager_Main",
+    })
+
     -- Store globally for debugging (IPC handles lifecycle)
     -- Note: Both _G and shared for command bar compatibility in different Studio contexts
     _G.RegionManager = regionManager
@@ -221,35 +236,37 @@ local function startInfiniteDungeon()
         origin = { 0, 20, 0 },
     })
 
-    -- Build title diorama (3D scene behind title screen)
-    regionManager:buildTitleDiorama()
-
-    -- Dungeon is now started via onStartPressed signal from TitleScreen
-    -- (handled in RegionManager.In.onStartPressed)
     local Players = game:GetService("Players")
     local dungeonOwner = nil  -- First player to join owns the dungeon
 
-    local function onPlayerAdded(player)
-        -- Dungeon is started via TitleScreen signal, not automatically
-        -- Character handling is done after dungeon starts (in RegionManager)
+    -- Configure initial view from PlaceGraph
+    regionManager:setInitialView(placeConfig.initialView)
+    Debug.info("Bootstrap", "Initial view:", placeConfig.initialView)
 
-        -- Track the first player as dungeon owner for save purposes
+    -- Unified player join handling (reserved server spawn + TeleportData lobby re-entry)
+    Players.PlayerAdded:Connect(function(player)
         if not dungeonOwner then
             dungeonOwner = player
         end
+        regionManager:handlePlayerJoin(player)
+    end)
+    for _, player in ipairs(Players:GetPlayers()) do
+        if not dungeonOwner then
+            dungeonOwner = player
+        end
+        task.spawn(function()
+            regionManager:handlePlayerJoin(player)
+        end)
     end
 
-    -- Save dungeon data when owner leaves
-    Players.PlayerRemoving:Connect(function(player)
-        if player == dungeonOwner then
-            Debug.info("Bootstrap", "Dungeon owner leaving, saving data...")
-            regionManager:saveData(player)
-        end
-    end)
-
-    Players.PlayerAdded:Connect(onPlayerAdded)
-    for _, player in ipairs(Players:GetPlayers()) do
-        onPlayerAdded(player)
+    -- Save dungeon data when owner leaves (only on start server)
+    if placeName == "start" then
+        Players.PlayerRemoving:Connect(function(player)
+            if player == dungeonOwner then
+                Debug.info("Bootstrap", "Dungeon owner leaving, saving data...")
+                regionManager:saveData(player)
+            end
+        end)
     end
 end
 

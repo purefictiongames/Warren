@@ -50,8 +50,8 @@ local TitleScreen = Node.extend(function(parent)
 
     local ORANGE_BORDER = Color3.fromRGB(255, 140, 0)
     local FADE_DURATION = 0.5
-    local BUILD_NUMBER = 211
-    local WARREN_VERSION = "2.5.4"
+    local BUILD_NUMBER = 214
+    local WARREN_VERSION = "2.5.6"
     local TITLE_MUSIC_ID = "rbxassetid://101893525666614"
     local GAMEPLAY_MUSIC_ID = "rbxassetid://71410928893936"
     local PIXEL_SCALE = 5  -- 40px equivalent (8 * 5)
@@ -62,9 +62,9 @@ local TitleScreen = Node.extend(function(parent)
             instanceStates[self.id] = {
                 screenGui = nil,
                 isVisible = true,
-                selectedIndex = 1,  -- 1 = Start, 2 = Options
-                buttons = {},       -- { StartButton, OptionsButton }
-                buttonTexts = {},   -- { StartText, OptionsText } PixelFont frames
+                selectedIndex = 1,  -- 1 = Solo Play, 2 = Lobby, 3 = Options
+                buttons = {},       -- { SoloPlayButton, LobbyButton, OptionsButton }
+                buttonTexts = {},   -- { SoloPlayText, LobbyText, OptionsText } PixelFont frames
                 footerTexts = {},   -- { copyrightText, buildText } PixelFont frames
                 inputConnection = nil,
                 inputClaim = nil,   -- InputCapture claim for hiding CoreGui
@@ -523,7 +523,7 @@ local TitleScreen = Node.extend(function(parent)
         local buttonText = state.buttonTexts[state.selectedIndex]
         if button then
             -- Trigger the button's click handler
-            if button.Name == "StartButton" then
+            if button.Name == "SoloPlayButton" then
                 -- Disable to prevent double-clicks
                 button.Active = false
                 if buttonText then
@@ -533,6 +533,19 @@ local TitleScreen = Node.extend(function(parent)
                 -- Fire signal to server
                 local player = Players.LocalPlayer
                 self.Out:Fire("startPressed", {
+                    _targetPlayer = player,
+                    player = player,
+                })
+            elseif button.Name == "LobbyButton" then
+                -- Disable to prevent double-clicks
+                button.Active = false
+                if buttonText then
+                    PixelFont.setTransparency(buttonText, 0.5)
+                end
+
+                -- Fire signal to server
+                local player = Players.LocalPlayer
+                self.Out:Fire("lobbyPressed", {
                     _targetPlayer = player,
                     player = player,
                 })
@@ -1022,8 +1035,8 @@ local TitleScreen = Node.extend(function(parent)
         local textHeight = 8 * PIXEL_SCALE  -- 40px (8 = base pixel font size)
         local buttonPadding = 8
         local singleButtonHeight = textHeight + buttonPadding * 2
-        local panelHeight = singleButtonHeight * 2 + buttonSpacing + menuPadding * 2
-        local panelWidth = 220  -- Wide enough for OPTIONS button plus margin
+        local panelHeight = singleButtonHeight * 3 + buttonSpacing * 2 + menuPadding * 2
+        local panelWidth = 260  -- Wide enough for SOLO PLAY button plus margin
 
         local menuPanel = Instance.new("Frame")
         menuPanel.Name = "MenuPanel"
@@ -1104,15 +1117,15 @@ local TitleScreen = Node.extend(function(parent)
             return button, buttonText
         end
 
-        -- Create Start button (positioned at top of panel with padding)
-        local startYOffset = menuPadding
-        local startButton, startText = createMenuButton("StartButton", "START", startYOffset, true)
-        startButton.Activated:Connect(function()
+        -- Create Solo Play button (positioned at top of panel with padding)
+        local soloYOffset = menuPadding
+        local soloButton, soloText = createMenuButton("SoloPlayButton", "SOLO PLAY", soloYOffset, true)
+        soloButton.Activated:Connect(function()
             if not state.isVisible then return end
 
             -- Disable button to prevent double-clicks
-            startButton.Active = false
-            PixelFont.setTransparency(startText, 0.5)
+            soloButton.Active = false
+            PixelFont.setTransparency(soloText, 0.5)
 
             -- Fire signal to server
             self.Out:Fire("startPressed", {
@@ -1121,8 +1134,25 @@ local TitleScreen = Node.extend(function(parent)
             })
         end)
 
-        -- Create Options button (positioned below Start with spacing)
-        local optionsYOffset = menuPadding + singleButtonHeight + buttonSpacing
+        -- Create Lobby button (positioned below Solo Play)
+        local lobbyYOffset = menuPadding + singleButtonHeight + buttonSpacing
+        local lobbyButton, lobbyText = createMenuButton("LobbyButton", "LOBBY", lobbyYOffset, false)
+        lobbyButton.Activated:Connect(function()
+            if not state.isVisible then return end
+
+            -- Disable button to prevent double-clicks
+            lobbyButton.Active = false
+            PixelFont.setTransparency(lobbyText, 0.5)
+
+            -- Fire signal to server
+            self.Out:Fire("lobbyPressed", {
+                _targetPlayer = player,
+                player = player,
+            })
+        end)
+
+        -- Create Options button (positioned below Lobby)
+        local optionsYOffset = menuPadding + singleButtonHeight * 2 + buttonSpacing * 2
         local optionsButton, optionsText = createMenuButton("OptionsButton", "OPTIONS", optionsYOffset, false)
         optionsButton.Activated:Connect(function()
             if not state.isVisible then return end
@@ -1130,8 +1160,8 @@ local TitleScreen = Node.extend(function(parent)
         end)
 
         -- Store button and text references
-        state.buttons = { startButton, optionsButton }
-        state.buttonTexts = { startText, optionsText }
+        state.buttons = { soloButton, lobbyButton, optionsButton }
+        state.buttonTexts = { soloText, lobbyText, optionsText }
 
         -- Set initial selection (Start button)
         state.selectedIndex = 1
@@ -1479,6 +1509,7 @@ local TitleScreen = Node.extend(function(parent)
 
         Out = {
             startPressed = {},
+            lobbyPressed = {},
             clearSavedData = {},
         },
     }

@@ -59,7 +59,7 @@ PlaceGraph.places = {
         views = { "title", "lobby" },
     },
     gameplay = {
-        placeId = 95328643214618,
+        placeId = 103337162998685,
         initialView = "gameplay",
         views = { "gameplay" },
     },

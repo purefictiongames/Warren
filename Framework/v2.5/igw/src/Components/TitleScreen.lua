@@ -50,8 +50,8 @@ local TitleScreen = Node.extend(function(parent)
 
     local ORANGE_BORDER = Color3.fromRGB(255, 140, 0)
     local FADE_DURATION = 0.5
-    local BUILD_NUMBER = 214
-    local WARREN_VERSION = "2.5.6"
+    local BUILD_NUMBER = 215
+    local WARREN_VERSION = "2.5.7"
     local TITLE_MUSIC_ID = "rbxassetid://101893525666614"
     local GAMEPLAY_MUSIC_ID = "rbxassetid://71410928893936"
     local PIXEL_SCALE = 5  -- 40px equivalent (8 * 5)

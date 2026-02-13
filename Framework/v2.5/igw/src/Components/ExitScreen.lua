@@ -106,6 +106,20 @@ local ExitScreen = Node.extend(function(parent)
         return instanceStates[self.id]
     end
 
+    local function updateSelection(state)
+        for i, btn in ipairs(state.buttons) do
+            local selected = (i == state.selectedIndex)
+            local stroke = btn:FindFirstChild("SelectionStroke")
+            if stroke then stroke.Enabled = selected end
+            TweenService:Create(btn,
+                TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+                { BackgroundColor3 = selected
+                    and Color3.fromRGB(80, 70, 100)
+                    or Color3.fromRGB(50, 50, 60) }
+            ):Play()
+        end
+    end
+
     local function cleanupState(self)
         local state = instanceStates[self.id]
         if state then
@@ -242,21 +256,6 @@ local ExitScreen = Node.extend(function(parent)
         titleText.ZIndex = 3
         titleText.Parent = menuFrame
 
-        -- Update visual selection across all buttons
-        local function updateSelection()
-            for i, btn in ipairs(state.buttons) do
-                local selected = (i == state.selectedIndex)
-                local stroke = btn:FindFirstChild("SelectionStroke")
-                if stroke then stroke.Enabled = selected end
-                TweenService:Create(btn,
-                    TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-                    { BackgroundColor3 = selected
-                        and Color3.fromRGB(80, 70, 100)
-                        or Color3.fromRGB(50, 50, 60) }
-                ):Play()
-            end
-        end
-
         -- Helper to create a menu button with hover + click
         local function createExitButton(name, text, yPosition, onClick)
             local btn, btnText = PixelFont.createButton(text, {
@@ -285,14 +284,14 @@ local ExitScreen = Node.extend(function(parent)
                 for i, b in ipairs(state.buttons) do
                     if b == btn then
                         state.selectedIndex = i
-                        updateSelection()
+                        updateSelection(state)
                         break
                     end
                 end
             end)
 
             btn.MouseLeave:Connect(function()
-                updateSelection()
+                updateSelection(state)
             end)
 
             btn.MouseButton1Click:Connect(onClick)
@@ -317,7 +316,7 @@ local ExitScreen = Node.extend(function(parent)
 
             state.buttons = { lobbyBtn, titleBtn }
             state.selectedIndex = 1
-            updateSelection()
+            updateSelection(state)
         else
             -- Normal mode: single Return to Title button
             local returnButton = createExitButton("ReturnButton", "RETURN TO TITLE", 80, function()
@@ -327,7 +326,7 @@ local ExitScreen = Node.extend(function(parent)
 
             state.buttons = { returnButton }
             state.selectedIndex = 1
-            updateSelection()
+            updateSelection(state)
         end
 
         -- Help text at bottom - pixel text
@@ -632,13 +631,13 @@ local ExitScreen = Node.extend(function(parent)
                             or keyCode == Enum.KeyCode.DPadUp then
                             if #state.buttons > 1 then
                                 state.selectedIndex = math.max(1, state.selectedIndex - 1)
-                                updateSelection()
+                                updateSelection(state)
                             end
                         elseif keyCode == Enum.KeyCode.Down or keyCode == Enum.KeyCode.S
                             or keyCode == Enum.KeyCode.DPadDown then
                             if #state.buttons > 1 then
                                 state.selectedIndex = math.min(#state.buttons, state.selectedIndex + 1)
-                                updateSelection()
+                                updateSelection(state)
                             end
                         end
                     end

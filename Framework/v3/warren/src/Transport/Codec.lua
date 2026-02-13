@@ -46,9 +46,9 @@ if Runtime.isRoblox then
     jsonEncode = function(data) return HttpService:JSONEncode(data) end
     jsonDecode = function(str) return HttpService:JSONDecode(str) end
 else
-    local net = require("@lune/net")
-    jsonEncode = function(data) return net.jsonEncode(data) end
-    jsonDecode = function(data) return net.jsonDecode(data) end
+    local serde = require("@lune/serde")
+    jsonEncode = function(data) return serde.encode("json", data) end
+    jsonDecode = function(str) return serde.decode("json", str) end
 end
 
 --------------------------------------------------------------------------------

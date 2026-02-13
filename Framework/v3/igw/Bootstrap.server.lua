@@ -25,6 +25,7 @@
 
 --]]
 
+local HttpService = game:GetService("HttpService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
@@ -189,7 +190,7 @@ local State = Warren.State
 if not RunService:IsStudio() then
     Transport.start({
         endpoint = "https://warren.alpharabbitgames.com",  -- Lune VPS
-        authToken = "igw-dev-token",  -- TODO: Set to match WARREN_AUTH_TOKEN in /opt/warren/.env
+        authToken = HttpService:GetSecret("warren_api_secret"),
         pollInterval = 0.5,
         batchSize = 10,
     })

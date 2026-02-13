@@ -129,7 +129,7 @@ function RobloxBridge:_flush()
             Method = "POST",
             Headers = {
                 ["Content-Type"] = "application/json",
-                ["Authorization"] = "Bearer " .. self._config.authToken,
+                ["Authorization"] = self._config.authToken:AddPrefix("Bearer "),
             },
             Body = body,
         })
@@ -153,7 +153,7 @@ function RobloxBridge:_poll()
             Url = self._config.endpoint .. "/poll",
             Method = "GET",
             Headers = {
-                ["Authorization"] = "Bearer " .. self._config.authToken,
+                ["Authorization"] = self._config.authToken:AddPrefix("Bearer "),
             },
         })
     end)

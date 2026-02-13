@@ -327,10 +327,30 @@ end
     Uses Lune's serde for hashing.
 ]]
 function DataStore:_computeMd5Base64(body)
-    -- Lune provides serde.hash for cryptographic hashing
-    -- and serde.encode("base64", ...) for base64 encoding
-    local hash = serde.hash("md5", body)
-    return serde.encode("base64", hash)
+    local hexHash = serde.hash("md5", body)
+
+    -- Convert hex string to raw bytes
+    local raw = {}
+    for i = 1, #hexHash, 2 do
+        raw[#raw + 1] = string.char(tonumber(hexHash:sub(i, i + 1), 16))
+    end
+    local bytes = table.concat(raw)
+
+    -- Base64 encode
+    local b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    local result = {}
+    for i = 1, #bytes, 3 do
+        local b1, b2, b3 = string.byte(bytes, i, i + 2)
+        b2 = b2 or 0
+        b3 = b3 or 0
+        local n = b1 * 65536 + b2 * 256 + b3
+        local remaining = #bytes - i + 1
+        result[#result + 1] = b64:sub(math.floor(n / 262144) % 64 + 1, math.floor(n / 262144) % 64 + 1)
+        result[#result + 1] = b64:sub(math.floor(n / 4096) % 64 + 1, math.floor(n / 4096) % 64 + 1)
+        result[#result + 1] = remaining >= 2 and b64:sub(math.floor(n / 64) % 64 + 1, math.floor(n / 64) % 64 + 1) or "="
+        result[#result + 1] = remaining >= 3 and b64:sub(n % 64 + 1, n % 64 + 1) or "="
+    end
+    return table.concat(result)
 end
 
 return DataStore

@@ -42,6 +42,7 @@ if RunService:IsStudio() then
     _G.Asset = Warren.System.Asset
     _G.Store = Warren.System.Store
     _G.View = Warren.System.View
+    _G.Player = Warren.System.Player
 end
 
 --------------------------------------------------------------------------------
@@ -237,27 +238,72 @@ local function startInfiniteDungeon()
     })
 
     local Players = game:GetService("Players")
+    local System = Warren.System
     local dungeonOwner = nil  -- First player to join owns the dungeon
 
-    -- Configure initial view from PlaceGraph
-    regionManager:setInitialView(placeConfig.initialView)
-    Debug.info("Bootstrap", "Initial view:", placeConfig.initialView)
+    -- Register view definitions with System.Player
+    regionManager:registerViews()
 
-    -- Unified player join handling (reserved server spawn + TeleportData lobby re-entry)
-    Players.PlayerAdded:Connect(function(player)
-        if not dungeonOwner then
-            dungeonOwner = player
-        end
-        regionManager:handlePlayerJoin(player)
-    end)
-    for _, player in ipairs(Players:GetPlayers()) do
-        if not dungeonOwner then
-            dungeonOwner = player
-        end
-        task.spawn(function()
-            regionManager:handlePlayerJoin(player)
-        end)
+    -- Set default view based on PlaceGraph
+    if PlaceGraph.isGameplayServer() then
+        System.Player.setDefaultView("gameplay")
+    else
+        System.Player.setDefaultView("title")
     end
+    Debug.info("Bootstrap", "Default view:", System.Player.getDefaultView())
+
+    -- Pre-build default view geometry (ready before first player arrives)
+    System.Player.preload(System.Player.getDefaultView())
+
+    -- Register join hook for game-specific logic
+    System.Player.onJoin(function(player)
+        if not dungeonOwner then
+            dungeonOwner = player
+        end
+
+        if PlaceGraph.isGameplayServer() then
+            -- Gameplay server: spawn player at dungeon, fire buildMiniMap + transitionEnd
+            task.spawn(function()
+                local character = player.Character or player.CharacterAdded:Wait()
+                task.wait(0.5)
+
+                local activeRegion = regionManager:getActiveRegion()
+                if activeRegion and activeRegion.layout then
+                    -- Spawn at dungeon spawn point (gameplay view has getSpawn=nil)
+                    local spawn = activeRegion.layout.spawn
+                    if spawn and spawn.position then
+                        local hrp = character:FindFirstChild("HumanoidRootPart")
+                        if hrp then
+                            hrp.CFrame = CFrame.new(spawn.position[1], spawn.position[2] + 3, spawn.position[3])
+                        end
+                    end
+
+                    regionManager.Out:Fire("buildMiniMap", {
+                        _targetPlayer = player,
+                        player = player,
+                        layout = activeRegion.layout,
+                    })
+                    regionManager.Out:Fire("transitionEnd", {
+                        _targetPlayer = player,
+                        player = player,
+                    })
+                end
+            end)
+        else
+            -- Start server: check TeleportData for lobby re-entry
+            task.spawn(function()
+                local joinData = player:GetJoinData()
+                local teleportData = joinData and joinData.TeleportData
+                if teleportData and teleportData.destination == "lobby" then
+                    task.wait(0.5)
+                    System.Player.transitionTo(player, "lobby")
+                end
+            end)
+        end
+    end)
+
+    -- Activate System.Player (connects PlayerAdded/PlayerRemoving, processes existing players)
+    System.Player.activate()
 
     -- Save dungeon data when owner leaves (only on start server)
     if placeName == "start" then

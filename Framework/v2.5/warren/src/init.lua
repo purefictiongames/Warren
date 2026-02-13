@@ -53,7 +53,7 @@
 --]]
 
 local Warren = {
-    _VERSION = "2.5.7",
+    _VERSION = "2.5.8",
 }
 
 -- Core system module (Debug, IPC, State, Asset, Store, View)

@@ -205,8 +205,8 @@ local RegionManager = Node.extend(function(parent)
                     pads = {},
                     padDomNodes = nil,
                 },
-                -- Current view: "title" | "lobby" | "gameplay" | nil
-                currentView = nil,
+                -- View state is now managed by System.Player subsystem
+                -- (per-player view tracking with ref-counted geometry)
             }
         end
         return instanceStates[self.id]
@@ -538,29 +538,8 @@ local RegionManager = Node.extend(function(parent)
         return true
     end
 
-    ----------------------------------------------------------------------------
-    -- PLAYER ANCHORING (for transition safety)
-    ----------------------------------------------------------------------------
-
-    local function anchorPlayer(player)
-        local character = player.Character
-        if not character then return end
-
-        local hrp = character:FindFirstChild("HumanoidRootPart")
-        if hrp then
-            hrp.Anchored = true
-        end
-    end
-
-    local function unanchorPlayer(player)
-        local character = player.Character
-        if not character then return end
-
-        local hrp = character:FindFirstChild("HumanoidRootPart")
-        if hrp then
-            hrp.Anchored = false
-        end
-    end
+    -- Player anchoring is now handled by System.Player subsystem
+    -- (anchorPlayer/unanchorPlayer moved to System.Player.anchorPlayer/unanchorPlayer)
 
     ----------------------------------------------------------------------------
     -- MAP TYPE DETERMINATION
@@ -867,7 +846,7 @@ local RegionManager = Node.extend(function(parent)
         }
 
         -- Anchor player to prevent movement/physics during transition
-        anchorPlayer(player)
+        self._System.Player.anchorPlayer(player)
 
         -- Fire transition start signal to client (routed via IPC wiring)
         self.Out:Fire("transitionStart", {
@@ -1090,33 +1069,8 @@ local RegionManager = Node.extend(function(parent)
         state.diorama.domTree = result.domTree
         state.diorama.isLoaded = true
 
-        -- Anchor players that spawn during title screen (like gameplay teleport)
-        state.diorama.characterConnections = {}
-
-        local function onTitleCharacterAdded(player)
-            return function(character)
-                task.wait(0.5)  -- Wait for character to load
-                if state.diorama.isLoaded then
-                    anchorPlayer(player)
-                end
-            end
-        end
-
-        for _, player in ipairs(Players:GetPlayers()) do
-            if player.Character then
-                anchorPlayer(player)
-            end
-            local conn = player.CharacterAdded:Connect(onTitleCharacterAdded(player))
-            table.insert(state.diorama.characterConnections, conn)
-        end
-
-        -- Also handle players joining after diorama is built
-        local joinConn = Players.PlayerAdded:Connect(function(player)
-            if not state.diorama.isLoaded then return end
-            local conn = player.CharacterAdded:Connect(onTitleCharacterAdded(player))
-            table.insert(state.diorama.characterConnections, conn)
-        end)
-        table.insert(state.diorama.characterConnections, joinConn)
+        -- Player anchoring during title screen is handled by System.Player
+        -- (anchor=true in view def + CharacterAdded re-anchoring)
 
         local System = self._System
         if System and System.Debug then
@@ -1129,12 +1083,7 @@ local RegionManager = Node.extend(function(parent)
         local state = getState(self)
         if not state.diorama.isLoaded then return end
 
-        -- Disconnect title-screen character anchoring listeners
-        if state.diorama.characterConnections then
-            for _, conn in ipairs(state.diorama.characterConnections) do
-                conn:Disconnect()
-            end
-        end
+        -- CharacterAdded anchoring connections are managed by System.Player
 
         -- Unmount DOM tree
         if state.diorama.domTree and state.diorama.domTree.root then
@@ -1376,60 +1325,67 @@ local RegionManager = Node.extend(function(parent)
     end
 
     ----------------------------------------------------------------------------
-    -- VIEW SYSTEM
+    -- VIEW REGISTRATION (System.Player integration)
     ----------------------------------------------------------------------------
-    -- Views are the top-level states: title, lobby, gameplay.
-    -- VIEW_DEFS declares build/destroy/signals as a dispatch table.
-    -- transitionToView is the single gateway for all view switches.
+    -- Views are registered with System.Player subsystem for per-player tracking.
+    -- registerViews() is called from Bootstrap.server.lua before activation.
+    -- View transitions are handled by System.Player.transitionTo().
 
-    local VIEW_DEFS = {
-        title = {
+    local function registerViews(self)
+        local state = getState(self)
+        local System = self._System
+
+        System.Player.registerView("title", {
             anchor = true,
-            build = function(self)
+            build = function(options)
                 buildDiorama(self)
             end,
-            destroy = function(self)
+            destroy = function()
                 destroyDiorama(self)
             end,
-            getSpawn = function(self, state)
+            getSpawn = function()
                 local layout = state.diorama and state.diorama.layout
                 return layout and layout.spawn and layout.spawn.position
             end,
-            onEnter = function(self, player)
-                self.Out:Fire("showTitle", { _targetPlayer = player, player = player })
+            onEnter = function(player, buildResult)
+                if player then
+                    self.Out:Fire("showTitle", { _targetPlayer = player, player = player })
+                end
                 self.Out:Fire("dioramaReady", {})
             end,
-            onLeave = function(self, player)
-                self.Out:Fire("hideTitle", { _targetPlayer = player, player = player })
+            onLeave = function(player)
+                if player then
+                    self.Out:Fire("hideTitle", { _targetPlayer = player, player = player })
+                end
             end,
-        },
-        lobby = {
+        })
+
+        System.Player.registerView("lobby", {
             anchor = false,
-            build = function(self)
-                return buildLobby(self)  -- returns pads
+            build = function(options)
+                return buildLobby(self)
             end,
-            destroy = function(self)
+            destroy = function()
                 destroyLobby(self)
             end,
-            getSpawn = function(self, state)
+            getSpawn = function()
                 local layout = state.lobby and state.lobby.layout
                 return layout and layout.spawn and layout.spawn.position
             end,
-            onEnter = function(self, player, buildResult)
+            onEnter = function(player, buildResult)
                 if buildResult then
                     self.Out:Fire("padsReady", { pads = buildResult })
                 end
             end,
-            onLeave = function(self, player) end,
-        },
-        gameplay = {
+            onLeave = function(player) end,
+        })
+
+        System.Player.registerView("gameplay", {
             anchor = false,
-            build = function(self, options)
-                -- Uses public method since startFirstRegion is defined on the return table
+            build = function(options)
                 return self:startFirstRegion(options and options.player)
             end,
-            destroy = function(self)
-                local state = getState(self)
+            destroy = function()
                 for regionId, region in pairs(state.regions) do
                     if region.container then
                         unloadRegion(self, regionId)
@@ -1437,70 +1393,10 @@ local RegionManager = Node.extend(function(parent)
                 end
                 state.activeRegionId = nil
             end,
-            getSpawn = nil,  -- gameplay handles its own spawning
-            onEnter = function(self, player, buildResult) end,
-            onLeave = function(self, player) end,
-        },
-    }
-
-    --[[
-        Core view transition function.
-        Handles: leave current → destroy → build target → spawn → enter.
-
-        @param self: RegionManager instance
-        @param targetViewName: string - "title" | "lobby" | "gameplay"
-        @param player: Player? - The player triggering the transition
-        @param options: table? - { suppressTransitionEnd, player, ... } passed to build
-        @return buildResult from target view's build function
-    --]]
-    local function transitionToView(self, targetViewName, player, options)
-        local state = getState(self)
-        options = options or {}
-        local currentDef = state.currentView and VIEW_DEFS[state.currentView]
-        local targetDef = VIEW_DEFS[targetViewName]
-        if not targetDef then return end
-        if state.currentView == targetViewName then return end
-
-        -- 1. Leave current view
-        if currentDef then
-            if currentDef.onLeave and player then
-                currentDef.onLeave(self, player)
-            end
-            if currentDef.anchor and player then
-                unanchorPlayer(player)
-            end
-            currentDef.destroy(self)
-        end
-
-        -- 2. Build target view
-        state.currentView = targetViewName
-        local buildResult = targetDef.build(self, options)
-
-        -- 3. Spawn player
-        if player and targetDef.getSpawn then
-            local spawnPos = targetDef.getSpawn(self, state)
-            if spawnPos then
-                local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-                if hrp then
-                    hrp.CFrame = CFrame.new(spawnPos[1], spawnPos[2] + 3, spawnPos[3])
-                end
-            end
-        end
-        if targetDef.anchor and player then
-            anchorPlayer(player)
-        end
-
-        -- 4. Fire enter signals
-        if targetDef.onEnter and player then
-            targetDef.onEnter(self, player, buildResult)
-        end
-
-        -- 5. Fire transitionEnd (unless suppressed for async flows)
-        if not options.suppressTransitionEnd and player then
-            self.Out:Fire("transitionEnd", { _targetPlayer = player, player = player })
-        end
-
-        return buildResult
+            getSpawn = nil,
+            onEnter = function(player, buildResult) end,
+            onLeave = function(player) end,
+        })
     end
 
     ----------------------------------------------------------------------------
@@ -1571,7 +1467,7 @@ local RegionManager = Node.extend(function(parent)
         end
 
         -- Re-anchor at new position to ensure they stay put until transition completes
-        anchorPlayer(player)
+        self._System.Player.anchorPlayer(player)
 
         -- Set as active
         state.regions[newRegionId].isActive = true
@@ -1642,7 +1538,7 @@ local RegionManager = Node.extend(function(parent)
         teleportPlayerToPad(self, targetRegionId, targetPadId, player)
 
         -- Re-anchor at new position to ensure they stay put until transition completes
-        anchorPlayer(player)
+        self._System.Player.anchorPlayer(player)
 
         -- Set as active
         targetRegion.isActive = true
@@ -1780,14 +1676,14 @@ local RegionManager = Node.extend(function(parent)
                     System.Debug.info("RegionManager", "Start pressed by", player.Name)
                 end
 
-                -- Transition title → gameplay (hideTitle fired by onLeave, build calls startFirstRegion)
-                local regionId = transitionToView(self, "gameplay", player, {
-                    suppressTransitionEnd = true,
+                -- Transition title → gameplay via System.Player
+                -- (hideTitle fired by onLeave, build calls startFirstRegion)
+                System.Player.transitionTo(player, "gameplay", {
                     player = player,
                 })
 
                 -- Gameplay-specific: log layout, build minimap, delayed transitionEnd
-                local region = state.regions[regionId]
+                local region = state.regions[state.activeRegionId]
                 if region and region.layout then
                     local layout = region.layout
                     local roomCount = 0
@@ -1925,7 +1821,7 @@ local RegionManager = Node.extend(function(parent)
                     System.Debug.info("RegionManager", "Lobby pressed by", player.Name)
                 end
 
-                transitionToView(self, "lobby", player, { suppressTransitionEnd = true })
+                System.Player.transitionTo(player, "lobby")
 
                 -- TODO: Replace task.delay with proper transition callback (Phase 2)
                 task.delay(0.6, function()
@@ -1958,7 +1854,7 @@ local RegionManager = Node.extend(function(parent)
                     System.Debug.info("RegionManager", "Exit lobby to title by", player.Name)
                 end
 
-                transitionToView(self, "title", player)
+                System.Player.transitionTo(player, "title")
             end,
 
             --[[
@@ -2016,8 +1912,8 @@ local RegionManager = Node.extend(function(parent)
                         player = player,
                     })
 
-                    -- gameplay → title (destroy regions, build diorama, spawn, show title, transitionEnd)
-                    transitionToView(self, "title", player)
+                    -- gameplay → title via System.Player
+                    System.Player.transitionTo(player, "title")
 
                     if System and System.Debug then
                         System.Debug.info("RegionManager", "Returned to title for", player.Name)
@@ -2120,7 +2016,7 @@ local RegionManager = Node.extend(function(parent)
                 end
 
                 -- Unanchor player
-                unanchorPlayer(player)
+                self._System.Player.unanchorPlayer(player)
 
                 -- Clear pending transition
                 state.pendingTransitions[player] = nil
@@ -2348,15 +2244,15 @@ local RegionManager = Node.extend(function(parent)
         end,
 
         -- Build the title diorama (called from Bootstrap after configure)
-        -- DEPRECATED: Use setInitialView("title") instead
+        -- DEPRECATED: Use System.Player.preload("title") instead
         buildTitleDiorama = function(self)
-            self:setInitialView("title")
+            self._System.Player.preload("title")
         end,
 
         -- Enter lobby directly (for TeleportData re-entry)
-        -- DEPRECATED: Use handlePlayerJoin which handles TeleportData internally
+        -- DEPRECATED: Use System.Player.transitionTo(player, "lobby") instead
         enterLobbyDirectly = function(self, player)
-            transitionToView(self, "lobby", player)
+            self._System.Player.transitionTo(player, "lobby")
         end,
 
         -- Start the dungeon for a player (loads existing or creates new)
@@ -2532,80 +2428,10 @@ local RegionManager = Node.extend(function(parent)
             return savePlayerData(self, player)
         end,
 
-        -- Get the current view name ("title", "lobby", "gameplay", or nil)
-        getCurrentView = function(self)
-            return getState(self).currentView
-        end,
-
-        -- Set the initial view on boot (no transition, just build)
-        -- Called from Bootstrap.server.lua after configure()
-        setInitialView = function(self, viewName)
-            local state = getState(self)
-            local viewDef = VIEW_DEFS[viewName]
-            if not viewDef then
-                warn("[RegionManager] Unknown view:", viewName)
-                return
-            end
-
-            state.currentView = viewName
-            local buildResult = viewDef.build(self, {})
-
-            -- Fire onEnter with nil player (no player present yet at boot)
-            -- Title fires dioramaReady, gameplay is a no-op
-            if viewDef.onEnter then
-                viewDef.onEnter(self, nil, buildResult)
-            end
-
-            return buildResult
-        end,
-
-        -- Handle a player joining (consolidates reserved/normal join logic)
-        -- Called from Bootstrap.server.lua for PlayerAdded
-        handlePlayerJoin = function(self, player)
-            local state = getState(self)
-            local System = self._System
-
-            if PlaceGraph.isGameplayServer() then
-                -- Gameplay server: no TitleScreen node exists on client, spawn directly
-                local character = player.Character or player.CharacterAdded:Wait()
-                task.wait(0.5)
-
-                local activeRegion = self:getActiveRegion()
-                if activeRegion and activeRegion.layout then
-                    local spawn = activeRegion.layout.spawn
-                    if spawn and spawn.position then
-                        local hrp = character:FindFirstChild("HumanoidRootPart")
-                        if hrp then
-                            hrp.CFrame = CFrame.new(spawn.position[1], spawn.position[2] + 3, spawn.position[3])
-                        end
-                    end
-
-                    self.Out:Fire("buildMiniMap", {
-                        _targetPlayer = player,
-                        player = player,
-                        layout = activeRegion.layout,
-                    })
-
-                    self.Out:Fire("transitionEnd", {
-                        _targetPlayer = player,
-                        player = player,
-                    })
-                end
-            else
-                -- Start server: check for TeleportData (returning from gameplay server)
-                task.spawn(function()
-                    local joinData = player:GetJoinData()
-                    local teleportData = joinData and joinData.TeleportData
-                    if teleportData and teleportData.destination == "lobby" then
-                        local character = player.Character or player.CharacterAdded:Wait()
-                        task.wait(0.5)
-                        if System and System.Debug then
-                            System.Debug.info("RegionManager", player.Name, "returning to lobby via TeleportData")
-                        end
-                        transitionToView(self, "lobby", player)
-                    end
-                end)
-            end
+        -- Register view definitions with System.Player subsystem.
+        -- Called from Bootstrap.server.lua before System.Player.activate().
+        registerViews = function(self)
+            registerViews(self)
         end,
 
         -- Clear save data for a player (for testing/reset)

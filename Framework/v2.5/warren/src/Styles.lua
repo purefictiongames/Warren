@@ -251,6 +251,26 @@ return {
             Anchored = true,
             CanCollide = true,
         },
+
+        ------------------------------------------------------------------------
+        -- LOBBY - Portal Pads
+        ------------------------------------------------------------------------
+
+        ["lobby-pad"] = {
+            Material = "Neon",
+            Anchored = true,
+            CanCollide = true,
+            CanTouch = true,
+            Color = {80, 180, 255},
+            Transparency = 0.3,
+        },
+        ["lobby-pad-base"] = {
+            Material = "Neon",
+            Anchored = true,
+            CanCollide = true,
+            Color = {50, 120, 180},
+        },
+
         ["cave-zone"] = {
             Anchored = true,
             CanCollide = false,

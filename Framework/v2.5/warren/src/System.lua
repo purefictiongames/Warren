@@ -3792,6 +3792,413 @@ System.Attribute = (function()
 end)()
 
 --------------------------------------------------------------------------------
+-- SYSTEM.PLAYER — Per-Player View State & Lifecycle
+--------------------------------------------------------------------------------
+--[[
+    Manages per-player view tracking with reference-counted geometry.
+    Each player independently occupies a view (title, lobby, gameplay).
+    Geometry is built when the first player enters a view and destroyed
+    when the last player leaves.
+
+    Usage:
+        System.Player.registerView("title", { build, destroy, getSpawn, onEnter, onLeave, anchor })
+        System.Player.setDefaultView("title")
+        System.Player.preload("title")
+        System.Player.activate()
+
+        System.Player.transitionTo(player, "gameplay", { player = player })
+        System.Player.getView(player)  --> "gameplay"
+        System.Player.getPlayersInView("title")  --> { Player1, Player2 }
+--]]
+
+System.Player = (function()
+    ---------------------------------------------------------------------------
+    -- SERVICES
+    ---------------------------------------------------------------------------
+
+    local Players = game:GetService("Players")
+
+    ---------------------------------------------------------------------------
+    -- PRIVATE STATE (closure-protected)
+    ---------------------------------------------------------------------------
+
+    -- View registry
+    local viewDefs = {}            -- { [viewName] = { build, destroy, getSpawn, onEnter, onLeave, anchor } }
+    local defaultView = nil        -- string: view name for new players
+
+    -- Per-player tracking
+    local playerViews = {}         -- { [userId] = viewName }
+    local playerObjects = {}       -- { [userId] = Player }
+
+    -- Geometry ref counting
+    local viewRefCount = {}        -- { [viewName] = number }
+    local viewGeometryExists = {}  -- { [viewName] = boolean }
+
+    -- Per-player CharacterAdded connections (re-anchoring in anchored views)
+    local characterConns = {}      -- { [userId] = RBXScriptConnection }
+
+    -- Lifecycle hooks
+    local joinHooks = {}           -- array of function(player)
+    local leaveHooks = {}          -- array of function(player)
+
+    -- State
+    local isActivated = false
+    local playerAddedConn = nil
+    local playerRemovingConn = nil
+
+    ---------------------------------------------------------------------------
+    -- PUBLIC API
+    ---------------------------------------------------------------------------
+
+    local Player = {}
+
+    --[[
+        Register a named view with callbacks.
+        @param name string - View identifier (e.g., "title", "lobby", "gameplay")
+        @param def table - { build, destroy, getSpawn, onEnter, onLeave, anchor }
+    --]]
+    function Player.registerView(name, def)
+        viewDefs[name] = def
+        viewRefCount[name] = 0
+        viewGeometryExists[name] = false
+        System.Debug.info("System.Player", "Registered view:", name)
+    end
+
+    --[[
+        Set which view new players start in.
+        @param name string - View name (must be registered)
+    --]]
+    function Player.setDefaultView(name)
+        defaultView = name
+    end
+
+    --[[
+        Get the default view name.
+        @return string|nil
+    --]]
+    function Player.getDefaultView()
+        return defaultView
+    end
+
+    --[[
+        Pre-build geometry without any player entering.
+        Used at server boot to have geometry ready before first player arrives.
+        @param viewName string
+        @param options table?
+        @return buildResult
+    --]]
+    function Player.preload(viewName, options)
+        local def = viewDefs[viewName]
+        if not def then
+            System.Debug.warn("System.Player", "preload: unknown view:", viewName)
+            return nil
+        end
+
+        if viewGeometryExists[viewName] then
+            System.Debug.info("System.Player", "preload: geometry already exists for:", viewName)
+            return nil
+        end
+
+        local buildResult = def.build(options or {})
+        viewGeometryExists[viewName] = true
+
+        -- Fire onEnter with nil player for boot-time signals (e.g., dioramaReady)
+        if def.onEnter then
+            def.onEnter(nil, buildResult)
+        end
+
+        System.Debug.info("System.Player", "Preloaded view:", viewName)
+        return buildResult
+    end
+
+    --[[
+        Core per-player view transition.
+        Handles: leave current → decrement ref → destroy if last → build if first → spawn → anchor → enter.
+
+        @param player Player
+        @param viewName string - Target view
+        @param options table? - { suppressOnEnter, ... } passed through to build
+        @return buildResult from build callback, or nil
+    --]]
+    function Player.transitionTo(player, viewName, options)
+        options = options or {}
+        local userId = player.UserId
+        local currentViewName = playerViews[userId]
+        local targetDef = viewDefs[viewName]
+
+        if not targetDef then
+            System.Debug.warn("System.Player", "transitionTo: unknown view:", viewName)
+            return nil
+        end
+        if currentViewName == viewName then
+            System.Debug.info("System.Player", player.Name, "already in view:", viewName)
+            return nil
+        end
+
+        -- 1. Leave current view
+        if currentViewName then
+            local currentDef = viewDefs[currentViewName]
+            if currentDef then
+                if currentDef.onLeave then
+                    currentDef.onLeave(player)
+                end
+                if currentDef.anchor then
+                    Player.unanchorPlayer(player)
+                end
+
+                -- Disconnect CharacterAdded re-anchor connection
+                if characterConns[userId] then
+                    characterConns[userId]:Disconnect()
+                    characterConns[userId] = nil
+                end
+
+                -- Decrement ref count, destroy geometry if last player out
+                viewRefCount[currentViewName] = (viewRefCount[currentViewName] or 1) - 1
+                if viewRefCount[currentViewName] <= 0 then
+                    viewRefCount[currentViewName] = 0
+                    if viewGeometryExists[currentViewName] then
+                        currentDef.destroy()
+                        viewGeometryExists[currentViewName] = false
+                        System.Debug.info("System.Player", "Destroyed geometry for:", currentViewName, "(last player left)")
+                    end
+                end
+            end
+        end
+
+        -- 2. Enter target view
+        playerViews[userId] = viewName
+        viewRefCount[viewName] = (viewRefCount[viewName] or 0) + 1
+
+        -- Build geometry if it doesn't exist
+        local buildResult = nil
+        if not viewGeometryExists[viewName] then
+            buildResult = targetDef.build(options)
+            viewGeometryExists[viewName] = true
+            System.Debug.info("System.Player", "Built geometry for:", viewName, "(first player entering)")
+        end
+
+        -- 3. Spawn player
+        if targetDef.getSpawn then
+            local spawnPos = targetDef.getSpawn()
+            if spawnPos then
+                local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+                if hrp then
+                    hrp.CFrame = CFrame.new(spawnPos[1], spawnPos[2] + 3, spawnPos[3])
+                end
+            end
+        end
+
+        -- 4. Anchor player + set up CharacterAdded re-anchoring
+        if targetDef.anchor then
+            Player.anchorPlayer(player)
+
+            characterConns[userId] = player.CharacterAdded:Connect(function(character)
+                task.wait(0.5)
+                if playerViews[userId] == viewName then
+                    Player.anchorPlayer(player)
+                    -- Re-spawn at view's spawn point
+                    if targetDef.getSpawn then
+                        local spawnPos = targetDef.getSpawn()
+                        if spawnPos then
+                            local hrp = character:FindFirstChild("HumanoidRootPart")
+                            if hrp then
+                                hrp.CFrame = CFrame.new(spawnPos[1], spawnPos[2] + 3, spawnPos[3])
+                            end
+                        end
+                    end
+                end
+            end)
+        end
+
+        -- 5. Fire onEnter (unless suppressed)
+        if not options.suppressOnEnter and targetDef.onEnter then
+            targetDef.onEnter(player, buildResult)
+        end
+
+        System.Debug.info("System.Player", player.Name, "→", viewName,
+            "(ref:", viewRefCount[viewName], ")")
+
+        return buildResult
+    end
+
+    ---------------------------------------------------------------------------
+    -- QUERY API
+    ---------------------------------------------------------------------------
+
+    function Player.getView(player)
+        return playerViews[player.UserId]
+    end
+
+    function Player.getPlayersInView(viewName)
+        local result = {}
+        for userId, view in pairs(playerViews) do
+            if view == viewName and playerObjects[userId] then
+                table.insert(result, playerObjects[userId])
+            end
+        end
+        return result
+    end
+
+    function Player.getRefCount(viewName)
+        return viewRefCount[viewName] or 0
+    end
+
+    function Player.isInView(player, viewName)
+        return playerViews[player.UserId] == viewName
+    end
+
+    ---------------------------------------------------------------------------
+    -- PLAYER ANCHORING
+    ---------------------------------------------------------------------------
+
+    function Player.anchorPlayer(player)
+        local character = player.Character
+        if not character then return end
+        local hrp = character:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            hrp.Anchored = true
+        end
+    end
+
+    function Player.unanchorPlayer(player)
+        local character = player.Character
+        if not character then return end
+        local hrp = character:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            hrp.Anchored = false
+        end
+    end
+
+    ---------------------------------------------------------------------------
+    -- LIFECYCLE HOOKS
+    ---------------------------------------------------------------------------
+
+    function Player.onJoin(callback)
+        table.insert(joinHooks, callback)
+    end
+
+    function Player.onLeave(callback)
+        table.insert(leaveHooks, callback)
+    end
+
+    ---------------------------------------------------------------------------
+    -- ACTIVATION
+    ---------------------------------------------------------------------------
+
+    --[[
+        Connect PlayerAdded/PlayerRemoving and process existing players.
+        Call AFTER views are registered and default is set.
+    --]]
+    function Player.activate()
+        if isActivated then
+            System.Debug.warn("System.Player", "Already activated")
+            return
+        end
+        isActivated = true
+
+        -- Handle new players joining
+        playerAddedConn = Players.PlayerAdded:Connect(function(player)
+            local userId = player.UserId
+            playerObjects[userId] = player
+
+            -- Call join hooks
+            for _, hook in ipairs(joinHooks) do
+                task.spawn(hook, player)
+            end
+
+            -- Transition to default view
+            if defaultView then
+                Player.transitionTo(player, defaultView)
+            end
+        end)
+
+        -- Handle players leaving
+        playerRemovingConn = Players.PlayerRemoving:Connect(function(player)
+            local userId = player.UserId
+            local currentViewName = playerViews[userId]
+
+            -- Call leave hooks
+            for _, hook in ipairs(leaveHooks) do
+                task.spawn(hook, player)
+            end
+
+            -- Clean up view state
+            if currentViewName then
+                local def = viewDefs[currentViewName]
+
+                -- Disconnect CharacterAdded connection
+                if characterConns[userId] then
+                    characterConns[userId]:Disconnect()
+                    characterConns[userId] = nil
+                end
+
+                -- Decrement ref count, destroy if last player
+                viewRefCount[currentViewName] = (viewRefCount[currentViewName] or 1) - 1
+                if viewRefCount[currentViewName] <= 0 then
+                    viewRefCount[currentViewName] = 0
+                    if viewGeometryExists[currentViewName] and def then
+                        def.destroy()
+                        viewGeometryExists[currentViewName] = false
+                        System.Debug.info("System.Player", "Destroyed geometry for:", currentViewName, "(last player left)")
+                    end
+                end
+            end
+
+            playerViews[userId] = nil
+            playerObjects[userId] = nil
+        end)
+
+        -- Process players already in the game
+        for _, player in ipairs(Players:GetPlayers()) do
+            local userId = player.UserId
+            playerObjects[userId] = player
+
+            for _, hook in ipairs(joinHooks) do
+                task.spawn(hook, player)
+            end
+
+            if defaultView then
+                task.spawn(function()
+                    Player.transitionTo(player, defaultView)
+                end)
+            end
+        end
+
+        System.Debug.info("System.Player", "Activated with default view:", defaultView or "none")
+    end
+
+    --[[
+        Reset all state (for testing/cleanup).
+    --]]
+    function Player.reset()
+        -- Disconnect connections
+        if playerAddedConn then playerAddedConn:Disconnect() end
+        if playerRemovingConn then playerRemovingConn:Disconnect() end
+        for userId, conn in pairs(characterConns) do
+            conn:Disconnect()
+        end
+
+        -- Clear state
+        viewDefs = {}
+        defaultView = nil
+        playerViews = {}
+        playerObjects = {}
+        viewRefCount = {}
+        viewGeometryExists = {}
+        characterConns = {}
+        joinHooks = {}
+        leaveHooks = {}
+        isActivated = false
+        playerAddedConn = nil
+        playerRemovingConn = nil
+
+        System.Debug.info("System.Player", "Reset complete")
+    end
+
+    return Player
+end)()
+
+--------------------------------------------------------------------------------
 -- PLACEHOLDER SUBSYSTEMS (to be implemented)
 --------------------------------------------------------------------------------
 
@@ -3842,6 +4249,16 @@ function System.stopAll()
             result.registryStopped = count
         else
             System.Debug.warn("System", "Registry.stopAll() error:", tostring(count))
+        end
+    end
+
+    -- Reset Player subsystem
+    if System.Player and System.Player.reset then
+        local success, err = pcall(function()
+            System.Player.reset()
+        end)
+        if not success then
+            System.Debug.warn("System", "Player.reset() error:", tostring(err))
         end
     end
 

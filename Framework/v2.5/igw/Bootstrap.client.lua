@@ -1,5 +1,5 @@
 --[[
-    It Gets Worse — Client Bootstrap
+    It Gets Worse — Client Bootstrap (Warren v3.0)
 
     Copyright (c) 2025 Adam Stearns / Pure Fiction Records LLC
     All rights reserved.
@@ -12,6 +12,12 @@
     - Uses Memory backend for Log (DataStore is server-only)
     - Only creates client-domain node instances
     - Runs in StarterPlayerScripts
+
+    Warren v3.0 changes:
+    - Warren.Transport and Warren.State are now available on the client
+    - Client can subscribe to state changes for future reactive UI
+    - Core IPC wiring unchanged — client nodes still communicate
+      through the existing cross-domain signal system
 
     Nothing in the framework runs until this script explicitly calls it.
 
@@ -151,9 +157,12 @@ IPC.switchMode("Dungeon")
 -- Start IPC (enables routing, calls onStart on all instances)
 IPC.start()
 
--- TODO: Initialize other subsystems in order
--- Warren.System.State.init()
--- Warren.System.View.init()
+-- Warren v3.0: State and Transport are initialized at framework level.
+-- Client can subscribe to state changes for reactive UI:
+--   Warren.State.createStore():onChange("player.*", function(val, old, path)
+--       -- Update UI reactively
+--   end)
+-- For now, UI state still flows through IPC signals (unchanged).
 
 --------------------------------------------------------------------------------
 -- CLEANUP ON SHUTDOWN

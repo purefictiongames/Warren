@@ -1,5 +1,5 @@
 --[[
-    Warren Framework v2.5
+    Warren Framework v3.0
     Main Entry Point
 
     Copyright (c) 2025 Adam Stearns / Pure Fiction Records LLC
@@ -9,39 +9,35 @@
     OVERVIEW
     ============================================================================
 
-    Warren is a Roblox game framework designed for developer ergonomics.
+    Warren is a dual-runtime Luau framework running on both Roblox and Lune.
     It follows an Arduino-like model where games are composed of modular
     components wired together through a unified messaging bus.
 
-    This module is the public API surface. Games consume Warren as a package
-    and build their own Components, Admin, and Game modules separately.
+    On Roblox: Full stack — DOM, Factory, Renderer, Transport client.
+    On Lune:   Headless — Shared logic, Transport server, Open Cloud.
+
+    This module is the public API surface. Runtime detection determines
+    which subsystems are loaded.
 
     ============================================================================
     USAGE
     ============================================================================
 
     ```lua
+    -- Roblox
     local Warren = require(game.ReplicatedStorage.Warren)
-
-    -- Access system subsystems
-    local Debug = Warren.System.Debug
-    local IPC = Warren.System.IPC
-
-    -- Configure debug
-    Debug.configure({ level = "trace" })
-
-    -- Log messages
-    Debug.info("MyModule", "Framework loaded")
-
-    -- Create DOM elements
     local room = Warren.Dom.createElement("Room", { width = 20 })
+
+    -- Lune
+    local Warren = require("warren")
+    Warren.Transport.start({ port = 8080, authToken = "..." })
     ```
 
     ============================================================================
     ARCHITECTURE
     ============================================================================
 
-    See docs/ARCHITECTURE.md for full documentation.
+    See docs/ARCHITECTURE.md and docs/ADR-001.md for full documentation.
 
     Key principles:
     - Single ModuleScript per system with nested submodules
@@ -49,27 +45,22 @@
     - Declarative manifest defines structure and wiring
     - Closure-protected internals with public API surface
     - Singleton/Factory pattern for each subsystem
+    - Runtime-conditional loading (Roblox vs Lune)
 
 --]]
 
 local Warren = {
-    _VERSION = "2.5.8",
+    _VERSION = "3.0.0",
 }
 
--- Core system module (Debug, IPC, State, Asset, Store, View)
-Warren.System = require(script.System)
+-- Runtime detection (must load first)
+Warren.Runtime = require(script.Runtime)
 
--- Node base class for game components
-Warren.Node = require(script.Node)
+local isRoblox = Warren.Runtime.isRoblox
 
--- Factory: Declarative instance builder (geometry, gui)
-Warren.Factory = require(script.Factory)
-
--- GeometrySpec: Backwards compatibility wrapper (prefer Warren.Factory)
-Warren.GeometrySpec = require(script.GeometrySpec)
-
--- Dom: DOM tree API (getElementById, appendChild, setAttribute, etc.)
-Warren.Dom = require(script.Dom)
+-- =============================================================================
+-- SHARED MODULES (both runtimes)
+-- =============================================================================
 
 -- Styles: Style definitions and resolution
 Warren.Styles = require(script.Styles)
@@ -77,10 +68,52 @@ Warren.Styles = require(script.Styles)
 -- ClassResolver: DOM class inheritance resolution
 Warren.ClassResolver = require(script.ClassResolver)
 
--- Internal: EntityUtils, SchemaValidator, etc. (for advanced component use)
-Warren.Internal = require(script.Internal)
+-- Transport: Roblox ↔ Lune communication layer
+Warren.Transport = require(script.Transport)
 
--- PixelFont: Bitmap font rendering for UI components
-Warren.PixelFont = require(script.PixelFont)
+-- State: Versioned state store, diff engine, sync, predictions
+Warren.State = require(script.State)
+
+-- Wire State ↔ Transport binding
+Warren.State.bindTransport(Warren.Transport)
+
+-- =============================================================================
+-- LUNE-ONLY MODULES
+-- =============================================================================
+
+if not isRoblox then
+    -- OpenCloud: DataStore, Messaging HTTP clients (API keys stay on VPS)
+    Warren.OpenCloud = require(script.OpenCloud)
+
+    -- Boot: Lune-side bootstrap sequence
+    Warren.Boot = require(script.Boot)
+end
+
+-- =============================================================================
+-- ROBLOX-ONLY MODULES
+-- =============================================================================
+
+if isRoblox then
+    -- Core system module (Debug, IPC, State, Asset, Store, View)
+    Warren.System = require(script.System)
+
+    -- Node base class for game components
+    Warren.Node = require(script.Node)
+
+    -- Factory: Declarative instance builder (geometry, gui)
+    Warren.Factory = require(script.Factory)
+
+    -- GeometrySpec: Backwards compatibility wrapper (prefer Warren.Factory)
+    Warren.GeometrySpec = require(script.GeometrySpec)
+
+    -- Dom: DOM tree API (getElementById, appendChild, setAttribute, etc.)
+    Warren.Dom = require(script.Dom)
+
+    -- Internal: EntityUtils, SchemaValidator, etc. (for advanced component use)
+    Warren.Internal = require(script.Internal)
+
+    -- PixelFont: Bitmap font rendering for UI components
+    Warren.PixelFont = require(script.PixelFont)
+end
 
 return Warren

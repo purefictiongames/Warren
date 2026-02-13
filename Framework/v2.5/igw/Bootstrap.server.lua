@@ -1,5 +1,5 @@
 --[[
-    It Gets Worse — Server Bootstrap
+    It Gets Worse — Server Bootstrap (Warren v3.0)
 
     Copyright (c) 2025 Adam Stearns / Pure Fiction Records LLC
     All rights reserved.
@@ -8,11 +8,18 @@
     OVERVIEW
     ============================================================================
 
-    This is the server entry point. It:
-    1. Requires the Warren framework package
+    This is the Roblox server entry point. It:
+    1. Requires the Warren v3.0 framework package
     2. Requires game-specific Components
     3. Configures system subsystems
-    4. Initializes the framework in the correct order
+    4. Connects to Lune authority server via Warren.Transport
+    5. Initializes the framework in the correct order
+
+    Warren v3.0 changes:
+    - Transport layer connects to Lune VPS for authoritative state
+    - State sync as replica (Lune is authority for persistence)
+    - DataStore access routed through Lune via Open Cloud
+    - Roblox server handles materialization, Lune handles persistence
 
     Nothing in the framework runs until this script explicitly calls it.
 
@@ -167,9 +174,38 @@ IPC.start()
 --     Asset.spawnAll(RuntimeAssets)
 -- end
 
--- TODO: Initialize other subsystems in order
--- Warren.System.State.init()
--- Warren.System.Store.init()
+--------------------------------------------------------------------------------
+-- WARREN v3.0: TRANSPORT + STATE
+--------------------------------------------------------------------------------
+-- Connect to Lune authority server for state synchronization.
+-- Persistence (DataStore) is now routed through Lune via Open Cloud.
+-- Roblox server is a replica — it materializes, Lune persists.
+
+local Transport = Warren.Transport
+local State = Warren.State
+
+-- Start transport (connects to Lune VPS)
+-- In Studio, runs in offline mode (falls back to local DataStore)
+if not RunService:IsStudio() then
+    Transport.start({
+        endpoint = "https://igw.purefiction.games/warren",  -- Lune VPS
+        authToken = "igw-dev-token",  -- TODO: Move to secure config
+        pollInterval = 0.5,
+        batchSize = 10,
+    })
+
+    -- Start state as replica (receives patches from Lune)
+    local gameStore = State.createStore()
+    State.Sync.startReplica(gameStore, {
+        onResync = function()
+            Debug.info("Bootstrap", "State resync from Lune authority")
+        end,
+    })
+
+    Debug.info("Bootstrap", "Transport + State replica initialized")
+else
+    Debug.info("Bootstrap", "Studio mode — Transport offline, using local DataStore")
+end
 
 --------------------------------------------------------------------------------
 -- INFINITE DUNGEON SYSTEM

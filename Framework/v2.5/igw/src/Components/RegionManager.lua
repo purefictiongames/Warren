@@ -1,5 +1,5 @@
 --[[
-    LibPureFiction Framework v2
+    LibPureFiction Framework v3
     RegionManager.lua - Infinite Dungeon Region Management
 
     Copyright (c) 2026 Adam Stearns / Pure Fiction Records LLC
@@ -78,10 +78,17 @@
             - From MiniMap when map is opened, needs current visited rooms
 
     ============================================================================
-    PERSISTENCE (Seed-Based)
+    PERSISTENCE (Seed-Based, Dual-Path)
     ============================================================================
 
-    Dungeon data is saved per-player in DataStore (DungeonData_v1).
+    Warren v3.0: Persistence routes through Lune authority via Transport
+    when connected. Falls back to direct DataStore in Studio or when
+    Transport is offline.
+
+    Lune path:  Transport.request() → Lune server → Open Cloud DataStore
+    Local path: DataStoreService:GetDataStore() (Studio fallback)
+
+    Dungeon data is saved per-player.
 
     IMPORTANT: Layouts are NOT stored directly. Instead, we store seeds and
     regenerate layouts deterministically on load. This eliminates serialization
@@ -105,20 +112,23 @@
 
 local Players = game:GetService("Players")
 local DataStoreService = game:GetService("DataStoreService")
+local RunService = game:GetService("RunService")
 local Warren = require(game:GetService("ReplicatedStorage").Warren)
 local Node = Warren.Node
+local Transport = Warren.Transport
 local Layout = require(script.Parent.Layout)
 local JumpPad = require(script.Parent.JumpPad)
 local PlaceGraph = require(script.Parent.PlaceGraph)
 
 --------------------------------------------------------------------------------
--- DATA STORE
+-- PERSISTENCE LAYER (dual-path: Lune authority or local DataStore)
 --------------------------------------------------------------------------------
 
 local DATASTORE_NAME = "DungeonData_v1"
 local dungeonStore = nil
+local _useLuneAuthority = not RunService:IsStudio()  -- Lune in production, local in Studio
 
--- Initialize DataStore (deferred to avoid errors in Studio without API access)
+-- Initialize local DataStore (Studio fallback)
 local function getDataStore()
     if not dungeonStore then
         local success, store = pcall(function()
@@ -131,6 +141,90 @@ local function getDataStore()
         end
     end
     return dungeonStore
+end
+
+--[[
+    Save player data via the appropriate persistence path.
+    Lune: sends action request to authority server.
+    Studio: writes directly to local DataStore.
+
+    @param playerId string|number - Player UserId
+    @param saveData table - Data to persist
+    @return boolean - true on success
+]]
+local function persistSave(playerId, saveData)
+    if _useLuneAuthority then
+        local response = Transport.request("state.action.savePlayerData", {
+            playerId = tostring(playerId),
+            data = saveData,
+        }, 10)
+        return response and response.status == "ok"
+    else
+        local store = getDataStore()
+        if not store then return false end
+        local key = "player_" .. playerId
+        local ok, err = pcall(function()
+            store:SetAsync(key, saveData)
+        end)
+        if not ok then
+            warn("[RegionManager] Local save failed:", err)
+        end
+        return ok
+    end
+end
+
+--[[
+    Load player data via the appropriate persistence path.
+
+    @param playerId string|number - Player UserId
+    @return table? - Loaded data, or nil
+]]
+local function persistLoad(playerId)
+    if _useLuneAuthority then
+        local response = Transport.request("state.action.loadPlayerData", {
+            playerId = tostring(playerId),
+        }, 10)
+        if response and response.status == "ok" then
+            return response.data
+        end
+        return nil
+    else
+        local store = getDataStore()
+        if not store then return nil end
+        local key = "player_" .. playerId
+        local ok, data = pcall(function()
+            return store:GetAsync(key)
+        end)
+        if ok then return data end
+        warn("[RegionManager] Local load failed:", data)
+        return nil
+    end
+end
+
+--[[
+    Clear player data via the appropriate persistence path.
+
+    @param playerId string|number - Player UserId
+    @return boolean - true on success
+]]
+local function persistClear(playerId)
+    if _useLuneAuthority then
+        local response = Transport.request("state.action.clearPlayerData", {
+            playerId = tostring(playerId),
+        }, 10)
+        return response and response.status == "ok"
+    else
+        local store = getDataStore()
+        if not store then return false end
+        local key = "player_" .. playerId
+        local ok, err = pcall(function()
+            store:RemoveAsync(key)
+        end)
+        if not ok then
+            warn("[RegionManager] Local clear failed:", err)
+        end
+        return ok
+    end
 end
 
 --------------------------------------------------------------------------------
@@ -393,16 +487,14 @@ local RegionManager = Node.extend(function(parent)
     end
 
     --[[
-        Saves dungeon data for a player to DataStore.
-        Stores: regions (layouts + padLinks), regionCount, activeRegionId,
+        Saves dungeon data for a player.
+        Routes through Lune authority (production) or local DataStore (Studio).
+
+        Stores: regions (seeds + padLinks), regionCount, activeRegionId,
         unlinkedPadCount, and visitedRooms.
     --]]
     local function savePlayerData(self, player)
-        local store = getDataStore()
-        if not store then return false end
-
         local state = getState(self)
-        local key = "player_" .. player.UserId
 
         -- Build save data (seed-based - store seeds, not full layouts)
         -- Layouts are regenerated deterministically from seeds on load
@@ -434,44 +526,32 @@ local RegionManager = Node.extend(function(parent)
             visitedRooms = playerVisited,
         }
 
-        local success, err = pcall(function()
-            store:SetAsync(key, saveData)
-        end)
+        local success = persistSave(player.UserId, saveData)
 
+        local System = self._System
         if success then
-            local System = self._System
             if System and System.Debug then
                 System.Debug.info("RegionManager", "Saved data for", player.Name)
             end
         else
-            warn("[RegionManager] Failed to save data for", player.Name, ":", err)
+            warn("[RegionManager] Failed to save data for", player.Name)
         end
 
         return success
     end
 
     --[[
-        Loads dungeon data for a player from DataStore.
+        Loads dungeon data for a player.
+        Routes through Lune authority (production) or local DataStore (Studio).
         Returns true if data was found and loaded, false otherwise.
     --]]
     local function loadPlayerData(self, player)
-        local store = getDataStore()
-        if not store then return false end
-
         local state = getState(self)
-        local key = "player_" .. player.UserId
 
-        local success, data = pcall(function()
-            return store:GetAsync(key)
-        end)
-
-        if not success then
-            warn("[RegionManager] Failed to load data for", player.Name, ":", data)
-            return false
-        end
+        local data = persistLoad(player.UserId)
 
         if not data then
-            -- No saved data exists
+            -- No saved data exists (or load failed)
             return false
         end
 
@@ -2449,14 +2529,8 @@ local RegionManager = Node.extend(function(parent)
 
         -- Clear save data for a player (for testing/reset)
         clearSaveData = function(self, player)
-            local store = getDataStore()
-            if not store then return false end
-
             local state = getState(self)
-            local key = "player_" .. player.UserId
-            local success, err = pcall(function()
-                store:RemoveAsync(key)
-            end)
+            local success = persistClear(player.UserId)
 
             if success then
                 local System = self._System
@@ -2492,7 +2566,7 @@ local RegionManager = Node.extend(function(parent)
                     System.Debug.info("RegionManager", "Reset in-memory state for", player.Name)
                 end
             else
-                warn("[RegionManager] Failed to clear data for", player.Name, ":", err)
+                warn("[RegionManager] Failed to clear data for", player.Name)
             end
 
             return success

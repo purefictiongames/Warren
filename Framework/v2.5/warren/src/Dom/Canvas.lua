@@ -20,7 +20,7 @@
     ============================================================================
 
     ```lua
-    Canvas.init(paletteColors)            -- Clear terrain, set material colors
+    Canvas.setMaterialColors(paletteColors) -- Set terrain material colors (no clear)
     Canvas.fillBlock(cframe, size, mat)   -- Fill solid block
     Canvas.carveBlock(cframe, size)       -- Fill with Air
     Canvas.paintNoise(options)            -- Noise scatter (lava veins)
@@ -57,14 +57,13 @@ end
 --------------------------------------------------------------------------------
 
 --[[
-    Initialize the terrain canvas.
-    Clears all terrain and sets material colors from the palette.
+    Set terrain material colors from a palette.
+    Does NOT clear existing terrain — terrain is managed per-zone.
 
     @param palette table - { wallColor = Color3, floorColor = Color3 }
 ]]
-function Canvas.init(palette)
+function Canvas.setMaterialColors(palette)
     local terrain = getTerrain()
-    terrain:Clear()
 
     if palette.wallColor then
         terrain:SetMaterialColor(Enum.Material.Rock, palette.wallColor)
@@ -112,6 +111,25 @@ function Canvas.fillShell(roomPos, roomDims, gap, material)
         2 * (gap + VOXEL_SIZE)
     )
     getTerrain():FillBlock(CFrame.new(pos), shellSize, material)
+end
+
+--[[
+    Clear terrain in a room's shell zone (fill with Air).
+    Mirrors fillShell dimensions so exactly the same volume is cleared.
+
+    @param roomPos table - {x, y, z} room center
+    @param roomDims table - {w, h, d} room dimensions
+    @param gap number - Gap between interior and terrain shell
+]]
+function Canvas.clearShell(roomPos, roomDims, gap)
+    local pos = Vector3.new(roomPos[1], roomPos[2], roomPos[3])
+    local dims = Vector3.new(roomDims[1], roomDims[2], roomDims[3])
+    local shellSize = dims + Vector3.new(
+        2 * (gap + VOXEL_SIZE),
+        2 * (gap + VOXEL_SIZE),
+        2 * (gap + VOXEL_SIZE)
+    )
+    getTerrain():FillBlock(CFrame.new(pos), shellSize, Enum.Material.Air)
 end
 
 --[[

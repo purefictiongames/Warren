@@ -73,6 +73,7 @@ Layout.Serializer = require(script.LayoutSerializer)
 Layout.VERSION = Layout.Schema.VERSION
 Layout.generate = Layout.Builder.generate
 Layout.instantiate = Layout.DomBuilder.instantiate
+Layout.clearTerrain = Layout.DomBuilder.clearTerrain
 Layout.encode = Layout.Serializer.encode
 Layout.decode = Layout.Serializer.decode
 

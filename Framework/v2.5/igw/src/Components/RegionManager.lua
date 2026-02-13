@@ -1013,6 +1013,11 @@ local RegionManager = Node.extend(function(parent)
 
         if not region then return end
 
+        -- Clear terrain for this region's rooms (zone-scoped, not global)
+        if region.layout then
+            Layout.clearTerrain(region.layout)
+        end
+
         -- Destroy Zone nodes for this region
         destroyZonesForRegion(self, regionId)
 
@@ -1085,6 +1090,11 @@ local RegionManager = Node.extend(function(parent)
 
         -- CharacterAdded anchoring connections are managed by System.Player
 
+        -- Clear terrain for this view's rooms (zone-scoped, not global)
+        if state.diorama.layout then
+            Layout.clearTerrain(state.diorama.layout)
+        end
+
         -- Unmount DOM tree
         if state.diorama.domTree and state.diorama.domTree.root then
             Warren.Dom.unmount(state.diorama.domTree.root)
@@ -1094,8 +1104,6 @@ local RegionManager = Node.extend(function(parent)
         if state.diorama.container then
             state.diorama.container:Destroy()
         end
-
-        -- Terrain is cleared by Canvas.init() when the next region builds
 
         state.diorama = {
             layout = nil,
@@ -1291,6 +1299,11 @@ local RegionManager = Node.extend(function(parent)
 
         -- Signal LobbyManager to cleanup
         self.Out:Fire("unloadLobby", {})
+
+        -- Clear terrain for this view's rooms (zone-scoped, not global)
+        if state.lobby.layout then
+            Layout.clearTerrain(state.lobby.layout)
+        end
 
         -- Unmount pad DOM nodes
         if state.lobby.padDomNodes then

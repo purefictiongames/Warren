@@ -315,8 +315,8 @@ function DomBuilder.paintTerrain(layout, options)
     local wallMaterial = Enum.Material.Rock
     local floorMaterial = Enum.Material.CrackedLava
 
-    -- Init terrain with palette colors
-    Canvas.init(palette)
+    -- Set terrain material colors (no global clear — terrain is zone-scoped)
+    Canvas.setMaterialColors(palette)
 
     -- PASS 1: Fill terrain shells
     for _, room in pairs(layout.rooms) do
@@ -353,6 +353,28 @@ function DomBuilder.paintTerrain(layout, options)
             noiseScale = 12,
             threshold = 0.4,
         })
+    end
+end
+
+--------------------------------------------------------------------------------
+-- TERRAIN CLEANUP (zone-scoped)
+--------------------------------------------------------------------------------
+
+--[[
+    Clear all terrain for a layout's rooms.
+    Counterpart to paintTerrain — called when a view is destroyed.
+    Only clears the terrain zones belonging to this layout's rooms,
+    leaving other views' terrain untouched.
+
+    @param layout table - Layout table
+]]
+function DomBuilder.clearTerrain(layout)
+    local config = layout.config or {}
+    local useTerrainShell = config.useTerrainShell ~= false
+    if not useTerrainShell then return end
+
+    for _, room in pairs(layout.rooms) do
+        Canvas.clearShell(room.position, room.dims, 0)
     end
 end
 

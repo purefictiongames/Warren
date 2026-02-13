@@ -1,0 +1,9 @@
+[package]
+name = "purefictiongames/warren"
+version = "2.5.2"
+registry = "https://registry.alpharabbitgames.com"
+realm = "shared"
+description = "Warren game framework — DOM-driven Roblox development"
+license = "UNLICENSED"
+
+[dependencies]

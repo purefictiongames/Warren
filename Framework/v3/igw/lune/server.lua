@@ -39,8 +39,11 @@
 local process = require("@lune/process")
 local stdio = require("@lune/stdio")
 
+-- Load Roblox→Lune compatibility shim (provides _G.task, _G.script, require override)
+require("../../warren/src/lune-compat")
+
 -- Load Warren framework
-local Warren = require("../warren/src")
+local Warren = require("../../warren/src")
 
 --------------------------------------------------------------------------------
 -- CONFIGURATION
@@ -50,7 +53,7 @@ local config = {
     universeId = process.env.ROBLOX_UNIVERSE_ID or "84800242213166",
     apiKey = process.env.ROBLOX_API_KEY or "",
     authToken = process.env.WARREN_AUTH_TOKEN or "igw-dev-token",
-    port = tonumber(process.env.WARREN_PORT) or 8080,
+    port = tonumber(process.env.WARREN_PORT) or 8090,
     pushInterval = 0.1,
 }
 

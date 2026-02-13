@@ -188,8 +188,8 @@ local State = Warren.State
 -- In Studio, runs in offline mode (falls back to local DataStore)
 if not RunService:IsStudio() then
     Transport.start({
-        endpoint = "https://igw.purefiction.games/warren",  -- Lune VPS
-        authToken = "igw-dev-token",  -- TODO: Move to secure config
+        endpoint = "https://warren.alpharabbitgames.com",  -- Lune VPS
+        authToken = "igw-dev-token",  -- TODO: Set to match WARREN_AUTH_TOKEN in /opt/warren/.env
         pollInterval = 0.5,
         batchSize = 10,
     })

@@ -51,9 +51,11 @@
 
 --]]
 
-local Runtime = require(script.Parent.Runtime)
-local Envelope = require(script.Envelope)
-local Codec = require(script.Codec)
+local _L = script == nil
+local task = _L and require("@lune/task") or task
+local Runtime = _L and require("@warren/Runtime") or require(script.Parent.Runtime)
+local Envelope = _L and require("@warren/Transport/Envelope") or require(script.Envelope)
+local Codec = _L and require("@warren/Transport/Codec") or require(script.Codec)
 
 local Transport = {}
 
@@ -83,7 +85,7 @@ function Transport.start(config)
         local RobloxBridge = require(script.RobloxBridge)
         _bridge = RobloxBridge.new()
     else
-        local LuneBridge = require(script.LuneBridge)
+        local LuneBridge = _L and require("@warren/Transport/LuneBridge") or require(script.LuneBridge)
         _bridge = LuneBridge.new()
     end
 

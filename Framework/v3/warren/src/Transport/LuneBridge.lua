@@ -29,8 +29,9 @@
 local net = require("@lune/net")
 local task = require("@lune/task")
 
-local Bridge = require(script.Parent.Bridge)
-local Codec = require(script.Parent.Codec)
+local _L = script == nil
+local Bridge = _L and require("@warren/Transport/Bridge") or require(script.Parent.Bridge)
+local Codec = _L and require("@warren/Transport/Codec") or require(script.Parent.Codec)
 
 local LuneBridge = setmetatable({}, { __index = Bridge })
 LuneBridge.__index = LuneBridge

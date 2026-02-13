@@ -27,6 +27,8 @@
 
 --]]
 
+local task = task or require("@lune/task")
+
 local Bridge = {}
 Bridge.__index = Bridge
 

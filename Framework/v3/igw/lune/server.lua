@@ -39,10 +39,10 @@
 local process = require("@lune/process")
 local stdio = require("@lune/stdio")
 
--- Load Roblox→Lune compatibility shim (provides _G.task, _G.script, require override)
-require("../../warren/src/lune-compat")
+-- Roblox exposes `task` as a built-in global; Lune requires explicit import
+_G.task = require("@lune/task")
 
--- Load Warren framework
+-- Load Warren framework (dual-runtime modules detect Lune via `script == nil`)
 local Warren = require("../../warren/src")
 
 --------------------------------------------------------------------------------

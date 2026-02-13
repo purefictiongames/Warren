@@ -53,8 +53,10 @@
 
 --]]
 
-local Runtime = require(script.Parent.Parent.Runtime)
-local Diff = require(script.Parent.Diff)
+local _L = script == nil
+local task = _L and require("@lune/task") or task
+local Runtime = _L and require("@warren/Runtime") or require(script.Parent.Parent.Runtime)
+local Diff = _L and require("@warren/State/Diff") or require(script.Parent.Diff)
 
 local Sync = {}
 

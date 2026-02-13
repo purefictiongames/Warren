@@ -53,8 +53,11 @@ local Warren = {
     _VERSION = "3.0.0",
 }
 
+-- Dual-runtime require: Lune uses @warren/ aliases, Roblox uses script tree
+local _L = script == nil
+
 -- Runtime detection (must load first)
-Warren.Runtime = require(script.Runtime)
+Warren.Runtime = _L and require("@warren/Runtime") or require(script.Runtime)
 
 local isRoblox = Warren.Runtime.isRoblox
 
@@ -63,16 +66,16 @@ local isRoblox = Warren.Runtime.isRoblox
 -- =============================================================================
 
 -- Styles: Style definitions and resolution
-Warren.Styles = require(script.Styles)
+Warren.Styles = _L and require("@warren/Styles") or require(script.Styles)
 
 -- ClassResolver: DOM class inheritance resolution
-Warren.ClassResolver = require(script.ClassResolver)
+Warren.ClassResolver = _L and require("@warren/ClassResolver") or require(script.ClassResolver)
 
 -- Transport: Roblox ↔ Lune communication layer
-Warren.Transport = require(script.Transport)
+Warren.Transport = _L and require("@warren/Transport") or require(script.Transport)
 
 -- State: Versioned state store, diff engine, sync, predictions
-Warren.State = require(script.State)
+Warren.State = _L and require("@warren/State") or require(script.State)
 
 -- Wire State ↔ Transport binding
 Warren.State.bindTransport(Warren.Transport)
@@ -83,10 +86,10 @@ Warren.State.bindTransport(Warren.Transport)
 
 if not isRoblox then
     -- OpenCloud: DataStore, Messaging HTTP clients (API keys stay on VPS)
-    Warren.OpenCloud = require(script.OpenCloud)
+    Warren.OpenCloud = require("@warren/OpenCloud")
 
     -- Boot: Lune-side bootstrap sequence
-    Warren.Boot = require(script.Boot)
+    Warren.Boot = require("@warren/Boot")
 end
 
 -- =============================================================================

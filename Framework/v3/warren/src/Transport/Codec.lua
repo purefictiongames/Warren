@@ -30,7 +30,8 @@
 
 --]]
 
-local Runtime = require(script.Parent.Parent.Runtime)
+local _L = script == nil
+local Runtime = _L and require("@warren/Runtime") or require(script.Parent.Parent.Runtime)
 
 local Codec = {}
 

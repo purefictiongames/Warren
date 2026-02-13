@@ -70,7 +70,8 @@
 
 --]]
 
-local Runtime = require(script.Parent.Runtime)
+local _L = script == nil
+local Runtime = _L and require("@warren/Runtime") or require(script.Parent.Runtime)
 
 local Boot = {}
 
@@ -115,7 +116,7 @@ function Boot.start(config)
     -- 2. INITIALIZE STATE STORE
     -- -------------------------------------------------------------------------
 
-    local State = require(script.Parent.State)
+    local State = _L and require("@warren/State") or require(script.Parent.State)
     local store = State.createStore()
 
     stdio.write("[Warren.Boot] State store initialized\n")
@@ -124,7 +125,7 @@ function Boot.start(config)
     -- 3. INITIALIZE TRANSPORT
     -- -------------------------------------------------------------------------
 
-    local Transport = require(script.Parent.Transport)
+    local Transport = _L and require("@warren/Transport") or require(script.Parent.Transport)
     State.bindTransport(Transport)
 
     Transport.start({
@@ -138,7 +139,7 @@ function Boot.start(config)
     -- 4. INITIALIZE OPEN CLOUD CLIENTS
     -- -------------------------------------------------------------------------
 
-    local OpenCloud = require(script.Parent.OpenCloud)
+    local OpenCloud = _L and require("@warren/OpenCloud") or require(script.Parent.OpenCloud)
 
     local cloudConfig = {
         universeId = config.universeId,

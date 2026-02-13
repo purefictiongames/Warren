@@ -55,6 +55,8 @@
 
 --]]
 
+local task = task or require("@lune/task")
+
 local Store = {}
 Store.__index = Store
 

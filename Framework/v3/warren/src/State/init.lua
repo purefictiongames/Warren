@@ -74,14 +74,15 @@
 
 --]]
 
-local Runtime = require(script.Parent.Runtime)
+local _L = script == nil
+local Runtime = _L and require("@warren/Runtime") or require(script.Parent.Runtime)
 
 local State = {}
 
 -- Core modules (shared, both runtimes)
-State.Store = require(script.Store)
-State.Diff = require(script.Diff)
-State.Sync = require(script.Sync)
+State.Store = _L and require("@warren/State/Store") or require(script.Store)
+State.Diff = _L and require("@warren/State/Diff") or require(script.Diff)
+State.Sync = _L and require("@warren/State/Sync") or require(script.Sync)
 
 -- Prediction queue (Roblox-only — Lune doesn't predict, it decides)
 if Runtime.isRoblox then

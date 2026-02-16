@@ -1,6 +1,6 @@
 --[[
     Warren Framework v3.0
-    OpenCloud/init.lua - Open Cloud Client Public API
+    OpenCloud/init.lua - Open Cloud Client Public API (Cross-Runtime)
 
     Copyright (c) 2025 Adam Stearns / Pure Fiction Records LLC
     All rights reserved.
@@ -9,18 +9,16 @@
     OVERVIEW
     ============================================================================
 
-    Lune-only module providing HTTP clients for the Roblox Open Cloud API.
-    API keys live on the Lune VPS and are never exposed to Roblox clients.
+    Cross-runtime module providing HTTP clients for the Roblox Open Cloud API.
+
+    On Lune:   API keys come from environment variables.
+    On Roblox: API keys come from game Secrets (opaque Secret objects that
+               work as HTTP header values via the "Open Cloud via HttpService
+               Without Proxies" beta).
 
     Currently wraps:
         - DataStore v1 API (get/set/list/delete entries)
         - MessagingService v1 API (publish to topics)
-
-    Future:
-        - Assets API (upload/manage)
-        - Groups API (manage group membership)
-        - Inventory API (read player inventories)
-        - Luau Execution API (run scripts in-universe)
 
     ============================================================================
     USAGE
@@ -32,7 +30,7 @@
     -- Create clients with your API key
     local config = {
         universeId = "123456789",
-        apiKey = os.getenv("ROBLOX_API_KEY"),
+        apiKey = apiKey,  -- string on Lune, Secret on Roblox
     }
 
     local datastore = OpenCloud.DataStore.new(config)
@@ -49,7 +47,8 @@ local _L = script == nil
 
 local OpenCloud = {}
 
-OpenCloud.DataStore = _L and require("@warren-lune/OpenCloud/DataStore") or require(script.DataStore)
-OpenCloud.Messaging = _L and require("@warren-lune/OpenCloud/Messaging") or require(script.Messaging)
+OpenCloud.DataStore = _L and require("@warren/OpenCloud/DataStore") or require(script.DataStore)
+OpenCloud.Messaging = _L and require("@warren/OpenCloud/Messaging") or require(script.Messaging)
+OpenCloud.Platform = _L and require("@warren/OpenCloud/Platform") or require(script.Platform)
 
 return OpenCloud

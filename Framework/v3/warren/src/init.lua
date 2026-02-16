@@ -81,13 +81,17 @@ Warren.State = _L and require("@warren/State") or require(script.State)
 Warren.State.bindTransport(Warren.Transport)
 
 -- =============================================================================
+-- SHARED MODULES (continued)
+-- =============================================================================
+
+-- OpenCloud: DataStore, Messaging HTTP clients (cross-runtime via Platform)
+Warren.OpenCloud = _L and require("@warren/OpenCloud") or require(script.OpenCloud)
+
+-- =============================================================================
 -- LUNE-ONLY MODULES
 -- =============================================================================
 
 if not isRoblox then
-    -- OpenCloud: DataStore, Messaging HTTP clients (API keys stay on VPS)
-    Warren.OpenCloud = require("@warren-lune/OpenCloud")
-
     -- Boot: Lune-side bootstrap sequence
     Warren.Boot = require("@warren-lune/Boot")
 end

@@ -12,14 +12,13 @@
     1. Requires the Warren v3.0 framework package
     2. Requires game-specific Components
     3. Configures system subsystems
-    4. Connects to Lune authority server via Warren.Transport
+    4. Initializes SDK (layout RPC) and OpenCloud (persistence)
     5. Initializes the framework in the correct order
 
     Warren v3.0 changes:
-    - Transport layer connects to Lune VPS for authoritative state
-    - State sync as replica (Lune is authority for persistence)
-    - DataStore access routed through Lune via Open Cloud
-    - Roblox server handles materialization, Lune handles persistence
+    - Layout generation via WarrenSDK → Registry → Lune RPC
+    - Persistence via direct OpenCloud DataStore API calls
+    - Studio fallback: local compute + local DataStore
 
     Nothing in the framework runs until this script explicitly calls it.
 
@@ -186,17 +185,12 @@ IPC.start()
 -- end
 
 --------------------------------------------------------------------------------
--- WARREN v3.0: TRANSPORT + STATE
+-- WARREN v3.0: SDK + OPENCLOUD
 --------------------------------------------------------------------------------
--- Connect to Lune authority server for state synchronization.
--- Persistence (DataStore) is now routed through Lune via Open Cloud.
--- Roblox server is a replica — it materializes, Lune persists.
+-- Production: SDK handles layout generation via Registry → Lune RPC.
+-- OpenCloud handles persistence via direct DataStore API calls.
+-- Studio: Falls back to local compute + local DataStore.
 
-local Transport = Warren.Transport
-local State = Warren.State
-
--- Start transport + SDK (connects to Lune VPS + Warren Registry)
--- In Studio, runs in offline mode (falls back to local DataStore)
 if not RunService:IsStudio() then
     -- Initialize SDK (auth with Registry for RPC compute calls)
     -- Wrapped in pcall: SDK failure is non-fatal, game falls back to local compute
@@ -213,32 +207,21 @@ if not RunService:IsStudio() then
         warn("[Bootstrap] Game will use local compute fallback")
     end
 
-    -- Transport stays connected to Lune for state sync (save/load/visits)
-    -- Independent of SDK — state sync works even if SDK auth fails
-    local transportOk, transportErr = pcall(function()
-        Transport.start({
-            endpoint = "https://warren.alpharabbitgames.com",  -- Lune VPS
-            authToken = HttpService:GetSecret("warren_api_secret"),
-            pollInterval = 0.5,
-            batchSize = 10,
-        })
-
-        -- Start state as replica (receives patches from Lune)
-        local gameStore = State.createStore()
-        State.Sync.startReplica(gameStore, {
-            onResync = function()
-                Debug.info("Bootstrap", "State resync from Lune authority")
-            end,
-        })
-
-        Debug.info("Bootstrap", "Transport + State replica initialized")
+    -- Initialize OpenCloud for direct DataStore/Messaging access
+    local opencloudOk, opencloudErr = pcall(function()
+        local secret = HttpService:GetSecret("warren_opencloud_key")
+        Warren.OpenCloud._robloxConfig = {
+            universeId = tostring(game.GameId),
+            apiKey = secret,  -- Opaque Secret object, works as header value
+        }
+        Debug.info("Bootstrap", "OpenCloud initialized (direct DataStore access)")
     end)
-    if not transportOk then
-        warn("[Bootstrap] Transport init failed: " .. tostring(transportErr))
-        warn("[Bootstrap] Game will run without state sync")
+    if not opencloudOk then
+        warn("[Bootstrap] OpenCloud init failed: " .. tostring(opencloudErr))
+        warn("[Bootstrap] Persistence will fall back to local DataStore")
     end
 else
-    Debug.info("Bootstrap", "Studio mode — SDK/Transport offline, using local DataStore")
+    Debug.info("Bootstrap", "Studio mode — using local compute + local DataStore")
 end
 
 --------------------------------------------------------------------------------

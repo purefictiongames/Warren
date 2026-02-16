@@ -1,6 +1,6 @@
 --[[
     Warren Framework v3.0
-    OpenCloud/Messaging.lua - Open Cloud MessagingService Client
+    OpenCloud/Messaging.lua - Open Cloud MessagingService Client (Cross-Runtime)
 
     Copyright (c) 2025 Adam Stearns / Pure Fiction Records LLC
     All rights reserved.
@@ -9,11 +9,13 @@
     OVERVIEW
     ============================================================================
 
-    Lune-side HTTP client wrapping the Roblox Open Cloud Messaging v1 API.
+    HTTP client wrapping the Roblox Open Cloud Messaging v1 API.
+    Runs on both Roblox and Lune via the Platform abstraction layer.
+
     Publishes messages to topics that Roblox game servers subscribe to
     via MessagingService:SubscribeAsync().
 
-    This enables Lune → Roblox push notifications for:
+    This enables push notifications for:
         - Server-wide announcements
         - Player kick/ban commands
         - LiveOps event triggers
@@ -37,7 +39,7 @@
 
     local msg = Messaging.new({
         universeId = "123456789",
-        apiKey = "your-open-cloud-api-key",
+        apiKey = "your-open-cloud-api-key",  -- or Roblox Secret object
     })
 
     -- Publish a string message
@@ -53,8 +55,8 @@
 
 --]]
 
-local net = require("@lune/net")
-local serde = require("@lune/serde")
+local _L = script == nil
+local Platform = _L and require("@warren/OpenCloud/Platform") or require(script.Parent.Platform)
 
 local Messaging = {}
 Messaging.__index = Messaging
@@ -75,7 +77,7 @@ local MAX_MESSAGE_SIZE = 1024  -- 1KB limit per Open Cloud docs
 
     @param config table:
         - universeId: string (required)
-        - apiKey: string (required)
+        - apiKey: string|Secret (required) — plain string on Lune, Secret on Roblox
     @return Messaging
 ]]
 function Messaging.new(config)
@@ -108,7 +110,7 @@ function Messaging:publish(topic, message)
     -- Serialize tables to JSON strings
     local messageStr
     if type(message) == "table" then
-        messageStr = serde.encode("json", message)
+        messageStr = Platform.jsonEncode(message)
     else
         messageStr = tostring(message)
     end
@@ -119,13 +121,13 @@ function Messaging:publish(topic, message)
             .. #messageStr .. " bytes). Consider splitting or compressing.")
     end
 
-    local url = self._baseUrl .. "/" .. net.urlEncode(topic)
+    local url = self._baseUrl .. "/" .. Platform.urlEncode(topic)
 
-    local body = serde.encode("json", {
+    local body = Platform.jsonEncode({
         message = messageStr,
     })
 
-    local response = net.request({
+    local response = Platform.request({
         url = url,
         method = "POST",
         headers = {

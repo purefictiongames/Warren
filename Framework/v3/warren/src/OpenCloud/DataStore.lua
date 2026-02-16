@@ -1,6 +1,6 @@
 --[[
     Warren Framework v3.0
-    OpenCloud/DataStore.lua - Open Cloud DataStore Client
+    OpenCloud/DataStore.lua - Open Cloud DataStore Client (Cross-Runtime)
 
     Copyright (c) 2025 Adam Stearns / Pure Fiction Records LLC
     All rights reserved.
@@ -9,11 +9,15 @@
     OVERVIEW
     ============================================================================
 
-    Lune-side HTTP client wrapping the Roblox Open Cloud DataStore v1 API.
-    Provides get/set/list/delete operations against standard DataStores
-    from outside the Roblox runtime.
+    HTTP client wrapping the Roblox Open Cloud DataStore v1 API.
+    Runs on both Roblox and Lune via the Platform abstraction layer.
 
-    API keys live on the Lune VPS — never exposed to Roblox clients.
+    On Roblox: Uses HttpService:RequestAsync() — requires the
+               "Open Cloud via HttpService Without Proxies" beta.
+    On Lune:   Uses net.request() as before.
+
+    API keys: On Lune, plain strings from env. On Roblox, opaque Secret
+    objects from game settings — they work as HTTP header values directly.
 
     ============================================================================
     API REFERENCE
@@ -39,7 +43,7 @@
 
     local ds = DataStore.new({
         universeId = "123456789",
-        apiKey = "your-open-cloud-api-key",
+        apiKey = "your-open-cloud-api-key",  -- or Roblox Secret object
     })
 
     -- Get a value
@@ -57,8 +61,8 @@
 
 --]]
 
-local net = require("@lune/net")
-local serde = require("@lune/serde")
+local _L = script == nil
+local Platform = _L and require("@warren/OpenCloud/Platform") or require(script.Parent.Platform)
 
 local DataStore = {}
 DataStore.__index = DataStore
@@ -78,7 +82,7 @@ local BASE_URL = "https://apis.roblox.com/datastores/v1/universes"
 
     @param config table:
         - universeId: string (required)
-        - apiKey: string (required)
+        - apiKey: string|Secret (required) — plain string on Lune, Secret on Roblox
         - scope: string? (default "global")
     @return DataStore
 ]]
@@ -109,11 +113,11 @@ end
 function DataStore:getEntry(datastoreName, key)
     local url = self._baseUrl
         .. "/standard-datastores/datastore/entries/entry"
-        .. "?datastoreName=" .. net.urlEncode(datastoreName)
-        .. "&entryKey=" .. net.urlEncode(key)
-        .. "&scope=" .. net.urlEncode(self._scope)
+        .. "?datastoreName=" .. Platform.urlEncode(datastoreName)
+        .. "&entryKey=" .. Platform.urlEncode(key)
+        .. "&scope=" .. Platform.urlEncode(self._scope)
 
-    local response = net.request({
+    local response = Platform.request({
         url = url,
         method = "GET",
         headers = {
@@ -130,7 +134,7 @@ function DataStore:getEntry(datastoreName, key)
             .. response.statusCode .. "): " .. response.body)
     end
 
-    local data = serde.decode("json", response.body)
+    local data = Platform.jsonDecode(response.body)
 
     -- Extract metadata from headers
     local metadata = {
@@ -154,19 +158,19 @@ end
 function DataStore:setEntry(datastoreName, key, value, options)
     options = options or {}
 
-    local body = serde.encode("json", value)
+    local body = Platform.jsonEncode(value)
 
     -- Compute MD5 hash for content-md5 header (required by Open Cloud)
-    local md5Hash = self:_computeMd5Base64(body)
+    local md5Hash = Platform.md5Base64(body)
 
     local url = self._baseUrl
         .. "/standard-datastores/datastore/entries/entry"
-        .. "?datastoreName=" .. net.urlEncode(datastoreName)
-        .. "&entryKey=" .. net.urlEncode(key)
-        .. "&scope=" .. net.urlEncode(self._scope)
+        .. "?datastoreName=" .. Platform.urlEncode(datastoreName)
+        .. "&entryKey=" .. Platform.urlEncode(key)
+        .. "&scope=" .. Platform.urlEncode(self._scope)
 
     if options.matchVersion then
-        url = url .. "&matchVersion=" .. net.urlEncode(options.matchVersion)
+        url = url .. "&matchVersion=" .. Platform.urlEncode(options.matchVersion)
     end
 
     local headers = {
@@ -176,14 +180,14 @@ function DataStore:setEntry(datastoreName, key, value, options)
     }
 
     if options.userIds then
-        headers["roblox-entry-userids"] = serde.encode("json", options.userIds)
+        headers["roblox-entry-userids"] = Platform.jsonEncode(options.userIds)
     end
 
     if options.attributes then
-        headers["roblox-entry-attributes"] = serde.encode("json", options.attributes)
+        headers["roblox-entry-attributes"] = Platform.jsonEncode(options.attributes)
     end
 
-    local response = net.request({
+    local response = Platform.request({
         url = url,
         method = "POST",
         headers = headers,
@@ -208,11 +212,11 @@ end
 function DataStore:deleteEntry(datastoreName, key)
     local url = self._baseUrl
         .. "/standard-datastores/datastore/entries/entry"
-        .. "?datastoreName=" .. net.urlEncode(datastoreName)
-        .. "&entryKey=" .. net.urlEncode(key)
-        .. "&scope=" .. net.urlEncode(self._scope)
+        .. "?datastoreName=" .. Platform.urlEncode(datastoreName)
+        .. "&entryKey=" .. Platform.urlEncode(key)
+        .. "&scope=" .. Platform.urlEncode(self._scope)
 
-    local response = net.request({
+    local response = Platform.request({
         url = url,
         method = "DELETE",
         headers = {
@@ -240,20 +244,20 @@ function DataStore:listEntries(datastoreName, options)
 
     local url = self._baseUrl
         .. "/standard-datastores/datastore/entries"
-        .. "?datastoreName=" .. net.urlEncode(datastoreName)
-        .. "&scope=" .. net.urlEncode(self._scope)
+        .. "?datastoreName=" .. Platform.urlEncode(datastoreName)
+        .. "&scope=" .. Platform.urlEncode(self._scope)
 
     if options.prefix then
-        url = url .. "&prefix=" .. net.urlEncode(options.prefix)
+        url = url .. "&prefix=" .. Platform.urlEncode(options.prefix)
     end
     if options.limit then
         url = url .. "&limit=" .. tostring(options.limit)
     end
     if options.cursor then
-        url = url .. "&cursor=" .. net.urlEncode(options.cursor)
+        url = url .. "&cursor=" .. Platform.urlEncode(options.cursor)
     end
 
-    local response = net.request({
+    local response = Platform.request({
         url = url,
         method = "GET",
         headers = {
@@ -266,7 +270,7 @@ function DataStore:listEntries(datastoreName, options)
             .. response.statusCode .. "): " .. response.body)
     end
 
-    local data = serde.decode("json", response.body)
+    local data = Platform.jsonDecode(response.body)
     return {
         keys = data.keys or {},
         nextCursor = data.nextPageCursor,
@@ -286,19 +290,19 @@ function DataStore:listDataStores(options)
 
     local params = {}
     if options.prefix then
-        table.insert(params, "prefix=" .. net.urlEncode(options.prefix))
+        table.insert(params, "prefix=" .. Platform.urlEncode(options.prefix))
     end
     if options.limit then
         table.insert(params, "limit=" .. tostring(options.limit))
     end
     if options.cursor then
-        table.insert(params, "cursor=" .. net.urlEncode(options.cursor))
+        table.insert(params, "cursor=" .. Platform.urlEncode(options.cursor))
     end
     if #params > 0 then
         url = url .. "?" .. table.concat(params, "&")
     end
 
-    local response = net.request({
+    local response = Platform.request({
         url = url,
         method = "GET",
         headers = {
@@ -311,46 +315,11 @@ function DataStore:listDataStores(options)
             .. response.statusCode .. "): " .. response.body)
     end
 
-    local data = serde.decode("json", response.body)
+    local data = Platform.jsonDecode(response.body)
     return {
         datastores = data.datastores or {},
         nextCursor = data.nextPageCursor,
     }
-end
-
---------------------------------------------------------------------------------
--- INTERNAL: MD5
---------------------------------------------------------------------------------
-
---[[
-    Compute base64-encoded MD5 hash for the content-md5 header.
-    Uses Lune's serde for hashing.
-]]
-function DataStore:_computeMd5Base64(body)
-    local hexHash = serde.hash("md5", body)
-
-    -- Convert hex string to raw bytes
-    local raw = {}
-    for i = 1, #hexHash, 2 do
-        raw[#raw + 1] = string.char(tonumber(hexHash:sub(i, i + 1), 16))
-    end
-    local bytes = table.concat(raw)
-
-    -- Base64 encode
-    local b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-    local result = {}
-    for i = 1, #bytes, 3 do
-        local b1, b2, b3 = string.byte(bytes, i, i + 2)
-        b2 = b2 or 0
-        b3 = b3 or 0
-        local n = b1 * 65536 + b2 * 256 + b3
-        local remaining = #bytes - i + 1
-        result[#result + 1] = b64:sub(math.floor(n / 262144) % 64 + 1, math.floor(n / 262144) % 64 + 1)
-        result[#result + 1] = b64:sub(math.floor(n / 4096) % 64 + 1, math.floor(n / 4096) % 64 + 1)
-        result[#result + 1] = remaining >= 2 and b64:sub(math.floor(n / 64) % 64 + 1, math.floor(n / 64) % 64 + 1) or "="
-        result[#result + 1] = remaining >= 3 and b64:sub(n % 64 + 1, n % 64 + 1) or "="
-    end
-    return table.concat(result)
 end
 
 return DataStore

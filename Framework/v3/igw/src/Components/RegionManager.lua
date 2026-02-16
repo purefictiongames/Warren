@@ -81,12 +81,9 @@
     PERSISTENCE (Seed-Based, Dual-Path)
     ============================================================================
 
-    Warren v3.0: Persistence routes through Lune authority via Transport
-    when connected. Falls back to direct DataStore in Studio or when
-    Transport is offline.
-
-    Lune path:  Transport.request() → Lune server → Open Cloud DataStore
-    Local path: DataStoreService:GetDataStore() (Studio fallback)
+    Warren v3.0: Persistence uses direct OpenCloud DataStore calls in
+    production (via HttpService → apis.roblox.com). Falls back to local
+    DataStoreService in Studio.
 
     Dungeon data is saved per-player.
 
@@ -116,21 +113,29 @@ local ServerStorage = game:GetService("ServerStorage")
 local RunService = game:GetService("RunService")
 local Warren = require(game:GetService("ReplicatedStorage").Warren)
 local Node = Warren.Node
-local Transport = Warren.Transport
 local Layout = require(script.Parent.Layout)
 local JumpPad = require(script.Parent.JumpPad)
 local PlaceGraph = require(script.Parent.PlaceGraph)
 
 --------------------------------------------------------------------------------
--- PERSISTENCE LAYER (dual-path: Lune authority or local DataStore)
+-- PERSISTENCE LAYER (direct OpenCloud or local DataStore fallback)
 --------------------------------------------------------------------------------
 
 local DATASTORE_NAME = "DungeonData_v1"
-local dungeonStore = nil
-local _useLuneAuthority = not RunService:IsStudio()  -- Lune in production, local in Studio
+local dungeonStore = nil  -- local DataStore cache (Studio fallback)
+local _openCloudDS = nil  -- cached OpenCloud DataStore client
+
+-- Get or create an OpenCloud DataStore client from Bootstrap's config
+local function getOpenCloudDataStore()
+    if _openCloudDS then return _openCloudDS end
+    local config = Warren.OpenCloud._robloxConfig
+    if not config then return nil end
+    _openCloudDS = Warren.OpenCloud.DataStore.new(config)
+    return _openCloudDS
+end
 
 -- Initialize local DataStore (Studio fallback)
-local function getDataStore()
+local function getLocalDataStore()
     if not dungeonStore then
         local success, store = pcall(function()
             return DataStoreService:GetDataStore(DATASTORE_NAME)
@@ -146,22 +151,26 @@ end
 
 --[[
     Save player data via the appropriate persistence path.
-    Lune: sends action request to authority server.
-    Studio: writes directly to local DataStore.
+    Production: Direct OpenCloud DataStore call via HttpService.
+    Studio: Local DataStoreService fallback.
 
     @param playerId string|number - Player UserId
     @param saveData table - Data to persist
     @return boolean - true on success
 ]]
 local function persistSave(playerId, saveData)
-    if _useLuneAuthority then
-        local response = Transport.request("state.action.savePlayerData", {
-            playerId = tostring(playerId),
-            data = saveData,
-        }, 10)
-        return response and response.status == "ok"
+    local ds = getOpenCloudDataStore()
+    if ds then
+        local key = "player_" .. playerId
+        local ok, err = pcall(function()
+            ds:setEntry(DATASTORE_NAME, key, saveData)
+        end)
+        if not ok then
+            warn("[RegionManager] OpenCloud save failed:", err)
+        end
+        return ok
     else
-        local store = getDataStore()
+        local store = getLocalDataStore()
         if not store then return false end
         local key = "player_" .. playerId
         local ok, err = pcall(function()
@@ -181,16 +190,17 @@ end
     @return table? - Loaded data, or nil
 ]]
 local function persistLoad(playerId)
-    if _useLuneAuthority then
-        local response = Transport.request("state.action.loadPlayerData", {
-            playerId = tostring(playerId),
-        }, 10)
-        if response and response.status == "ok" then
-            return response.data
-        end
+    local ds = getOpenCloudDataStore()
+    if ds then
+        local key = "player_" .. playerId
+        local ok, data = pcall(function()
+            return ds:getEntry(DATASTORE_NAME, key)
+        end)
+        if ok then return data end
+        warn("[RegionManager] OpenCloud load failed:", data)
         return nil
     else
-        local store = getDataStore()
+        local store = getLocalDataStore()
         if not store then return nil end
         local key = "player_" .. playerId
         local ok, data = pcall(function()
@@ -209,13 +219,18 @@ end
     @return boolean - true on success
 ]]
 local function persistClear(playerId)
-    if _useLuneAuthority then
-        local response = Transport.request("state.action.clearPlayerData", {
-            playerId = tostring(playerId),
-        }, 10)
-        return response and response.status == "ok"
+    local ds = getOpenCloudDataStore()
+    if ds then
+        local key = "player_" .. playerId
+        local ok, err = pcall(function()
+            ds:deleteEntry(DATASTORE_NAME, key)
+        end)
+        if not ok then
+            warn("[RegionManager] OpenCloud clear failed:", err)
+        end
+        return ok
     else
-        local store = getDataStore()
+        local store = getLocalDataStore()
         if not store then return false end
         local key = "player_" .. playerId
         local ok, err = pcall(function()
@@ -482,7 +497,7 @@ local RegionManager = Node.extend(function(parent)
             padCount = padCount,  -- Direct pad count instead of roomsPerPad
         }
 
-        if _useLuneAuthority then
+        if not RunService:IsStudio() then
             -- Production: generate via SDK → Registry → Lune RPC
             local ok, result = pcall(function()
                 local WarrenSDK = require(ServerStorage.WarrenSDK)
@@ -501,7 +516,7 @@ local RegionManager = Node.extend(function(parent)
 
     --[[
         Saves dungeon data for a player.
-        Routes through Lune authority (production) or local DataStore (Studio).
+        Routes through direct OpenCloud (production) or local DataStore (Studio).
 
         Stores: regions (seeds + padLinks), regionCount, activeRegionId,
         unlinkedPadCount, and visitedRooms.
@@ -555,7 +570,7 @@ local RegionManager = Node.extend(function(parent)
 
     --[[
         Loads dungeon data for a player.
-        Routes through Lune authority (production) or local DataStore (Studio).
+        Routes through direct OpenCloud (production) or local DataStore (Studio).
         Returns true if data was found and loaded, false otherwise.
     --]]
     local function loadPlayerData(self, player)

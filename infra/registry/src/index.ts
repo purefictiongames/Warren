@@ -4,6 +4,7 @@ import { serve } from "@hono/node-server";
 import { env } from "./env.js";
 import { auth } from "./routes/auth.js";
 import { usage } from "./routes/usage.js";
+import { rpc, registerModule } from "./routes/rpc.js";
 
 const app = new Hono();
 
@@ -15,6 +16,29 @@ app.get("/health", (c) => c.json({ status: "ok" }));
 // API routes
 app.route("/v1/auth", auth);
 app.route("/v1/usage", usage);
+app.route("/v1/rpc", rpc);
+
+// --- Test module (remove once real Warren modules are loaded) ---
+registerModule("Echo", {
+  hello: (name: unknown) => `Hello, ${name}!`,
+  add: (a: unknown, b: unknown) => (a as number) + (b as number),
+  createObject: (id: unknown) => ({
+    id,
+    type: "TestElement",
+    getName: function () {
+      return `element-${(this as { id: unknown }).id}`;
+    },
+    firstChild: function () {
+      return {
+        id: `${(this as { id: unknown }).id}-child-1`,
+        type: "TestElement",
+        getName: function () {
+          return `child-of-${(this as { id: unknown }).id}`;
+        },
+      };
+    },
+  }),
+});
 
 // 404 fallback
 app.notFound((c) =>

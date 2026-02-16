@@ -18,17 +18,15 @@ local _refreshThread = nil
     @return { sessionToken: string, tier: string, scopes: {string}, ttl: number, expiresAt: string }
 ]]
 function Auth.validate(registryUrl, params)
-    -- Secret objects need AddPrefix to attach to headers,
-    -- but for POST body we need the raw value.
-    -- Roblox Secrets can be used with HttpService automatically.
-    -- We pass the Secret object — HttpService:JSONEncode handles it.
+    -- Roblox Secret objects are opaque — they CANNOT be passed through
+    -- JSONEncode (body). They can only be used as header values, where
+    -- RequestAsync resolves them at the HTTP layer.
 
     local result = Http.request(
         registryUrl .. "/v1/auth/validate",
         "POST",
-        {},
+        { ["X-API-Key"] = params.apiKey },
         {
-            apiKey = params.apiKey,
             universeId = params.universeId,
             placeId = params.placeId,
             jobId = params.jobId,

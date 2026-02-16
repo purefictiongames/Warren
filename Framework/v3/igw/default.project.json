@@ -6,6 +6,9 @@
       "$className": "ReplicatedFirst",
       "Config": {
         "$path": "ReplicatedFirst/Config.lua"
+      },
+      "LoadingScreen": {
+        "$path": "ReplicatedFirst/LoadingScreen.client.lua"
       }
     },
     "ReplicatedStorage": {

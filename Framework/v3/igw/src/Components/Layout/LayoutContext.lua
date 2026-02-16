@@ -294,7 +294,8 @@ end
 --------------------------------------------------------------------------------
 
 function LayoutContext:toLayout()
-    local LayoutSchema = require(script.Parent.LayoutSchema)
+    local _L = script == nil
+    local LayoutSchema = _L and require("./LayoutSchema") or require(script.Parent.LayoutSchema)
 
     local layout = LayoutSchema.createEmpty()
     layout.seed = self.config.seed or 0

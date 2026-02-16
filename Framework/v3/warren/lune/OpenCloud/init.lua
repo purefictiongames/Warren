@@ -49,7 +49,7 @@ local _L = script == nil
 
 local OpenCloud = {}
 
-OpenCloud.DataStore = _L and require("@warren/OpenCloud/DataStore") or require(script.DataStore)
-OpenCloud.Messaging = _L and require("@warren/OpenCloud/Messaging") or require(script.Messaging)
+OpenCloud.DataStore = _L and require("@warren-lune/OpenCloud/DataStore") or require(script.DataStore)
+OpenCloud.Messaging = _L and require("@warren-lune/OpenCloud/Messaging") or require(script.Messaging)
 
 return OpenCloud

@@ -377,30 +377,33 @@ local rpcHandlers = {
 }
 
 local rpcPort = config.port + 1  -- 8091
-net.serve(rpcPort, function(request)
-    if request.method ~= "POST" or request.path ~= "/rpc" then
-        return { status = 404, body = '{"error":"not_found"}' }
-    end
+net.serve(rpcPort, {
+    address = "0.0.0.0",
+    handleRequest = function(request)
+        if request.method ~= "POST" or request.path ~= "/rpc" then
+            return { status = 404, body = '{"error":"not_found"}' }
+        end
 
-    -- Auth check (same token as Transport)
-    local auth = request.headers["authorization"] or ""
-    if auth ~= "Bearer " .. config.authToken then
-        return { status = 401, body = '{"error":"unauthorized"}' }
-    end
+        -- Auth check (same token as Transport)
+        local auth = request.headers["authorization"] or ""
+        if auth ~= "Bearer " .. config.authToken then
+            return { status = 401, body = '{"error":"unauthorized"}' }
+        end
 
-    local body = serde.decode("json", request.body)
-    local handler = rpcHandlers[body.action]
-    if not handler then
-        return { status = 404, body = serde.encode("json", { error = "action_not_found", action = body.action }) }
-    end
+        local body = serde.decode("json", request.body)
+        local handler = rpcHandlers[body.action]
+        if not handler then
+            return { status = 404, body = serde.encode("json", { error = "action_not_found", action = body.action }) }
+        end
 
-    local ok, result = pcall(handler, body.payload)
-    if ok then
-        return { status = 200, body = serde.encode("json", result) }
-    else
-        return { status = 500, body = serde.encode("json", { error = tostring(result) }) }
-    end
-end)
+        local ok, result = pcall(handler, body.payload)
+        if ok then
+            return { status = 200, body = serde.encode("json", result) }
+        else
+            return { status = 500, body = serde.encode("json", { error = tostring(result) }) }
+        end
+    end,
+})
 
 stdio.write("[IGW] RPC server listening on port " .. rpcPort .. "\n")
 

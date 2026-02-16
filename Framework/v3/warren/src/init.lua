@@ -86,10 +86,10 @@ Warren.State.bindTransport(Warren.Transport)
 
 if not isRoblox then
     -- OpenCloud: DataStore, Messaging HTTP clients (API keys stay on VPS)
-    Warren.OpenCloud = require("@warren/OpenCloud")
+    Warren.OpenCloud = require("@warren-lune/OpenCloud")
 
     -- Boot: Lune-side bootstrap sequence
-    Warren.Boot = require("@warren/Boot")
+    Warren.Boot = require("@warren-lune/Boot")
 end
 
 -- =============================================================================

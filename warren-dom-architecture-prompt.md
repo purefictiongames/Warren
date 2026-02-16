@@ -186,7 +186,7 @@ Styles can define terrain rendering attributes as well as part attributes:
 [".biome-cavern"] = {
     -- Part attributes
     granite_color = Color3.fromRGB(60, 55, 50),
-    
+
     -- Terrain attributes
     terrain = {
         passes = {
@@ -573,7 +573,7 @@ These are areas where the vision may have gaps. Flag these during implementation
 
 9. **Cross-domain DOM access** — System, Player, and Asset domains have strict boundaries. Can a Player domain component query the DOM? Only its own subtree? This needs clear rules.
 
-10. **Undo/history** — If the DOM tracks all mutations, is there value in a command history for debugging or replay? Low priority but architecturally interesting.
+10. **Undo/history** — If the DOM tracks all mutations, is a command history for debugging or replay? Low priority but architecturally interesting.
 
 11. **Ref resolution ordering** — When multiple remote refs are in-flight simultaneously, does resolution order matter? Can a later-resolved ref invalidate an earlier one? What happens if two refs point to the same resource with different cache policies?
 

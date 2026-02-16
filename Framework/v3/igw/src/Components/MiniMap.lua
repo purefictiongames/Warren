@@ -304,7 +304,7 @@ local MiniMap = Node.extend(function(parent)
         state.viewportCamera = camera
         state.worldModel = worldModel
 
-        -- No on-screen toggle button — map opens via gamepad touchpad (ButtonSelect)
+        -- No on-screen toggle button — map opens via gamepad triangle (ButtonY)
     end
 
     ----------------------------------------------------------------------------
@@ -994,7 +994,7 @@ local MiniMap = Node.extend(function(parent)
                 return Enum.ContextActionResult.Sink
             end,
             false,
-            Enum.KeyCode.ButtonSelect
+            Enum.KeyCode.ButtonY
         )
     end
 
@@ -1039,7 +1039,7 @@ local MiniMap = Node.extend(function(parent)
                 state.toggleConnection = UserInputService.InputBegan:Connect(function(input, processed)
                     if processed then return end
                     -- Only handle toggle when map is closed (when open, ContextAction handles it)
-                    if not state.isOpen and input.KeyCode == Enum.KeyCode.ButtonSelect then
+                    if not state.isOpen and input.KeyCode == Enum.KeyCode.ButtonY then
                         toggleMap(self)
                     end
                 end)

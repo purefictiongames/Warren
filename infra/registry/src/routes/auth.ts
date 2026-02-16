@@ -28,18 +28,21 @@ export const auth = new Hono();
  */
 auth.post("/validate", async (c) => {
   const body = await c.req.json<{
-    apiKey: string;
+    apiKey?: string;
     universeId: number;
     placeId?: number;
     jobId?: string;
   }>();
 
-  if (!body.apiKey || !body.universeId) {
+  // API key can come from X-API-Key header (Roblox Secret objects) or body (curl)
+  const apiKeyValue = c.req.header("X-API-Key") || body.apiKey;
+
+  if (!apiKeyValue || !body.universeId) {
     return c.json({ error: "apiKey and universeId are required" }, 400);
   }
 
   // Hash the incoming key
-  const keyHash = createHash("sha256").update(body.apiKey).digest("hex");
+  const keyHash = createHash("sha256").update(apiKeyValue).digest("hex");
 
   // Look up key
   const apiKey = await findApiKeyByHash(keyHash);

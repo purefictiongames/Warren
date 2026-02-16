@@ -1503,7 +1503,14 @@ local RegionManager = Node.extend(function(parent)
                 end
                 state.activeRegionId = nil
             end,
-            getSpawn = nil,
+            getSpawn = function()
+                local activeRegion = state.regions[state.activeRegionId]
+                if activeRegion and activeRegion.layout then
+                    local spawn = activeRegion.layout.spawn
+                    return spawn and spawn.position
+                end
+                return nil
+            end,
             onEnter = function(player, buildResult) end,
             onLeave = function(player) end,
         })

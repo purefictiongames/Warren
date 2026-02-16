@@ -3935,21 +3935,30 @@ System.Player = (function()
             return nil
         end
 
-        -- 1. Leave current view
+        -- 0. Hold player in place during transition (prevent falling between views)
+        Player.anchorPlayer(player)
+        if characterConns[userId] then
+            characterConns[userId]:Disconnect()
+            characterConns[userId] = nil
+        end
+
+        -- 1. Build target geometry FIRST (before destroying old view)
+        playerViews[userId] = viewName
+        viewRefCount[viewName] = (viewRefCount[viewName] or 0) + 1
+
+        local buildResult = nil
+        if not viewGeometryExists[viewName] then
+            buildResult = targetDef.build(options)
+            viewGeometryExists[viewName] = true
+            System.Debug.info("System.Player", "Built geometry for:", viewName, "(first player entering)")
+        end
+
+        -- 2. Leave old view (geometry safe to destroy now — new view is ready)
         if currentViewName then
             local currentDef = viewDefs[currentViewName]
             if currentDef then
                 if currentDef.onLeave then
                     currentDef.onLeave(player)
-                end
-                if currentDef.anchor then
-                    Player.unanchorPlayer(player)
-                end
-
-                -- Disconnect CharacterAdded re-anchor connection
-                if characterConns[userId] then
-                    characterConns[userId]:Disconnect()
-                    characterConns[userId] = nil
                 end
 
                 -- Decrement ref count, destroy geometry if last player out
@@ -3965,19 +3974,7 @@ System.Player = (function()
             end
         end
 
-        -- 2. Enter target view
-        playerViews[userId] = viewName
-        viewRefCount[viewName] = (viewRefCount[viewName] or 0) + 1
-
-        -- Build geometry if it doesn't exist
-        local buildResult = nil
-        if not viewGeometryExists[viewName] then
-            buildResult = targetDef.build(options)
-            viewGeometryExists[viewName] = true
-            System.Debug.info("System.Player", "Built geometry for:", viewName, "(first player entering)")
-        end
-
-        -- 3. Spawn player
+        -- 3. Spawn player at target view's spawn point
         if targetDef.getSpawn then
             local spawnPos = targetDef.getSpawn()
             if spawnPos then
@@ -3988,10 +3985,9 @@ System.Player = (function()
             end
         end
 
-        -- 4. Anchor player + set up CharacterAdded re-anchoring
+        -- 4. Anchor/unanchor based on target view + set up CharacterAdded re-anchoring
         if targetDef.anchor then
-            Player.anchorPlayer(player)
-
+            -- Target wants player anchored — already anchored from step 0
             characterConns[userId] = player.CharacterAdded:Connect(function(character)
                 task.wait(0.5)
                 if playerViews[userId] == viewName then
@@ -4008,6 +4004,9 @@ System.Player = (function()
                     end
                 end
             end)
+        else
+            -- Target doesn't anchor — release the hold from step 0
+            Player.unanchorPlayer(player)
         end
 
         -- 5. Fire onEnter (unless suppressed)

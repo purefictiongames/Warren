@@ -1,5 +1,6 @@
 {
     "aliases": {
-        "warren": "../warren/src"
+        "warren": "../warren/src",
+        "warren-lune": "../warren/lune"
     }
 }

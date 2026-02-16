@@ -30,6 +30,15 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 local RunService = game:GetService("RunService")
 
+-- Create loading screen RemoteEvents immediately (ReplicatedFirst needs these ASAP)
+local viewReadyEvent = Instance.new("RemoteEvent")
+viewReadyEvent.Name = "ViewReady"
+viewReadyEvent.Parent = ReplicatedStorage
+
+local loadingDoneEvent = Instance.new("RemoteEvent")
+loadingDoneEvent.Name = "LoadingDone"
+loadingDoneEvent.Parent = ReplicatedStorage
+
 -- Wait for Warren package and game modules
 local Warren = require(ReplicatedStorage:WaitForChild("Warren"))
 local Components = require(ReplicatedStorage:WaitForChild("Components"))
@@ -190,30 +199,44 @@ local State = Warren.State
 -- In Studio, runs in offline mode (falls back to local DataStore)
 if not RunService:IsStudio() then
     -- Initialize SDK (auth with Registry for RPC compute calls)
-    local WarrenSDK = require(ServerStorage:WaitForChild("WarrenSDK"))
-    WarrenSDK.init({
-        apiKeySecret = "warren_api_key",
-        registryUrl = "https://registry.alpharabbitgames.com",
-    })
-    Debug.info("Bootstrap", "Warren SDK initialized (Registry RPC)")
+    -- Wrapped in pcall: SDK failure is non-fatal, game falls back to local compute
+    local sdkOk, sdkErr = pcall(function()
+        local WarrenSDK = require(ServerStorage:WaitForChild("WarrenSDK"))
+        WarrenSDK.init({
+            apiKeySecret = "warren_api_key",
+            registryUrl = "https://registry.alpharabbitgames.com",
+        })
+        Debug.info("Bootstrap", "Warren SDK initialized (Registry RPC)")
+    end)
+    if not sdkOk then
+        warn("[Bootstrap] Warren SDK init failed: " .. tostring(sdkErr))
+        warn("[Bootstrap] Game will use local compute fallback")
+    end
 
     -- Transport stays connected to Lune for state sync (save/load/visits)
-    Transport.start({
-        endpoint = "https://warren.alpharabbitgames.com",  -- Lune VPS
-        authToken = HttpService:GetSecret("warren_api_secret"),
-        pollInterval = 0.5,
-        batchSize = 10,
-    })
+    -- Independent of SDK — state sync works even if SDK auth fails
+    local transportOk, transportErr = pcall(function()
+        Transport.start({
+            endpoint = "https://warren.alpharabbitgames.com",  -- Lune VPS
+            authToken = HttpService:GetSecret("warren_api_secret"),
+            pollInterval = 0.5,
+            batchSize = 10,
+        })
 
-    -- Start state as replica (receives patches from Lune)
-    local gameStore = State.createStore()
-    State.Sync.startReplica(gameStore, {
-        onResync = function()
-            Debug.info("Bootstrap", "State resync from Lune authority")
-        end,
-    })
+        -- Start state as replica (receives patches from Lune)
+        local gameStore = State.createStore()
+        State.Sync.startReplica(gameStore, {
+            onResync = function()
+                Debug.info("Bootstrap", "State resync from Lune authority")
+            end,
+        })
 
-    Debug.info("Bootstrap", "Transport + State replica initialized")
+        Debug.info("Bootstrap", "Transport + State replica initialized")
+    end)
+    if not transportOk then
+        warn("[Bootstrap] Transport init failed: " .. tostring(transportErr))
+        warn("[Bootstrap] Game will run without state sync")
+    end
 else
     Debug.info("Bootstrap", "Studio mode — SDK/Transport offline, using local DataStore")
 end
@@ -225,11 +248,6 @@ end
 --
 -- TODO: This is a temporary hack. Should be its own script in ServerScriptService.
 -- See: src/Game/DungeonServer/_ServerScriptService/DungeonStartup.server.lua
---
--- KNOWN ISSUES:
--- [ ] Lighting is slow to load on first play. Bootstrap should wait for all
---     lighting and shaders to complete before showing environment to player.
---     Consider using a loading screen or ContentProvider:PreloadAsync().
 --------------------------------------------------------------------------------
 
 local function startInfiniteDungeon()
@@ -309,20 +327,22 @@ local function startInfiniteDungeon()
         end
 
         if PlaceGraph.isGameplayServer() then
-            -- Gameplay server: spawn player at dungeon, fire buildMiniMap + transitionEnd
+            -- Gameplay server: anchor player, position, signal loading screen
             task.spawn(function()
                 local character = player.Character or player.CharacterAdded:Wait()
-                task.wait(0.5)
+                local hrp = character:WaitForChild("HumanoidRootPart")
+                hrp.Anchored = true  -- prevent falling while loading
 
                 local activeRegion = regionManager:getActiveRegion()
                 if activeRegion and activeRegion.layout then
-                    -- Spawn at dungeon spawn point (gameplay view has getSpawn=nil)
-                    local spawn = activeRegion.layout.spawn
-                    if spawn and spawn.position then
-                        local hrp = character:FindFirstChild("HumanoidRootPart")
-                        if hrp then
-                            hrp.CFrame = CFrame.new(spawn.position[1], spawn.position[2] + 3, spawn.position[3])
-                        end
+                    -- Position at dungeon spawn point immediately
+                    local spawnData = activeRegion.layout.spawn
+                    if spawnData and spawnData.position then
+                        hrp.CFrame = CFrame.new(
+                            spawnData.position[1],
+                            spawnData.position[2] + 3,
+                            spawnData.position[3]
+                        )
                     end
 
                     regionManager.Out:Fire("buildMiniMap", {
@@ -335,9 +355,36 @@ local function startInfiniteDungeon()
                         player = player,
                     })
                 end
+
+                -- Signal client loading screen to preload container assets
+                local containerName = activeRegion and activeRegion.container
+                    and activeRegion.container.Name or nil
+                viewReadyEvent:FireClient(player, { containerName = containerName })
+
+                -- Wait for client to finish preloading, then unanchor
+                local resolved = false
+                local conn
+                conn = loadingDoneEvent.OnServerEvent:Connect(function(p)
+                    if p == player then
+                        resolved = true
+                        conn:Disconnect()
+                        if hrp and hrp.Parent then
+                            hrp.Anchored = false
+                        end
+                    end
+                end)
+                -- Safety timeout: unanchor after 15s even if client never responds
+                task.delay(15, function()
+                    if not resolved then
+                        if conn then conn:Disconnect() end
+                        if hrp and hrp.Parent then
+                            hrp.Anchored = false
+                        end
+                    end
+                end)
             end)
         else
-            -- Start server: check TeleportData for lobby re-entry
+            -- Start server: check TeleportData for lobby re-entry, then signal loading screen
             task.spawn(function()
                 local joinData = player:GetJoinData()
                 local teleportData = joinData and joinData.TeleportData
@@ -345,6 +392,10 @@ local function startInfiniteDungeon()
                     task.wait(0.5)
                     System.Player.transitionTo(player, "lobby")
                 end
+
+                -- Yield so activate()'s transitionTo completes first
+                task.wait(0)
+                viewReadyEvent:FireClient(player, { containerName = "TitleDiorama" })
             end)
         end
     end)

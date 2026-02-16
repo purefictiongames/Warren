@@ -139,7 +139,7 @@ function Boot.start(config)
     -- 4. INITIALIZE OPEN CLOUD CLIENTS
     -- -------------------------------------------------------------------------
 
-    local OpenCloud = _L and require("@warren/OpenCloud") or require(script.Parent.OpenCloud)
+    local OpenCloud = _L and require("@warren-lune/OpenCloud") or require(script.Parent.OpenCloud)
 
     local cloudConfig = {
         universeId = config.universeId,

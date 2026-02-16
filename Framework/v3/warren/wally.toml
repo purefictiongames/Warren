@@ -1,9 +1,12 @@
 [package]
 name = "purefictiongames/warren"
-version = "2.5.2"
+version = "3.0.0"
 registry = "https://registry.alpharabbitgames.com"
 realm = "shared"
-description = "Warren game framework — DOM-driven Roblox development"
+description = "Warren game framework — DOM-driven Roblox development with server-side compute"
 license = "UNLICENSED"
+authors = ["Adam Stearns <admin@alpharabbitgames.com>"]
+include = ["default.project.json", "src/**", "wally.toml"]
+exclude = ["src/Boot/**", "src/OpenCloud/**", "src/lune-compat.lua"]
 
 [dependencies]

@@ -463,9 +463,7 @@ local RegionManager = Node.extend(function(parent)
         local origin = config.origin or { 0, 20, 0 }
         local offsetOrigin = { origin[1] + regionOffset, origin[2], origin[3] }
 
-        -- Generate layout using Layout.Builder
-        -- Palette/color now resolved at instantiation time by DomBuilder
-        local layout = Layout.generate({
+        local layoutConfig = {
             seed = seed,
             regionNum = regionNum,
             origin = offsetOrigin,
@@ -481,8 +479,21 @@ local RegionManager = Node.extend(function(parent)
             scaleRange = config.scaleRange,
             material = config.material,
             padCount = padCount,  -- Direct pad count instead of roomsPerPad
-        })
+        }
 
+        if _useLuneAuthority then
+            -- Production: generate on Lune server via Transport RPC
+            local response = Transport.request("layout.action.generate", {
+                config = layoutConfig,
+            }, 30)
+            if response and response.status == "ok" then
+                return response.layout
+            end
+            warn("[RegionManager] Lune layout generation failed, falling back to local")
+        end
+
+        -- Studio fallback: generate locally
+        local layout = Layout.generate(layoutConfig)
         return layout
     end
 

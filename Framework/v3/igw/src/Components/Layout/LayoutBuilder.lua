@@ -35,8 +35,9 @@
 
 --]]
 
-local LayoutSchema = require(script.Parent.LayoutSchema)
-local LayoutContext = require(script.Parent.LayoutContext)
+local _L = script == nil  -- Lune detection (same as warren/src/init.lua)
+local LayoutSchema = _L and require("./LayoutSchema") or require(script.Parent.LayoutSchema)
+local LayoutContext = _L and require("./LayoutContext") or require(script.Parent.LayoutContext)
 
 -- Geometry system for derived dimension values
 local Geometry = nil

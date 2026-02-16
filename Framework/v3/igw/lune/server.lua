@@ -95,6 +95,26 @@ local function generateSeed()
 end
 
 --------------------------------------------------------------------------------
+-- LAYOUT GENERATION (authority — keeps generation code off client)
+--------------------------------------------------------------------------------
+
+local LayoutBuilder = require("../src/Components/Layout/LayoutBuilder")
+
+ctx.onAction("layout.action.generate", function(payload)
+    if not payload.config then
+        return { status = "rejected", reason = "missing_config" }
+    end
+
+    local layout = LayoutBuilder.generate(payload.config)
+
+    stdio.write("[IGW] Generated layout: seed=" .. (payload.config.seed or "?")
+        .. ", region=" .. (payload.config.regionNum or "?")
+        .. ", rooms=" .. (layout.rooms and #layout.rooms or 0) .. "\n")
+
+    return { status = "ok", layout = layout }
+end)
+
+--------------------------------------------------------------------------------
 -- ACTION HANDLERS
 --------------------------------------------------------------------------------
 

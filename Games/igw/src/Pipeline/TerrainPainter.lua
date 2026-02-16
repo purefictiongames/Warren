@@ -1,9 +1,7 @@
 --[[
     IGW v2 Pipeline — TerrainPainter
-    Post-mount: paints terrain shells, carves interiors, adds lava veins,
-    floor material, granite patches, and fixture clearance.
-
-    Fires buildComplete (not buildPass) to signal pipeline end.
+    Post-mount: paints terrain shells, carves interiors, carves doorways,
+    adds lava veins, floor material, granite patches, and fixture clearance.
 --]]
 
 local Warren = require(game:GetService("ReplicatedStorage").Warren)
@@ -98,11 +96,10 @@ local TerrainPainter = Node.extend({
 
             print(string.format("[TerrainPainter] Painted terrain for %d rooms", roomCount))
 
-            -- Add summary fields and fire buildComplete (NOT buildPass)
             payload.roomCount = roomCount
             payload.doorCount = payload.doors and #payload.doors or 0
 
-            self.Out:Fire("buildComplete", payload)
+            self.Out:Fire("buildPass", payload)
         end,
     },
 })

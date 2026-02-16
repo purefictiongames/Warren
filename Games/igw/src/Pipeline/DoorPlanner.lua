@@ -114,6 +114,9 @@ local DoorPlanner = Node.extend({
             local rooms = payload.rooms
             local config = payload.config
             local doors = {}
+            local roomCount = 0
+            for _ in pairs(rooms) do roomCount = roomCount + 1 end
+            print(string.format("[DoorPlanner] Starting with %d rooms", roomCount))
             local doorId = 1
 
             for id, room in pairs(rooms) do

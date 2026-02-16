@@ -22,6 +22,7 @@ local TrussBuilder = Node.extend({
             local rooms = payload.rooms
             local doors = payload.doors or {}
             local config = payload.config
+            print(string.format("[TrussBuilder] Starting with %d doors", #doors))
             local floorThreshold = config.floorThreshold or 6.5
             local wt = config.wallThickness or 1
             local trusses = {}

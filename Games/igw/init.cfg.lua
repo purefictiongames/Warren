@@ -6,7 +6,7 @@ return {
     preload = {
         "RoomMasser", "ShellBuilder", "DoorPlanner",
         "TrussBuilder", "LightBuilder", "PadBuilder",
-        "SpawnSetter", "Materializer", "DoorCutter", "TerrainPainter",
+        "SpawnSetter", "Materializer", "TerrainPainter", "DoorCutter",
     },
 
     mode = {
@@ -15,7 +15,7 @@ return {
             "DungeonOrchestrator",
             "RoomMasser", "ShellBuilder", "DoorPlanner",
             "TrussBuilder", "LightBuilder", "PadBuilder",
-            "SpawnSetter", "Materializer", "DoorCutter", "TerrainPainter",
+            "SpawnSetter", "Materializer", "TerrainPainter", "DoorCutter",
         },
         wiring = {
             DungeonOrchestrator = { "RoomMasser" },
@@ -26,13 +26,13 @@ return {
             LightBuilder        = { "PadBuilder" },
             PadBuilder          = { "SpawnSetter" },
             SpawnSetter         = { "Materializer" },
-            Materializer        = { "DoorCutter" },
-            DoorCutter          = { "TerrainPainter" },
-            TerrainPainter      = { "DungeonOrchestrator" },
+            Materializer        = { "TerrainPainter" },
+            TerrainPainter      = { "DoorCutter" },
+            DoorCutter          = { "DungeonOrchestrator" },
         },
     },
 
-    debug = { level = "info" },
+    debug = { level = "trace" },
     log   = { backend = "Memory" },
 
     config = {

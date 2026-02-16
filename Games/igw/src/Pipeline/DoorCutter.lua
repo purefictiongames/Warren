@@ -1,7 +1,7 @@
 --[[
     IGW v2 Pipeline — DoorCutter
     Post-mount: uses CSG SubtractAsync to cut door openings in walls.
-    Also carves terrain in doorways via Canvas.
+    Terminal pipeline stage — fires buildComplete.
 --]]
 
 local Warren = require(game:GetService("ReplicatedStorage").Warren)
@@ -25,6 +25,8 @@ local DoorCutter = Node.extend({
             local config = payload.config
             local wt = config.wallThickness or 1
 
+            print(string.format("[DoorCutter] Starting with %d doors", #doors))
+
             -- Build room model lookup from DOM
             local roomModels = {}
             for _, child in ipairs(Dom.getChildren(payload.dom)) do
@@ -34,7 +36,12 @@ local DoorCutter = Node.extend({
                 end
             end
 
+            local modelCount = 0
+            for _ in pairs(roomModels) do modelCount = modelCount + 1 end
+            print(string.format("[DoorCutter] Found %d room models in DOM", modelCount))
+
             local cutCount = 0
+            local failCount = 0
 
             for _, door in ipairs(doors) do
                 local cutterDepth = wt * 8
@@ -64,6 +71,11 @@ local DoorCutter = Node.extend({
                 local roomsToCheck = { door.fromRoom, door.toRoom }
                 for _, roomId in ipairs(roomsToCheck) do
                     local roomNode = roomModels[roomId]
+                    if not roomNode then
+                        warn(string.format("[DoorCutter] Room %s not found in DOM for door %d", tostring(roomId), door.id))
+                    elseif not roomNode._instance then
+                        warn(string.format("[DoorCutter] Room %s has no _instance (not mounted?) for door %d", tostring(roomId), door.id))
+                    end
                     if roomNode and roomNode._instance then
                         local roomContainer = roomNode._instance
                         for _, child in ipairs(roomContainer:GetChildren()) do
@@ -110,6 +122,13 @@ local DoorCutter = Node.extend({
 
                                         child:Destroy()
                                         cutCount = cutCount + 1
+                                    else
+                                        failCount = failCount + 1
+                                        warn(string.format(
+                                            "[DoorCutter] SubtractAsync FAILED on %s (room %s): %s",
+                                            child.Name, tostring(roomId),
+                                            tostring(result)
+                                        ))
                                     end
                                 end
                             end
@@ -117,15 +136,15 @@ local DoorCutter = Node.extend({
                     end
                 end
 
-                -- Carve terrain in doorway
+                -- Carve terrain in doorway (AFTER all terrain passes, last terrain op)
                 Canvas.carveDoorway(CFrame.new(cutterPos), cutterSize)
 
                 cutter:Destroy()
             end
 
-            print(string.format("[DoorCutter] Cut %d wall segments for %d doors", cutCount, #doors))
+            print(string.format("[DoorCutter] Cut %d wall segments for %d doors (%d CSG failures)", cutCount, #doors, failCount))
 
-            self.Out:Fire("buildPass", payload)
+            self.Out:Fire("buildComplete", payload)
         end,
     },
 })

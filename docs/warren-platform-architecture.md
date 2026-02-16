@@ -58,15 +58,15 @@ Internal games (IT GETS WORSE) get perpetual internal licenses.
 │                       │  generation        │   │
 │                       └────────┬───────────┘   │
 │                                │ reads/writes   │
-│                                ▼ warren schema  │
+│                                ▼ warren_* tables  │
 │  nginx reverse proxy (TLS)                     │
 └──────────────────────────────────────────────┘
 ```
 
 Four components:
 
-- **Directus** (existing): Admin plane — CRUD for studios, games, licenses, API keys. Operators use the Directus UI at `cms.alpharabbitgames.com` to register games and generate keys. A Directus Flow handles key generation (hash + store). Reads/writes directly to `warren` schema tables.
-- **Registry** (Node.js/Hono): Runtime plane — session auth (validate/refresh/revoke), scope enforcement, rate limiting, usage telemetry. No admin CRUD — that's all Directus. Reads `warren` schema for key/license lookups.
+- **Directus** (existing): Admin plane — CRUD for studios, games, licenses, API keys. Operators use the Directus UI at `cms.alpharabbitgames.com` to register games and generate keys. A Directus Flow handles key generation (hash + store). Reads/writes directly to `warren_*` tables in the `directus` database.
+- **Registry** (Node.js/Hono): Runtime plane — session auth (validate/refresh/revoke), scope enforcement, rate limiting, usage telemetry. No admin CRUD — that's all Directus. Reads `warren_*` tables for key/license lookups.
 - **Warren API** (Lune): Data plane — layout generation, style resolution, factory operations. Shared Mach 2 endpoints. Talks to Postgres via Registry API (not direct).
 - **Warren Authority** (Lune, per-game): Mach 3 only — dedicated process per game. Transport, state sync, OpenCloud proxy. Spawned/managed by the Registry when a Mach 3 game connects.
 
@@ -78,14 +78,14 @@ The existing Directus instance at `cms.alpharabbitgames.com` serves as the admin
 
 ### 2.1 Directus Collection Mapping
 
-Directus connects to the `warren` schema tables (see Section 3) as external collections. Each table is registered in Directus with appropriate field configuration:
+Tables live in the `public` schema with a `warren_` prefix (Directus 11 doesn't reliably support multi-schema). Each table is registered as a Directus collection:
 
 | Collection | Purpose | Key Fields |
 |------------|---------|------------|
-| `warren.studios` | Studio/org management | name, slug, owner_email, authentik_uid |
-| `warren.games` | Registered Roblox universes | studio (M2O), name, universe_id |
-| `warren.licenses` | One per game | game (O2O), tier dropdown, status dropdown, is_internal toggle |
-| `warren.api_keys` | Bearer tokens | game (M2O), key_hash (read-only), key_prefix (read-only), label, is_active toggle |
+| `warren_studios` | Studio/org management | name, slug, owner_email, authentik_uid |
+| `warren_games` | Registered Roblox universes | studio (M2O), name, universe_id |
+| `warren_licenses` | One per game | game (O2O), tier dropdown, status dropdown, is_internal toggle |
+| `warren_api_keys` | Bearer tokens | game (M2O), key_hash (read-only), key_prefix (read-only), label, is_active toggle |
 
 **Relationships configured in Directus**:
 - `games.studio_id` → M2O to `studios`
@@ -97,7 +97,7 @@ Directus connects to the `warren` schema tables (see Section 3) as external coll
 A Directus Flow triggers on `api_keys.items.create`:
 
 ```
-Trigger: items.create on warren.api_keys
+Trigger: items.create on warren_api_keys
   → Run Script (custom JS operation):
       1. Generate 48-byte random key → base64url encode → "wrn_" prefix
          e.g. "wrn_k7Bx9mQ2pL..."
@@ -135,13 +135,15 @@ Runtime-only service. No admin CRUD — all game/key/license management is done 
 **Container**: Docker, alongside existing stack
 **URL**: `https://registry.warren.gg` (or `registry.alpharabbitgames.com`)
 
-### 3.1 Database Schema (Postgres, `warren` schema)
+### 3.1 Database Schema (Postgres, `public` schema, `warren_` prefix)
+
+Tables live in the `public` schema with `warren_` prefix (Directus 11 multi-schema support is unreliable). See `infra/migrations/001_warren_schema.sql` for the full DDL.
 
 ```sql
-CREATE SCHEMA IF NOT EXISTS warren;
+-- Prefix: warren_ (in public schema)
 
 -- Studios: Organizations that own games
-CREATE TABLE warren.studios (
+CREATE TABLE warren_studios (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name            TEXT NOT NULL,
     slug            TEXT NOT NULL UNIQUE,
@@ -152,9 +154,9 @@ CREATE TABLE warren.studios (
 );
 
 -- Games: Registered Roblox universes
-CREATE TABLE warren.games (
+CREATE TABLE warren_games (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    studio_id       UUID NOT NULL REFERENCES warren.studios(id),
+    studio_id       UUID NOT NULL REFERENCES warren_studios(id),
     name            TEXT NOT NULL,
     universe_id     BIGINT NOT NULL UNIQUE,
     created_at      TIMESTAMPTZ DEFAULT now(),
@@ -162,9 +164,9 @@ CREATE TABLE warren.games (
 );
 
 -- Licenses: One per game
-CREATE TABLE warren.licenses (
+CREATE TABLE warren_licenses (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    game_id         UUID NOT NULL UNIQUE REFERENCES warren.games(id),
+    game_id         UUID NOT NULL UNIQUE REFERENCES warren_games(id),
     tier            TEXT NOT NULL CHECK (tier IN ('mach2', 'mach3')),
     status          TEXT NOT NULL CHECK (status IN ('active', 'suspended', 'expired', 'trial')),
     is_internal     BOOLEAN NOT NULL DEFAULT false,
@@ -175,9 +177,9 @@ CREATE TABLE warren.licenses (
 );
 
 -- API Keys: Bearer tokens tied to games
-CREATE TABLE warren.api_keys (
+CREATE TABLE warren_api_keys (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    game_id         UUID NOT NULL REFERENCES warren.games(id),
+    game_id         UUID NOT NULL REFERENCES warren_games(id),
     key_hash        TEXT NOT NULL UNIQUE,       -- SHA-256 of raw key
     key_prefix      TEXT NOT NULL,              -- First 12 chars for display
     label           TEXT NOT NULL DEFAULT 'default',
@@ -188,10 +190,10 @@ CREATE TABLE warren.api_keys (
 );
 
 -- Sessions: Validated auth sessions
-CREATE TABLE warren.sessions (
+CREATE TABLE warren_sessions (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    api_key_id      UUID NOT NULL REFERENCES warren.api_keys(id),
-    game_id         UUID NOT NULL REFERENCES warren.games(id),
+    api_key_id      UUID NOT NULL REFERENCES warren_api_keys(id),
+    game_id         UUID NOT NULL REFERENCES warren_games(id),
     universe_id     BIGINT NOT NULL,
     place_id        BIGINT,
     job_id          TEXT,
@@ -203,9 +205,9 @@ CREATE TABLE warren.sessions (
 );
 
 -- Usage Telemetry: Hourly buckets
-CREATE TABLE warren.usage_telemetry (
+CREATE TABLE warren_usage_telemetry (
     id              BIGSERIAL PRIMARY KEY,
-    game_id         UUID NOT NULL REFERENCES warren.games(id),
+    game_id         UUID NOT NULL REFERENCES warren_games(id),
     period_start    TIMESTAMPTZ NOT NULL,
     api_calls       INTEGER DEFAULT 0,
     transport_msgs  INTEGER DEFAULT 0,
@@ -215,7 +217,7 @@ CREATE TABLE warren.usage_telemetry (
 );
 
 -- Rate Limits: Per-tier defaults
-CREATE TABLE warren.rate_limits (
+CREATE TABLE warren_rate_limits (
     tier            TEXT NOT NULL,
     scope           TEXT NOT NULL,
     requests_per_min INTEGER NOT NULL,
@@ -398,7 +400,7 @@ The Registry acts as a process supervisor for Mach 3 authority servers:
 ```
 Mach 3 game validates → Registry checks for existing process
   → If none: spawn Lune process with game config (port, universe, OC credentials)
-  → Store PID + port in warren.game_processes table
+  → Store PID + port in warren_game_processes table
   → nginx upstream updated (or Registry proxies directly)
   → Route all transport/state/OC requests to that process
 
@@ -418,8 +420,8 @@ Crash recovery: Registry health-checks each process
 |--------|---------|
 | **DNS** | `registry.warren.gg` (or `registry.alpharabbitgames.com`) |
 | **Docker container** | Registry (Node.js/Hono) on port 8100 |
-| **Postgres** | New `warren` schema in existing database (added to `init-databases.sql`) |
-| **Directus** | Register `warren.*` tables as external collections, configure relationships, create API key generation Flow |
+| **Postgres** | `warren_*` tables in `directus` database (`infra/migrations/001_warren_schema.sql`) |
+| **Directus** | Register `warren_*` tables as Directus collections, configure relationships, create API key generation Flow |
 | **nginx** | New vhost for registry, update Warren API routing |
 | **systemd** | Template unit for Mach 3 per-game processes (`warren-game@.service`) |
 
@@ -440,7 +442,7 @@ IT GETS WORSE currently uses the framework directly (all source in ReplicatedSto
 
 ## 10. Verification Plan
 
-1. **Schema + Directus**: Run schema migration, register `warren.*` collections in Directus, create test studio + game + license + API key via Directus UI, verify Flow generates hashed key
+1. **Schema + Directus**: Run schema migration, register `warren_*` collections in Directus, create test studio + game + license + API key via Directus UI, verify Flow generates hashed key
 2. **Auth flow**: SDK init → validate → get session → verify Redis cache → verify scope enforcement (Mach 2 key rejected on transport endpoint)
 3. **Layout pipeline**: Generate layout via API → verify matches current direct-call output for same seed
 4. **Caching**: Generate same layout twice → verify second call hits cache (Redis + SDK memory)

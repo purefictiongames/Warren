@@ -1,0 +1,9 @@
+Warren API Key for IT GETS WORSE
+=================================
+Store this in Roblox Secrets as: warren_api_key
+
+wrn_BmN3IjJynAo8e98397MSa8JnkyvAGqDGteAQV9rTaHeHSyzG
+
+Universe: 9710265660
+Tier: mach3 (internal)
+Generated: 2026-02-15

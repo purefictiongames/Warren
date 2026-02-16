@@ -1,0 +1,43 @@
+--[[
+    IGW v2 Pipeline — Materializer
+    Mounts the DOM tree into workspace, creating live Roblox Instances.
+    Cleans up existing SpawnLocations before mounting.
+--]]
+
+local Warren = require(game:GetService("ReplicatedStorage").Warren)
+local Node = Warren.Node
+local Dom = Warren.Dom
+
+local Materializer = Node.extend({
+    name = "Materializer",
+    domain = "server",
+
+    Sys = {
+        onInit = function(self) end,
+        onStart = function(self) end,
+        onStop = function(self) end,
+    },
+
+    In = {
+        onBuildPass = function(self, payload)
+            -- Remove existing dungeon SpawnLocations from workspace
+            for _, child in ipairs(workspace:GetChildren()) do
+                if child:IsA("SpawnLocation") and child.Name:match("^Spawn_Region") then
+                    child:Destroy()
+                end
+            end
+
+            -- Mount the entire DOM tree into workspace
+            Dom.mount(payload.dom, workspace)
+
+            -- Store the container Instance for downstream nodes
+            payload.container = payload.dom._instance
+
+            print("[Materializer] DOM mounted to workspace")
+
+            self.Out:Fire("buildPass", payload)
+        end,
+    },
+})
+
+return Materializer

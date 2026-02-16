@@ -308,9 +308,22 @@ function DomBuilder.paintTerrain(layout, options)
     local useTerrainShell = config.useTerrainShell ~= false
     if not useTerrainShell then return end
 
-    local regionNum = layout.regionNum or 1
-    local paletteClass = options.paletteClass or StyleBridge.getPaletteClass(regionNum)
-    local palette = StyleBridge.resolvePalette(paletteClass, Styles, ClassResolver)
+    local palette
+    if options.resolvedPalette then
+        -- Production: use pre-resolved palette (RGB tables → Color3)
+        local rp = options.resolvedPalette
+        palette = {
+            wallColor = Color3.fromRGB(rp.wallColor[1], rp.wallColor[2], rp.wallColor[3]),
+            floorColor = Color3.fromRGB(rp.floorColor[1], rp.floorColor[2], rp.floorColor[3]),
+            lightColor = Color3.fromRGB(rp.lightColor[1], rp.lightColor[2], rp.lightColor[3]),
+            fixtureColor = Color3.fromRGB(rp.fixtureColor[1], rp.fixtureColor[2], rp.fixtureColor[3]),
+        }
+    else
+        -- Studio fallback: resolve locally
+        local regionNum = layout.regionNum or 1
+        local paletteClass = options.paletteClass or StyleBridge.getPaletteClass(regionNum)
+        palette = StyleBridge.resolvePalette(paletteClass, Styles, ClassResolver)
+    end
 
     local wallMaterial = Enum.Material.Rock
     local floorMaterial = Enum.Material.CrackedLava
@@ -536,14 +549,23 @@ function DomBuilder.instantiate(layout, options)
     end
 
     -- Set up the style resolver
-    local resolver = StyleBridge.createResolver(Styles, ClassResolver)
-    Dom.setStyleResolver(resolver)
+    if options.resolvedStyles then
+        -- Production: use pre-resolved style map from server (simple table lookup)
+        local resolvedClasses = options.resolvedStyles.resolvedClasses
+        Dom.setStyleResolver(function(node)
+            return resolvedClasses[node._classes] or {}
+        end)
+    else
+        -- Studio fallback: resolve locally via cascade
+        local resolver = StyleBridge.createResolver(Styles, ClassResolver)
+        Dom.setStyleResolver(resolver)
+    end
 
     -- Build DOM tree
     local treeData = DomBuilder.buildTree(layout, {
         name = options.name,
         regionId = options.regionId,
-        paletteClass = options.paletteClass,
+        paletteClass = options.paletteClass or (options.resolvedStyles and options.resolvedStyles.paletteClass),
     })
 
     -- Determine parent Instance
@@ -561,7 +583,10 @@ function DomBuilder.instantiate(layout, options)
     print(string.format("[DomBuilder] Region %d using palette: %s", regionNum, paletteClass))
 
     -- Paint terrain BEFORE mount (so shells exist when parts appear)
-    DomBuilder.paintTerrain(layout, { paletteClass = paletteClass })
+    DomBuilder.paintTerrain(layout, {
+        paletteClass = paletteClass,
+        resolvedPalette = options.resolvedStyles and options.resolvedStyles.palette,
+    })
 
     -- Mount the DOM tree -> creates all Instances
     Dom.mount(treeData.root, parentInstance)

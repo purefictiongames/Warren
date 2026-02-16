@@ -487,14 +487,14 @@ local RegionManager = Node.extend(function(parent)
                 config = layoutConfig,
             }, 30)
             if response and response.status == "ok" then
-                return response.layout
+                return response.layout, response.styles  -- layout + pre-resolved styles
             end
             warn("[RegionManager] Lune layout generation failed, falling back to local")
         end
 
-        -- Studio fallback: generate locally
+        -- Studio fallback: generate locally (no pre-resolved styles)
         local layout = Layout.generate(layoutConfig)
-        return layout
+        return layout, nil
     end
 
     --[[
@@ -578,8 +578,9 @@ local RegionManager = Node.extend(function(parent)
                 local layout = nil
 
                 -- Regenerate layout from seed (deterministic)
+                local styles = nil
                 if savedRegion.seed and savedRegion.regionNum then
-                    layout = generateLayout(
+                    layout, styles = generateLayout(
                         self,
                         savedRegion.seed,
                         savedRegion.regionNum,
@@ -604,6 +605,7 @@ local RegionManager = Node.extend(function(parent)
                 state.regions[regionId] = {
                     id = savedRegion.id,
                     layout = layout,
+                    resolvedStyles = styles,
                     mapType = savedRegion.mapType,
                     padLinks = savedRegion.padLinks or {},
                     isActive = false,
@@ -707,7 +709,7 @@ local RegionManager = Node.extend(function(parent)
         end
     end
 
-    local function instantiateLayout(self, regionId, layout)
+    local function instantiateLayout(self, regionId, layout, resolvedStyles)
         local state = getState(self)
         local region = state.regions[regionId]
 
@@ -715,6 +717,7 @@ local RegionManager = Node.extend(function(parent)
         local result = Layout.instantiate(layout, {
             name = "Region_" .. regionId,
             regionId = regionId,
+            resolvedStyles = resolvedStyles,
         })
 
         -- Store runtime references
@@ -994,12 +997,13 @@ local RegionManager = Node.extend(function(parent)
         local mapType, padCount = determineMapType(self, false)
 
         -- Generate layout with determined pad count
-        local layout = generateLayout(self, newSeed, regionNum, padCount)
+        local layout, styles = generateLayout(self, newSeed, regionNum, padCount)
 
         -- Store region with layout
         state.regions[newRegionId] = {
             id = newRegionId,
             layout = layout,
+            resolvedStyles = styles,
             padLinks = {},
             isActive = false,
             -- Runtime refs (set after instantiation)
@@ -1010,7 +1014,7 @@ local RegionManager = Node.extend(function(parent)
         }
 
         -- Instantiate
-        local result = instantiateLayout(self, newRegionId, layout)
+        local result = instantiateLayout(self, newRegionId, layout, styles)
 
         -- Create JumpPad nodes for this region
         createJumpPadsForRegion(self, newRegionId, result.container)
@@ -1075,7 +1079,7 @@ local RegionManager = Node.extend(function(parent)
         destroyZonesForRegion(self, targetRegionId)
 
         -- Reinstantiate from stored layout (no regeneration!)
-        local result = instantiateLayout(self, targetRegionId, targetRegion.layout)
+        local result = instantiateLayout(self, targetRegionId, targetRegion.layout, targetRegion.resolvedStyles)
 
         -- Create JumpPad nodes for this region
         createJumpPadsForRegion(self, targetRegionId, result.container)
@@ -1529,12 +1533,13 @@ local RegionManager = Node.extend(function(parent)
         local mapType, padCount = determineMapType(self, false, sourceMapType)
 
         -- Generate layout with determined pad count
-        local layout = generateLayout(self, newSeed, regionNum, padCount)
+        local layout, styles = generateLayout(self, newSeed, regionNum, padCount)
 
         -- Store region with layout and map type
         state.regions[newRegionId] = {
             id = newRegionId,
             layout = layout,
+            resolvedStyles = styles,
             mapType = mapType,  -- Store for future branching decisions
             padLinks = {},
             isActive = false,
@@ -1545,7 +1550,7 @@ local RegionManager = Node.extend(function(parent)
         }
 
         -- Instantiate
-        local result = instantiateLayout(self, newRegionId, layout)
+        local result = instantiateLayout(self, newRegionId, layout, styles)
 
         -- Create JumpPad nodes for this region
         createJumpPadsForRegion(self, newRegionId, result.container)
@@ -1630,7 +1635,7 @@ local RegionManager = Node.extend(function(parent)
         destroyZonesForRegion(self, targetRegionId)
 
         -- Reinstantiate from stored layout (no regeneration!)
-        local result = instantiateLayout(self, targetRegionId, targetRegion.layout)
+        local result = instantiateLayout(self, targetRegionId, targetRegion.layout, targetRegion.resolvedStyles)
 
         -- Create JumpPad nodes for this region
         createJumpPadsForRegion(self, targetRegionId, result.container)
@@ -2384,7 +2389,7 @@ local RegionManager = Node.extend(function(parent)
                 -- Data loaded successfully - instantiate the active region
                 local activeRegion = state.regions[state.activeRegionId]
                 if activeRegion and activeRegion.layout then
-                    local result = instantiateLayout(self, state.activeRegionId, activeRegion.layout)
+                    local result = instantiateLayout(self, state.activeRegionId, activeRegion.layout, activeRegion.resolvedStyles)
 
                     -- Create JumpPad nodes for this region
                     createJumpPadsForRegion(self, state.activeRegionId, result.container)
@@ -2413,12 +2418,13 @@ local RegionManager = Node.extend(function(parent)
             local mapType, padCount = determineMapType(self, true)
 
             -- Generate layout
-            local layout = generateLayout(self, seed, 1, padCount)
+            local layout, styles = generateLayout(self, seed, 1, padCount)
 
             -- Store region with layout and map type
             state.regions[regionId] = {
                 id = regionId,
                 layout = layout,
+                resolvedStyles = styles,
                 mapType = mapType,  -- Store for future branching decisions
                 padLinks = {},
                 isActive = true,
@@ -2429,7 +2435,7 @@ local RegionManager = Node.extend(function(parent)
             }
 
             -- Instantiate
-            local result = instantiateLayout(self, regionId, layout)
+            local result = instantiateLayout(self, regionId, layout, styles)
 
             -- Create JumpPad nodes for this region
             createJumpPadsForRegion(self, regionId, result.container)

@@ -99,6 +99,100 @@ end
 --------------------------------------------------------------------------------
 
 local LayoutBuilder = require("../src/Components/Layout/LayoutBuilder")
+local Styles = Warren.Styles
+local ClassResolver = Warren.ClassResolver
+
+--------------------------------------------------------------------------------
+-- STYLE RESOLUTION (pre-resolve on server, send alongside layout)
+--------------------------------------------------------------------------------
+
+-- Palette names (same list as StyleBridge.getPaletteClass)
+local PALETTE_NAMES = {
+    "palette-classic-lava",
+    "palette-blue-inferno",
+    "palette-toxic-depths",
+    "palette-void-abyss",
+    "palette-golden-forge",
+    "palette-frozen-fire",
+    "palette-blood-sanctum",
+    "palette-solar-furnace",
+    "palette-nether-realm",
+    "palette-spectral-cavern",
+}
+
+-- Maps element role class -> which palette color property to use for Color
+local COLOR_ROLE_MAP = {
+    ["cave-wall"]           = "wallColor",
+    ["cave-ceiling"]        = "wallColor",
+    ["cave-floor"]          = "floorColor",
+    ["cave-light-fixture"]  = "fixtureColor",
+    ["cave-light-spacer"]   = "wallColor",
+    ["cave-pad-base"]       = "floorColor",
+    ["cave-point-light"]    = "lightColor",
+}
+
+-- Class combos that DomBuilder.buildTree() produces (with palette)
+local PALETTE_CLASSES = {
+    "cave-wall", "cave-ceiling", "cave-floor",
+    "cave-light-spacer", "cave-light-fixture",
+    "cave-point-light", "cave-pad-base",
+}
+
+-- Non-palette classes
+local PLAIN_CLASSES = {
+    "cave-zone", "cave-truss", "cave-pad", "cave-spawn",
+}
+
+local function resolveStylesForRegion(regionNum)
+    local paletteClass = PALETTE_NAMES[((regionNum - 1) % #PALETTE_NAMES) + 1]
+    local reservedKeys = { id = true, class = true, type = true }
+    local resolvedClasses = {}
+
+    -- Resolve palette-bearing class combos
+    for _, baseClass in ipairs(PALETTE_CLASSES) do
+        local classStr = baseClass .. " " .. paletteClass
+        local resolved = ClassResolver.resolve(
+            { class = classStr }, Styles, { reservedKeys = reservedKeys }
+        )
+
+        -- Apply color role mapping (same logic as StyleBridge.createResolver)
+        local roleKey = COLOR_ROLE_MAP[baseClass]
+        if roleKey and resolved[roleKey] and not resolved.Color then
+            resolved.Color = resolved[roleKey]
+        end
+
+        -- Clean up palette meta-properties (not real Instance properties)
+        resolved.wallColor = nil
+        resolved.floorColor = nil
+        resolved.lightColor = nil
+        resolved.fixtureColor = nil
+
+        resolvedClasses[classStr] = resolved
+    end
+
+    -- Resolve plain classes (no palette)
+    for _, className in ipairs(PLAIN_CLASSES) do
+        resolvedClasses[className] = ClassResolver.resolve(
+            { class = className }, Styles, { reservedKeys = reservedKeys }
+        )
+    end
+
+    -- Resolve palette colors for terrain painting (kept as RGB tables)
+    local paletteResolved = ClassResolver.resolve(
+        { class = paletteClass }, Styles, { reservedKeys = reservedKeys }
+    )
+
+    return {
+        resolvedClasses = resolvedClasses,
+        palette = {
+            wallColor = paletteResolved.wallColor,
+            floorColor = paletteResolved.floorColor,
+            lightColor = paletteResolved.lightColor,
+            fixtureColor = paletteResolved.fixtureColor,
+        },
+        paletteClass = paletteClass,
+    }
+end
 
 ctx.onAction("layout.action.generate", function(payload)
     if not payload.config then
@@ -106,12 +200,14 @@ ctx.onAction("layout.action.generate", function(payload)
     end
 
     local layout = LayoutBuilder.generate(payload.config)
+    local styles = resolveStylesForRegion(payload.config.regionNum or 1)
 
     stdio.write("[IGW] Generated layout: seed=" .. (payload.config.seed or "?")
         .. ", region=" .. (payload.config.regionNum or "?")
-        .. ", rooms=" .. (layout.rooms and #layout.rooms or 0) .. "\n")
+        .. ", rooms=" .. (layout.rooms and #layout.rooms or 0)
+        .. ", styles=" .. (styles.paletteClass or "?") .. "\n")
 
-    return { status = "ok", layout = layout }
+    return { status = "ok", layout = layout, styles = styles }
 end)
 
 --------------------------------------------------------------------------------

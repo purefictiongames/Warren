@@ -94,8 +94,9 @@ function extractToken(header: string | undefined): string | null {
 }
 
 /**
- * Wrap a return value — if it's an object, store it as a ref.
+ * Wrap a return value — if it's an object with methods, store it as a ref.
  * Primitives (string, number, boolean, null) pass through directly.
+ * Data-only objects (layout, styles) pass through directly.
  */
 function wrapResult(
   value: unknown,
@@ -104,10 +105,15 @@ function wrapResult(
   if (value === null || value === undefined) return value;
   if (typeof value !== "object") return value;
   if (Array.isArray(value)) {
-    // Arrays of primitives pass through; arrays of objects get wrapped
-    return value.map((v) => wrapResult(v, sessionToken));
+    return (value as unknown[]).map((v) => wrapResult(v, sessionToken));
   }
-  // Object → store as ref
+  // Only wrap objects with methods (DOM elements, stateful objects)
+  // Data-only objects (layout, styles) pass through directly
+  const hasMethod = Object.values(value as Record<string, unknown>).some(
+    (v) => typeof v === "function"
+  );
+  if (!hasMethod) return value;
+
   const refId = storeRef(value, sessionToken);
   return { _ref: refId };
 }
@@ -136,9 +142,9 @@ export function registerModule(
 }
 
 /**
- * Execute a single RPC call.
+ * Execute a single RPC call. Async to support proxy modules that return Promises.
  */
-function executeCall(
+async function executeCall(
   call: {
     module?: string;
     method: string;
@@ -146,7 +152,7 @@ function executeCall(
     target?: string;
   },
   sessionToken: string
-): unknown {
+): Promise<unknown> {
   // If there's a target ref, call method on the referenced object
   if (call.target) {
     const obj = getRef(call.target, sessionToken);
@@ -157,7 +163,7 @@ function executeCall(
     const target = obj as Record<string, unknown>;
     const method = target[call.method];
     if (typeof method === "function") {
-      return method.apply(target, call.args ?? []);
+      return await method.apply(target, call.args ?? []);
     }
     // Maybe it's a property access (no args)
     if (call.method in target && (!call.args || call.args.length === 0)) {
@@ -200,7 +206,7 @@ function executeCall(
     return arg;
   });
 
-  return method(...args);
+  return await method(...args);
 }
 
 /**
@@ -223,7 +229,7 @@ rpc.post("/", async (c) => {
   }>();
 
   try {
-    const rawResult = executeCall(call, token);
+    const rawResult = await executeCall(call, token);
     const value = wrapResult(rawResult, token);
     return c.json({ value });
   } catch (err) {
@@ -260,7 +266,7 @@ rpc.post("/batch", async (c) => {
   const results: unknown[] = [];
   for (const call of body.calls) {
     try {
-      const rawResult = executeCall(call, token);
+      const rawResult = await executeCall(call, token);
       results.push(wrapResult(rawResult, token));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

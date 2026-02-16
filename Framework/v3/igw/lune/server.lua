@@ -98,6 +98,9 @@ end
 -- LAYOUT GENERATION (authority — keeps generation code off client)
 --------------------------------------------------------------------------------
 
+local net = require("@lune/net")
+local serde = require("@lune/serde")
+
 local LayoutBuilder = require("../src/Components/Layout/LayoutBuilder")
 local Styles = Warren.Styles
 local ClassResolver = Warren.ClassResolver
@@ -194,7 +197,8 @@ local function resolveStylesForRegion(regionNum)
     }
 end
 
-ctx.onAction("layout.action.generate", function(payload)
+-- Named handler (shared by Transport and RPC dispatch)
+local function handleLayoutGenerate(payload)
     if not payload.config then
         return { status = "rejected", reason = "missing_config" }
     end
@@ -208,7 +212,10 @@ ctx.onAction("layout.action.generate", function(payload)
         .. ", styles=" .. (styles.paletteClass or "?") .. "\n")
 
     return { status = "ok", layout = layout, styles = styles }
-end)
+end
+
+-- Register with Transport (existing envelope-based flow)
+ctx.onAction("layout.action.generate", handleLayoutGenerate)
 
 --------------------------------------------------------------------------------
 -- ACTION HANDLERS
@@ -359,10 +366,49 @@ ctx.onAction("state.action.visitRoom", function(payload)
 end)
 
 --------------------------------------------------------------------------------
+-- SYNCHRONOUS RPC SERVER (Registry → Lune compute calls)
+--------------------------------------------------------------------------------
+-- Separate from Transport's async /send /poll protocol.
+-- The Registry proxies stateless compute (layout, styles) through this endpoint.
+-- State-related handlers (save/load/clear/visit) stay Transport-only.
+
+local rpcHandlers = {
+    ["layout.action.generate"] = handleLayoutGenerate,
+}
+
+local rpcPort = config.port + 1  -- 8091
+net.serve(rpcPort, function(request)
+    if request.method ~= "POST" or request.path ~= "/rpc" then
+        return { status = 404, body = '{"error":"not_found"}' }
+    end
+
+    -- Auth check (same token as Transport)
+    local auth = request.headers["authorization"] or ""
+    if auth ~= "Bearer " .. config.authToken then
+        return { status = 401, body = '{"error":"unauthorized"}' }
+    end
+
+    local body = serde.decode("json", request.body)
+    local handler = rpcHandlers[body.action]
+    if not handler then
+        return { status = 404, body = serde.encode("json", { error = "action_not_found", action = body.action }) }
+    end
+
+    local ok, result = pcall(handler, body.payload)
+    if ok then
+        return { status = 200, body = serde.encode("json", result) }
+    else
+        return { status = 500, body = serde.encode("json", { error = tostring(result) }) }
+    end
+end)
+
+stdio.write("[IGW] RPC server listening on port " .. rpcPort .. "\n")
+
+--------------------------------------------------------------------------------
 -- KEEP ALIVE
 --------------------------------------------------------------------------------
 
-stdio.write("[IGW] Action handlers registered. Listening on port " .. config.port .. "\n")
+stdio.write("[IGW] Action handlers registered. Transport on port " .. config.port .. "\n")
 stdio.write("[IGW] Press Ctrl+C to stop.\n\n")
 
 -- Lune's net.serve runs in the background — script stays alive

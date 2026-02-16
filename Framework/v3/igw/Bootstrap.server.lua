@@ -27,6 +27,7 @@
 
 local HttpService = game:GetService("HttpService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerStorage = game:GetService("ServerStorage")
 local RunService = game:GetService("RunService")
 
 -- Wait for Warren package and game modules
@@ -185,9 +186,18 @@ IPC.start()
 local Transport = Warren.Transport
 local State = Warren.State
 
--- Start transport (connects to Lune VPS)
+-- Start transport + SDK (connects to Lune VPS + Warren Registry)
 -- In Studio, runs in offline mode (falls back to local DataStore)
 if not RunService:IsStudio() then
+    -- Initialize SDK (auth with Registry for RPC compute calls)
+    local WarrenSDK = require(ServerStorage:WaitForChild("WarrenSDK"))
+    WarrenSDK.init({
+        apiKeySecret = "warren_api_key",
+        registryUrl = "https://registry.alpharabbitgames.com",
+    })
+    Debug.info("Bootstrap", "Warren SDK initialized (Registry RPC)")
+
+    -- Transport stays connected to Lune for state sync (save/load/visits)
     Transport.start({
         endpoint = "https://warren.alpharabbitgames.com",  -- Lune VPS
         authToken = HttpService:GetSecret("warren_api_secret"),
@@ -205,7 +215,7 @@ if not RunService:IsStudio() then
 
     Debug.info("Bootstrap", "Transport + State replica initialized")
 else
-    Debug.info("Bootstrap", "Studio mode — Transport offline, using local DataStore")
+    Debug.info("Bootstrap", "Studio mode — SDK/Transport offline, using local DataStore")
 end
 
 --------------------------------------------------------------------------------
@@ -364,6 +374,13 @@ game:BindToClose(function()
 
     -- Despawn region manager via IPC (handles all dungeon cleanup)
     IPC.despawn("InfiniteDungeon")
+
+    -- Revoke SDK session with Registry
+    if not RunService:IsStudio() then
+        local WarrenSDK = require(ServerStorage.WarrenSDK)
+        WarrenSDK.shutdown()
+        Debug.info("Bootstrap", "Warren SDK session revoked")
+    end
 
     Warren.System.stopAll()
     Log.shutdown()

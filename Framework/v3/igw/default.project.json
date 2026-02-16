@@ -23,6 +23,12 @@
         "$path": "Game"
       }
     },
+    "ServerStorage": {
+      "$className": "ServerStorage",
+      "WarrenSDK": {
+        "$path": "../warren-sdk"
+      }
+    },
     "ServerScriptService": {
       "$className": "ServerScriptService",
       "Bootstrap": {

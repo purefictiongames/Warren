@@ -5,12 +5,11 @@
     The SDK translates local API calls into REST requests transparently.
 
     Usage:
-        local Warren = require(ReplicatedStorage.WarrenSDK)
+        local Warren = require(ServerStorage.WarrenSDK)
 
         local session = Warren.init({
             apiKeySecret = "warren_api_key",
             registryUrl = "https://registry.alpharabbitgames.com",
-            warrenUrl = "https://warren.alpharabbitgames.com",
         })
 
         -- These look local but are RPC calls:
@@ -31,13 +30,12 @@ Warren._config = nil
     Initialize the SDK. Authenticates with the Registry and sets up
     module proxies for transparent RPC.
 
-    @param config { apiKeySecret: string, registryUrl: string, warrenUrl: string }
+    @param config { apiKeySecret: string, registryUrl: string }
     @return { tier: string, scopes: {string}, expiresAt: string }
 ]]
 function Warren.init(config)
     assert(config.apiKeySecret, "apiKeySecret is required")
     assert(config.registryUrl, "registryUrl is required")
-    assert(config.warrenUrl, "warrenUrl is required")
 
     Warren._config = config
 
@@ -94,7 +92,7 @@ function Warren.call(moduleName, method, ...)
     assert(Warren._config, "Warren.init() must be called first")
 
     local args = { ... }
-    local result = Http.rpc(Warren._config.warrenUrl, Warren._session.sessionToken, {
+    local result = Http.rpc(Warren._config.registryUrl, Warren._session.sessionToken, {
         module = moduleName,
         method = method,
         args = args,
@@ -102,7 +100,7 @@ function Warren.call(moduleName, method, ...)
 
     -- If the result is a remote reference, wrap it in a Proxy
     if type(result) == "table" and result._ref then
-        return Proxy.new(Warren._config.warrenUrl, Warren._session.sessionToken, result._ref)
+        return Proxy.new(Warren._config.registryUrl, Warren._session.sessionToken, result._ref)
     end
 
     return result
@@ -119,12 +117,12 @@ function Warren.batch(calls)
     assert(Warren._session, "Warren.init() must be called first")
     assert(Warren._config, "Warren.init() must be called first")
 
-    local results = Http.rpcBatch(Warren._config.warrenUrl, Warren._session.sessionToken, calls)
+    local results = Http.rpcBatch(Warren._config.registryUrl, Warren._session.sessionToken, calls)
 
     -- Wrap any remote references in proxies
     for i, result in ipairs(results) do
         if type(result) == "table" and result._ref then
-            results[i] = Proxy.new(Warren._config.warrenUrl, Warren._session.sessionToken, result._ref)
+            results[i] = Proxy.new(Warren._config.registryUrl, Warren._session.sessionToken, result._ref)
         end
     end
 

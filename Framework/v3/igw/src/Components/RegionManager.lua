@@ -112,6 +112,7 @@
 
 local Players = game:GetService("Players")
 local DataStoreService = game:GetService("DataStoreService")
+local ServerStorage = game:GetService("ServerStorage")
 local RunService = game:GetService("RunService")
 local Warren = require(game:GetService("ReplicatedStorage").Warren)
 local Node = Warren.Node
@@ -482,14 +483,15 @@ local RegionManager = Node.extend(function(parent)
         }
 
         if _useLuneAuthority then
-            -- Production: generate on Lune server via Transport RPC
-            local response = Transport.request("layout.action.generate", {
-                config = layoutConfig,
-            }, 30)
-            if response and response.status == "ok" then
-                return response.layout, response.styles  -- layout + pre-resolved styles
+            -- Production: generate via SDK → Registry → Lune RPC
+            local ok, result = pcall(function()
+                local WarrenSDK = require(ServerStorage.WarrenSDK)
+                return WarrenSDK.Layout.generate(layoutConfig)
+            end)
+            if ok and result and result.status == "ok" then
+                return result.layout, result.styles  -- layout + pre-resolved styles
             end
-            warn("[RegionManager] Lune layout generation failed, falling back to local")
+            warn("[RegionManager] SDK layout generation failed, falling back to local")
         end
 
         -- Studio fallback: generate locally (no pre-resolved styles)

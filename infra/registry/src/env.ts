@@ -10,4 +10,6 @@ export const env = {
   redisUrl: required("REDIS_URL"),
   sessionTtl: parseInt(process.env.SESSION_TTL_SECONDS || "1800", 10),
   sessionTokenBytes: parseInt(process.env.SESSION_TOKEN_BYTES || "32", 10),
+  luneRpcUrl: process.env.LUNE_RPC_URL || "http://localhost:8091/rpc",
+  luneAuthToken: process.env.LUNE_AUTH_TOKEN || "",
 };

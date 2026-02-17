@@ -299,6 +299,12 @@ return {
             Range = 60,
             Shadows = false,
         },
+        ["cave-torch-light"] = {
+            Brightness = 0.5,
+            Range = 45,
+            Color = { 255, 180, 80 },
+            Shadows = false,
+        },
         ["ice-spot-light"] = {
             Brightness = 0.5,
             Range = 50,

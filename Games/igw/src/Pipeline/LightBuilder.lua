@@ -1,6 +1,8 @@
 --[[
     IGW v2 Pipeline — LightBuilder
     Places one light fixture per room on a wall without a door.
+    Plan phase: adds DOM elements before mount.
+    Skips outdoor biomes (biome.skipLights).
 --]]
 
 local WALL_ORDER = { "N", "S", "E", "W" }
@@ -16,13 +18,14 @@ return {
     },
 
     In = {
-        onBuildPass = function(self, payload)
+        onBuildLights = function(self, payload)
             local biome = payload.biome or {}
 
             -- Skip light fixtures for outdoor biomes (daylight)
             if biome.skipLights then
                 payload.lights = {}
-                self.Out:Fire("buildPass", payload)
+                print("[LightBuilder] Skipped — outdoor biome")
+                self.Out:Fire("nodeComplete", payload)
                 return
             end
 
@@ -76,7 +79,6 @@ return {
                 end
             end
 
-            local biome = payload.biome or {}
             local lightType = biome.lightType or "PointLight"
             local lightStyle = biome.lightStyle or "cave-point-light"
 
@@ -109,7 +111,8 @@ return {
                     room.position[2] + room.dims[2] / 2 - 2,
                     room.position[3],
                 }
-                lightPos[wall.axis] = room.position[wall.axis] + wall.dir * (room.dims[wall.axis] / 2 - 0.1)
+                lightPos[wall.axis] = room.position[wall.axis]
+                    + wall.dir * (room.dims[wall.axis] / 2 - 0.1)
 
                 local lightSize
                 if wall.sizeAxis == 1 then
@@ -118,7 +121,6 @@ return {
                     lightSize = { 0.3, 1, stripWidth }
                 end
 
-                -- Wall direction for spacer offset
                 local wallDirs = {
                     N = {0, 0, 1}, S = {0, 0, -1},
                     E = {1, 0, 0}, W = {-1, 0, 0},
@@ -165,18 +167,14 @@ return {
                 table.insert(lights, {
                     id = lightId,
                     roomId = id,
-                    position = lightPos,
-                    size = lightSize,
                     wall = chosenWall,
                 })
                 lightId = lightId + 1
             end
 
             payload.lights = lights
-
             print(string.format("[LightBuilder] Built %d lights", #lights))
-
-            self.Out:Fire("buildPass", payload)
+            self.Out:Fire("nodeComplete", payload)
         end,
     },
 }

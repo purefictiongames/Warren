@@ -14,7 +14,7 @@ return {
     },
 
     In = {
-        onBuildPass = function(self, payload)
+        onBuildShells = function(self, payload)
             local Dom = self._System.Dom
             local rooms = payload.rooms
             local paletteClass = payload.paletteClass or ""
@@ -113,7 +113,7 @@ return {
                 }))
             end
 
-            self.Out:Fire("buildPass", payload)
+            self.Out:Fire("nodeComplete", payload)
         end,
     },
 }

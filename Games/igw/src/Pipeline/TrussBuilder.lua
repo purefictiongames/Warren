@@ -1,6 +1,7 @@
 --[[
     IGW v2 Pipeline — TrussBuilder
     Creates TrussPart elements for doors that need vertical connectors.
+    Plan phase: adds DOM elements before mount.
 --]]
 
 return {
@@ -14,11 +15,10 @@ return {
     },
 
     In = {
-        onBuildPass = function(self, payload)
+        onBuildTrusses = function(self, payload)
             local Dom = self._System.Dom
             local rooms = payload.rooms
             local doors = payload.doors or {}
-            print(string.format("[TrussBuilder] Starting with %d doors", #doors))
             local floorThreshold = self:getAttribute("floorThreshold") or 6.5
             local wt = self:getAttribute("wallThickness") or 1
             local trusses = {}
@@ -44,53 +44,49 @@ return {
 
                     local trussX = door.center[1] - door.width / 2 + 1
 
-                    local trussNode = Dom.createElement("TrussPart", {
+                    Dom.appendChild(payload.dom, Dom.createElement("TrussPart", {
                         class = "cave-truss",
                         Name = "Truss_" .. trussId,
                         Size = { 2, trussHeight, 2 },
                         Position = { trussX, lowerFloor + trussHeight / 2, door.center[3] },
-                    })
-                    Dom.appendChild(payload.dom, trussNode)
+                    }))
 
                     table.insert(trusses, {
                         id = trussId,
                         doorId = door.id,
-                        position = { trussX, lowerFloor + trussHeight / 2, door.center[3] },
-                        size = { 2, trussHeight, 2 },
                         type = "ceiling",
                     })
                     trussId = trussId + 1
                 else
                     -- Wall hole: check each room independently
-                    local roomsToCheck = {
+                    for _, entry in ipairs({
                         { room = roomA, id = door.fromRoom },
                         { room = roomB, id = door.toRoom },
-                    }
-
-                    for _, entry in ipairs(roomsToCheck) do
+                    }) do
                         local room = entry.room
                         local wallBottom = room.position[2] - room.dims[2] / 2
                         local holeBottom = door.bottom
                         local dist = holeBottom - wallBottom
 
                         if dist > floorThreshold then
-                            local trussPos = { door.center[1], wallBottom + dist / 2, door.center[3] }
+                            local trussPos = {
+                                door.center[1],
+                                wallBottom + dist / 2,
+                                door.center[3],
+                            }
                             local dirToRoom = room.position[door.axis] > door.center[door.axis] and 1 or -1
                             trussPos[door.axis] = door.center[door.axis] + dirToRoom * (wt / 2 + 1)
 
-                            local trussNode = Dom.createElement("TrussPart", {
+                            Dom.appendChild(payload.dom, Dom.createElement("TrussPart", {
                                 class = "cave-truss",
                                 Name = "Truss_" .. trussId,
                                 Size = { 2, dist, 2 },
                                 Position = { trussPos[1], trussPos[2], trussPos[3] },
-                            })
-                            Dom.appendChild(payload.dom, trussNode)
+                            }))
 
                             table.insert(trusses, {
                                 id = trussId,
                                 doorId = door.id,
-                                position = trussPos,
-                                size = { 2, dist, 2 },
                                 type = "wall",
                             })
                             trussId = trussId + 1
@@ -100,10 +96,8 @@ return {
             end
 
             payload.trusses = trusses
-
             print(string.format("[TrussBuilder] Built %d trusses", #trusses))
-
-            self.Out:Fire("buildPass", payload)
+            self.Out:Fire("nodeComplete", payload)
         end,
     },
 }

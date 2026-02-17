@@ -1,11 +1,11 @@
 --[[
     IGW v2 — DungeonOrchestrator
-    Top-level game node. Owns dungeon lifecycle.
+    Hub-and-spoke pipeline orchestrator. Calls each node sequentially
+    via unique signals, waits for nodeComplete response before proceeding.
 
-    On start: applies lighting, sets up style resolver, creates DOM root,
-    fires buildPass into the pipeline.
-
-    Receives buildComplete when pipeline finishes.
+    Receives buildDungeon from WorldMapOrchestrator.
+    Sets up lighting, DOM root, then runs the build pipeline.
+    Fires dungeonComplete when done.
 --]]
 
 return {
@@ -14,20 +14,119 @@ return {
 
     Sys = {
         onInit = function(self)
-            self._config = self:getAttribute("config") or {}
+            self._gotResponse = false
+            self._container = nil
         end,
 
-        onStart = function(self)
-            local Debug = self._System and self._System.Debug
+        onStart = function(self) end,
+
+        onStop = function(self)
+            if self._container and self._container.Parent then
+                self._container:Destroy()
+            end
+        end,
+    },
+
+    ------------------------------------------------------------------------
+    -- Synchronous call: fire signal, wait for nodeComplete flag
+    -- IPC dispatch is synchronous — nodeComplete arrives during Fire(),
+    -- before yield would be reached. Use a flag instead of coroutine.
+    ------------------------------------------------------------------------
+
+    _syncCall = function(self, signalName, payload)
+        self._gotResponse = false
+        payload._msgId = nil  -- fresh IPC message ID per call
+        self.Out:Fire(signalName, payload)
+        while not self._gotResponse do
+            task.wait()
+        end
+    end,
+
+    ------------------------------------------------------------------------
+    -- Build pipeline sequence
+    ------------------------------------------------------------------------
+
+    _runBuild = function(self, payload)
+        local Dom = self._System.Dom
+        local Canvas = Dom.Canvas
+        local Debug = self._System and self._System.Debug
+
+        -- Plan phase (DOM only, no Instances yet)
+        self:_syncCall("buildMountain", payload)
+        self:_syncCall("buildRooms", payload)
+        self:_syncCall("buildShells", payload)
+        self:_syncCall("planDoors", payload)
+        self:_syncCall("buildTrusses", payload)
+        self:_syncCall("buildLights", payload)
+
+        -- Mount DOM to workspace
+        Dom.mount(payload.dom, workspace)
+        payload.container = payload.dom._instance
+
+        -- Apply phase (needs mounted Instances + Canvas)
+        self:_syncCall("paintTerrain", payload)
+
+        -- Room operations: hide blockouts, air-carve, paint floors
+        local rooms = payload.rooms or {}
+        local biome = payload.biome or {}
+        local floorMatName = biome.terrainFloor or "Grass"
+        local floorMaterial = Enum.Material[floorMatName] or Enum.Material.Grass
+        local container = payload.container
+
+        if container then
+            for _, child in ipairs(container:GetChildren()) do
+                if child:IsA("Model") then
+                    for _, part in ipairs(child:GetChildren()) do
+                        if part:IsA("BasePart") and part.Name:match("^RoomBlock_") then
+                            part.Transparency = 1
+                            part.CanCollide = false
+                        end
+                    end
+                end
+            end
+        end
+
+        local roomCount = 0
+        for _, room in pairs(rooms) do
+            Canvas.carveInterior(room.position, room.dims, 0)
+            Canvas.paintFloor(room.position, room.dims, floorMaterial)
+            roomCount = roomCount + 1
+        end
+
+        if Debug then
+            Debug.info("DungeonOrchestrator",
+                "Room terrain: carved + painted", roomCount, "rooms")
+        end
+
+        self:_syncCall("applyDoors", payload)
+
+        -- Done
+        self._container = payload.container
+
+        if Debug then
+            Debug.info("DungeonOrchestrator", "Build complete.",
+                "Rooms:", payload.roomCount or "?",
+                "Doors:", payload.doorCount or "?")
+        end
+
+        payload._msgId = nil
+        self.Out:Fire("dungeonComplete", payload)
+    end,
+
+    In = {
+        onBuildDungeon = function(self, data)
             local Dom = self._System.Dom
             local StyleBridge = self._System.StyleBridge
             local Styles = self._System.Styles
             local ClassResolver = self._System.ClassResolver
-            local config = self._config
+            local Debug = self._System and self._System.Debug
 
-            -- Select biome
-            local biomes = config.biomes or {}
-            local biome = biomes["ice"] -- or biomes["village"] or {}
+            local biome = data.biome or {}
+            local biomeName = data.biomeName or "unknown"
+            local allBiomes = data.allBiomes or {}
+            local worldMap = data.worldMap or {}
+            local seed = data.seed or (os.time() + math.random(1, 9999))
+            local regionNum = data.regionNum or 1
 
             -- Apply biome lighting
             local lc = biome.lighting
@@ -58,13 +157,12 @@ return {
             local resolver = StyleBridge.createResolver(Styles, ClassResolver)
             Dom.setStyleResolver(resolver)
 
-            -- Build dungeon
-            local seed = (os.time() + math.random(1, 9999))
-            local regionNum = 1
+            -- Palette from biome
             local paletteClass = biome.paletteClass or StyleBridge.getPaletteClass(regionNum)
 
             if Debug then
-                Debug.info("DungeonOrchestrator", "Seed:", seed, "Palette:", paletteClass)
+                Debug.info("DungeonOrchestrator", "Building:", biomeName,
+                    "Seed:", seed, "Region:", regionNum, "Palette:", paletteClass)
             end
 
             -- Create DOM root
@@ -72,37 +170,28 @@ return {
                 Name = "Region_" .. regionNum,
             })
 
-            -- Defer buildPass so IPC.start() finishes setting isStarted = true
-            -- before we attempt to route signals through the pipeline
+            -- Build payload
+            local payload = {
+                dom = root,
+                seed = seed,
+                regionNum = regionNum,
+                paletteClass = paletteClass,
+                biome = biome,
+                biomeName = biomeName,
+                allBiomes = allBiomes,
+                worldMap = worldMap,
+            }
+
+            -- Run in background thread (task.wait in _syncCall needs yieldable context)
             local selfRef = self
-            task.defer(function()
-                selfRef.Out:Fire("buildPass", {
-                    dom = root,
-                    seed = seed,
-                    regionNum = regionNum,
-                    paletteClass = paletteClass,
-                    biome = biome,
-                })
+            payload._msgId = nil  -- detach from buildDungeon's message chain
+            task.spawn(function()
+                selfRef:_runBuild(payload)
             end)
         end,
 
-        onStop = function(self)
-            -- Cleanup: destroy container if it exists
-            if self._container and self._container.Parent then
-                self._container:Destroy()
-            end
-        end,
-    },
-
-    In = {
-        onBuildComplete = function(self, payload)
-            local Debug = self._System and self._System.Debug
-            self._container = payload.container
-            if Debug then
-                Debug.info("DungeonOrchestrator", "Build complete.",
-                    "Rooms:", payload.roomCount or "?",
-                    "Doors:", payload.doorCount or "?")
-            end
+        onNodeComplete = function(self)
+            self._gotResponse = true
         end,
     },
 }

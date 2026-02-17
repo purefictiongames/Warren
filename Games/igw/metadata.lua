@@ -11,31 +11,38 @@
 return {
     -- Pipeline node load order (orchestrator is implicit from init.cfg)
     nodes = {
-        "RoomMasser", "ShellBuilder", "DoorPlanner",
-        "TrussBuilder", "LightBuilder", "PadBuilder",
-        "SpawnSetter", "Materializer", "TerrainPainter",
-        "IceTerrainPainter", "DoorCutter",
+        "DungeonOrchestrator",
+        "MountainBuilder", "MountainRoomMasser",
+        "ShellBuilder", "DoorPlanner",
+        "TrussBuilder", "MountainLightBuilder",
+        "MountainTerrainPainter",
+        -- Full pipeline (disabled for mountain blockout testing)
+        -- "RoomMasser", "ShellBuilder", "DoorPlanner",
+        -- "TrussBuilder", "LightBuilder",
+        -- "SpawnSetter", "Materializer", "TerrainPainter",
+        -- "IceTerrainPainter", "PortalBlender", "PortalRoomBuilder", "DoorCutter",
+        -- "PortalTrigger", "PortalCountdown",
     },
 
     ---------------------------------------------------------------------------
-    -- Orchestrator
+    -- Orchestrator — WorldMapOrchestrator owns biomes + world map
     ---------------------------------------------------------------------------
 
-    DungeonOrchestrator = {
-        wiring = {
-            DungeonOrchestrator = { "RoomMasser" },
-            RoomMasser          = { "ShellBuilder" },
-            ShellBuilder        = { "DoorPlanner" },
-            DoorPlanner         = { "TrussBuilder" },
-            TrussBuilder        = { "LightBuilder" },
-            LightBuilder        = { "PadBuilder" },
-            PadBuilder          = { "SpawnSetter" },
-            SpawnSetter         = { "Materializer" },
-            Materializer        = { "TerrainPainter" },
-            TerrainPainter      = { "IceTerrainPainter" },
-            IceTerrainPainter   = { "DoorCutter" },
-            DoorCutter          = { "DungeonOrchestrator" },
+    WorldMapOrchestrator = {
+        startBiome = "mountain",
+        portalCountdownSeconds = 5,
+
+        worldMap = {
+            mountain = { elevation = 4, connects = {} },  -- blockout testing
+            desert  = { elevation = 1,  connects = { "meadow", "sewer" } },
+            meadow  = { elevation = 2,  connects = { "desert", "ice", "village" } },
+            ice     = { elevation = 3,  connects = { "meadow", "crystal" } },
+            village = { elevation = 2,  connects = { "meadow" } },
+            sewer   = { elevation = -1, connects = { "desert", "crystal" } },
+            crystal = { elevation = -2, connects = { "sewer", "ice", "lava" } },
+            lava    = { elevation = -3, connects = { "crystal" } },
         },
+
         biomes = {
             lava = {
                 paletteClass = "palette-classic-lava",
@@ -88,22 +95,9 @@ return {
                     GlobalShadows = true,
                 },
             },
-            dungeon = {
-                paletteClass = "palette-dungeon-keep",
-                terrainWall = "Granite",
-                terrainFloor = "Cobblestone",
-                partWall = "Brick",
-                partFloor = "Cobblestone",
-                lightType = "PointLight",
-                lightStyle = "cave-point-light",
-                lighting = {
-                    ClockTime = 0, Brightness = 0,
-                    OutdoorAmbient = { 0, 0, 0 },
-                    Ambient = { 15, 12, 10 },
-                    FogEnd = 800, FogColor = { 10, 8, 5 },
-                    GlobalShadows = false,
-                },
-            },
+            -- dungeon removed: Cobblestone isn't a valid terrain material,
+            -- causes terrain fallback issues + spawn-outside-map bug
+
             desert = {
                 paletteClass = "palette-desert-ruins",
                 terrainStyle = "outdoor",
@@ -170,12 +164,93 @@ return {
                     GlobalShadows = true,
                 },
             },
+            mountain = {
+                paletteClass = "palette-highland-meadow",
+                terrainStyle = "outdoor",
+                terrainWall = "Rock",
+                terrainFloor = "Grass",
+                partWall = "Slate",
+                partFloor = "Grass",
+                lightType = "PointLight",
+                lightStyle = "cave-torch-light",
+                lighting = {
+                    ClockTime = 14, Brightness = 1,
+                    OutdoorAmbient = { 78, 83, 88 },
+                    Ambient = { 49, 52, 56 },
+                    FogEnd = 2000, FogColor = { 180, 190, 210 },
+                    GlobalShadows = true,
+                },
+            },
+        },
+
+        wiring = {
+            -- Hub-and-spoke: orchestrator calls each node sequentially
+            WorldMapOrchestrator   = { "DungeonOrchestrator" },
+            DungeonOrchestrator    = {
+                "MountainBuilder", "MountainRoomMasser",
+                "ShellBuilder", "DoorPlanner",
+                "TrussBuilder", "MountainLightBuilder",
+                "MountainTerrainPainter", "WorldMapOrchestrator",
+            },
+            MountainBuilder        = { "DungeonOrchestrator" },
+            MountainRoomMasser     = { "DungeonOrchestrator" },
+            ShellBuilder           = { "DungeonOrchestrator" },
+            DoorPlanner            = { "DungeonOrchestrator" },
+            TrussBuilder           = { "DungeonOrchestrator" },
+            MountainLightBuilder   = { "DungeonOrchestrator" },
+            MountainTerrainPainter = { "DungeonOrchestrator" },
+            -- MountainRoomMasser     = { "DungeonOrchestrator" },
+            -- ShellBuilder           = { "DungeonOrchestrator" },
+            -- MountainTerrainPainter = { "DungeonOrchestrator" },
+            -- DoorPlanner            = { "DungeonOrchestrator" },
+
+            -- Full pipeline (disabled for mountain blockout testing)
+            -- WorldMapOrchestrator = { "DungeonOrchestrator", "PortalTrigger", "PortalCountdown" },
+            -- DungeonOrchestrator  = { "RoomMasser", "WorldMapOrchestrator" },
+            -- RoomMasser           = { "ShellBuilder" },
+            -- ShellBuilder         = { "DoorPlanner" },
+            -- DoorPlanner          = { "TrussBuilder" },
+            -- TrussBuilder         = { "LightBuilder" },
+            -- LightBuilder         = { "SpawnSetter" },
+            -- SpawnSetter          = { "Materializer" },
+            -- Materializer         = { "TerrainPainter" },
+            -- TerrainPainter       = { "IceTerrainPainter" },
+            -- IceTerrainPainter    = { "PortalBlender" },
+            -- PortalBlender        = { "PortalRoomBuilder" },
+            -- PortalRoomBuilder    = { "DoorCutter" },
+            -- DoorCutter           = { "DungeonOrchestrator" },
+            -- PortalTrigger        = { "WorldMapOrchestrator", "PortalCountdown" },
         },
     },
+
+    -- DungeonOrchestrator is now a pipeline node (receives everything via signal)
+    DungeonOrchestrator = {},
 
     ---------------------------------------------------------------------------
     -- Per-node config (JavaFX "type selectors" — Level 2)
     ---------------------------------------------------------------------------
+
+    MountainBuilder = {
+        baseWidth = 400,
+        baseDepth = 400,
+        layerHeight = 50,
+        layerCount = 6,
+        taperRatio = 0.7,
+        forkChance = 25,
+        maxPeaks = 3,
+        jitterRange = 0.15,
+        origin = { 0, 0, 0 },
+    },
+
+    MountainRoomMasser = {
+        falseEntries = 6,
+        caveSystems = 3,
+        falseEntryMaxRooms = 3,
+        caveMinRooms = 6,
+        caveMaxRooms = 15,
+        inwardBias = 60,
+        scaleRange = { min = 4, max = 10, minY = 4, maxY = 7 },
+    },
 
     RoomMasser = {
         mainPathLength = 8,
@@ -188,10 +263,6 @@ return {
 
     TrussBuilder = {
         floorThreshold = 6.5,
-    },
-
-    PadBuilder = {
-        padCount = 4,
     },
 
     TerrainPainter = {

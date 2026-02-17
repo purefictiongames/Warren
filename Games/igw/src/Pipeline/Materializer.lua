@@ -15,7 +15,8 @@ return {
     },
 
     In = {
-        onBuildPass = function(self, payload)
+        onMount = function(self, payload)
+            local t0 = os.clock()
             local Dom = self._System.Dom
 
             -- Remove existing dungeon SpawnLocations from workspace
@@ -31,9 +32,9 @@ return {
             -- Store the container Instance for downstream nodes
             payload.container = payload.dom._instance
 
-            print("[Materializer] DOM mounted to workspace")
+            print(string.format("[Materializer] DOM mounted (%.2fs)", os.clock() - t0))
 
-            self.Out:Fire("buildPass", payload)
+            self.Out:Fire("nodeComplete", payload)
         end,
     },
 }

@@ -1,5 +1,6 @@
 local Components = {}
 
+Components.WorldMapOrchestrator = require(script.WorldMapOrchestrator)
 Components.DungeonOrchestrator = require(script.DungeonOrchestrator)
 Components.RoomMasser     = require(script.Pipeline.RoomMasser)
 Components.ShellBuilder   = require(script.Pipeline.ShellBuilder)
@@ -10,7 +11,15 @@ Components.PadBuilder     = require(script.Pipeline.PadBuilder)
 Components.SpawnSetter    = require(script.Pipeline.SpawnSetter)
 Components.Materializer   = require(script.Pipeline.Materializer)
 Components.DoorCutter     = require(script.Pipeline.DoorCutter)
+Components.MountainBuilder = require(script.Pipeline.MountainBuilder)
+Components.MountainRoomMasser = require(script.Pipeline.MountainRoomMasser)
+Components.MountainTerrainPainter = require(script.Pipeline.MountainTerrainPainter)
+Components.MountainLightBuilder = require(script.Pipeline.MountainLightBuilder)
 Components.TerrainPainter = require(script.Pipeline.TerrainPainter)
 Components.IceTerrainPainter = require(script.Pipeline.IceTerrainPainter)
+Components.PortalBlender      = require(script.Pipeline.PortalBlender)
+Components.PortalRoomBuilder  = require(script.Pipeline.PortalRoomBuilder)
+Components.PortalTrigger   = require(script.PortalTrigger)
+Components.PortalCountdown = require(script.PortalCountdown)
 
 return Components

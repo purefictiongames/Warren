@@ -4,15 +4,7 @@
     adds lava veins, floor material, granite patches, and fixture clearance.
 --]]
 
-local Warren = require(game:GetService("ReplicatedStorage").Warren)
-local Node = Warren.Node
-local Dom = Warren.Dom
-local Canvas = Dom.Canvas
-local StyleBridge = Dom.StyleBridge
-local Styles = Warren.Styles
-local ClassResolver = Warren.ClassResolver
-
-local TerrainPainter = Node.extend({
+return {
     name = "TerrainPainter",
     domain = "server",
 
@@ -24,6 +16,12 @@ local TerrainPainter = Node.extend({
 
     In = {
         onBuildPass = function(self, payload)
+            local Dom = self._System.Dom
+            local Canvas = Dom.Canvas
+            local StyleBridge = self._System.StyleBridge
+            local Styles = self._System.Styles
+            local ClassResolver = self._System.ClassResolver
+
             local rooms = payload.rooms
             local lights = payload.lights or {}
             local pads = payload.pads or {}
@@ -33,8 +31,14 @@ local TerrainPainter = Node.extend({
             -- Resolve palette colors for terrain materials
             local palette = StyleBridge.resolvePalette(paletteClass, Styles, ClassResolver)
 
-            local wallMaterial = Enum.Material.Rock
-            local floorMaterial = Enum.Material.CrackedLava
+            local wallMaterialName = self:getAttribute("wallMaterial") or "Rock"
+            local floorMaterialName = self:getAttribute("floorMaterial") or "CrackedLava"
+            local wallMaterial = Enum.Material[wallMaterialName]
+            local floorMaterial = Enum.Material[floorMaterialName]
+            local noiseScale = self:getAttribute("noiseScale") or 8
+            local noiseThreshold = self:getAttribute("noiseThreshold") or 0.35
+            local patchScale = self:getAttribute("patchScale") or 12
+            local patchThreshold = self:getAttribute("patchThreshold") or 0.4
 
             -- Set terrain material colors
             Canvas.setMaterialColors(palette)
@@ -55,8 +59,8 @@ local TerrainPainter = Node.extend({
                     roomPos = room.position,
                     roomDims = room.dims,
                     material = floorMaterial,
-                    noiseScale = 8,
-                    threshold = 0.35,
+                    noiseScale = noiseScale,
+                    threshold = noiseThreshold,
                 })
             end
 
@@ -71,8 +75,8 @@ local TerrainPainter = Node.extend({
                     roomPos = room.position,
                     roomDims = room.dims,
                     material = wallMaterial,
-                    noiseScale = 12,
-                    threshold = 0.4,
+                    noiseScale = patchScale,
+                    threshold = patchThreshold,
                 })
             end
 
@@ -102,6 +106,4 @@ local TerrainPainter = Node.extend({
             self.Out:Fire("buildPass", payload)
         end,
     },
-})
-
-return TerrainPainter
+}

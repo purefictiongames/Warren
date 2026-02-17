@@ -3,10 +3,6 @@
     Places teleport pads in safe floor positions (avoids doors, trusses).
 --]]
 
-local Warren = require(game:GetService("ReplicatedStorage").Warren)
-local Node = Warren.Node
-local Dom = Warren.Dom
-
 --------------------------------------------------------------------------------
 -- SAFE POSITION FINDING (inline from LayoutContext)
 --------------------------------------------------------------------------------
@@ -117,7 +113,7 @@ end
 -- NODE
 --------------------------------------------------------------------------------
 
-local PadBuilder = Node.extend({
+return {
     name = "PadBuilder",
     domain = "server",
 
@@ -129,17 +125,17 @@ local PadBuilder = Node.extend({
 
     In = {
         onBuildPass = function(self, payload)
+            local Dom = self._System.Dom
             local rooms = payload.rooms
             local doors = payload.doors or {}
             local trusses = payload.trusses or {}
             local lights = payload.lights or {}
-            local config = payload.config
             local paletteClass = payload.paletteClass or ""
 
             local roomCount = 0
             for _ in pairs(rooms) do roomCount = roomCount + 1 end
 
-            local padCount = config.padCount or 4
+            local padCount = self:getAttribute("padCount") or 4
             local pads = {}
             local padNum = 1
 
@@ -221,6 +217,4 @@ local PadBuilder = Node.extend({
             self.Out:Fire("buildPass", payload)
         end,
     },
-})
-
-return PadBuilder
+}

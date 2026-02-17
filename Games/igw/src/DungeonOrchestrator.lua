@@ -8,24 +8,21 @@
     Receives buildComplete when pipeline finishes.
 --]]
 
-local Warren = require(game:GetService("ReplicatedStorage").Warren)
-local Node = Warren.Node
-local Dom = Warren.Dom
-local StyleBridge = Dom.StyleBridge
-local Styles = Warren.Styles
-local ClassResolver = Warren.ClassResolver
-
-local DungeonOrchestrator = Node.extend({
+return {
     name = "DungeonOrchestrator",
     domain = "server",
 
     Sys = {
         onInit = function(self)
-            self._config = self._attributes.config or {}
+            self._config = self:getAttribute("config") or {}
         end,
 
         onStart = function(self)
             local Debug = self._System and self._System.Debug
+            local Dom = self._System.Dom
+            local StyleBridge = self._System.StyleBridge
+            local Styles = self._System.Styles
+            local ClassResolver = self._System.ClassResolver
             local config = self._config
 
             -- Apply lighting
@@ -58,8 +55,7 @@ local DungeonOrchestrator = Node.extend({
             Dom.setStyleResolver(resolver)
 
             -- Build dungeon
-            local dc = config.dungeon or {}
-            local seed = dc.seed or (os.time() + math.random(1, 9999))
+            local seed = (os.time() + math.random(1, 9999))
             local regionNum = 1
             local paletteClass = StyleBridge.getPaletteClass(regionNum)
 
@@ -78,7 +74,6 @@ local DungeonOrchestrator = Node.extend({
             task.defer(function()
                 selfRef.Out:Fire("buildPass", {
                     dom = root,
-                    config = dc,
                     seed = seed,
                     regionNum = regionNum,
                     paletteClass = paletteClass,
@@ -105,6 +100,4 @@ local DungeonOrchestrator = Node.extend({
             end
         end,
     },
-})
-
-return DungeonOrchestrator
+}

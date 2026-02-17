@@ -713,7 +713,7 @@ local Targeter = Node.extend(function(parent)
         Sys = {
             onInit = function(self)
                 local state = getState(self)
-                local config = self._attributes or {}
+                local config = self:getAttributes()
 
                 -- RaycastParams setup
                 state.raycastParams = RaycastParams.new()

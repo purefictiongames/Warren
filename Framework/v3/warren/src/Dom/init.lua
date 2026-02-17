@@ -583,7 +583,7 @@ function Dom.wrapNode(warrenNode)
     local node = DomNode.new({
         id = warrenNode.id,
         type = warrenNode.class or "Node",
-        attributes = warrenNode._attributes or {},
+        attributes = (warrenNode.getAttributes and warrenNode:getAttributes()) or {},
         node = warrenNode,
         instance = warrenNode.model,
     })

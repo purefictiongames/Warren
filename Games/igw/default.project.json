@@ -10,7 +10,8 @@
       "$className": "ReplicatedStorage",
       "Warren": { "$path": "../../Framework/v3/warren/src" },
       "Components": { "$path": "src" },
-      "init.cfg": { "$path": "init.cfg.lua" }
+      "init.cfg": { "$path": "init.cfg.lua" },
+      "metadata": { "$path": "metadata.lua" }
     },
     "ServerScriptService": {
       "$className": "ServerScriptService",

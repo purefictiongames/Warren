@@ -3,11 +3,7 @@
     Creates wall/floor/ceiling Part children and zone Part for each room.
 --]]
 
-local Warren = require(game:GetService("ReplicatedStorage").Warren)
-local Node = Warren.Node
-local Dom = Warren.Dom
-
-local ShellBuilder = Node.extend({
+return {
     name = "ShellBuilder",
     domain = "server",
 
@@ -19,10 +15,10 @@ local ShellBuilder = Node.extend({
 
     In = {
         onBuildPass = function(self, payload)
+            local Dom = self._System.Dom
             local rooms = payload.rooms
-            local config = payload.config
             local paletteClass = payload.paletteClass or ""
-            local wt = config.wallThickness or 1
+            local wt = self:getAttribute("wallThickness") or 1
             local regionNum = payload.regionNum or 1
 
             -- Find room DOM Models by name
@@ -103,6 +99,4 @@ local ShellBuilder = Node.extend({
             self.Out:Fire("buildPass", payload)
         end,
     },
-})
-
-return ShellBuilder
+}

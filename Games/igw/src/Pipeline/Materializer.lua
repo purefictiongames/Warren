@@ -4,11 +4,7 @@
     Cleans up existing SpawnLocations before mounting.
 --]]
 
-local Warren = require(game:GetService("ReplicatedStorage").Warren)
-local Node = Warren.Node
-local Dom = Warren.Dom
-
-local Materializer = Node.extend({
+return {
     name = "Materializer",
     domain = "server",
 
@@ -20,6 +16,8 @@ local Materializer = Node.extend({
 
     In = {
         onBuildPass = function(self, payload)
+            local Dom = self._System.Dom
+
             -- Remove existing dungeon SpawnLocations from workspace
             for _, child in ipairs(workspace:GetChildren()) do
                 if child:IsA("SpawnLocation") and child.Name:match("^Spawn_Region") then
@@ -38,6 +36,4 @@ local Materializer = Node.extend({
             self.Out:Fire("buildPass", payload)
         end,
     },
-})
-
-return Materializer
+}

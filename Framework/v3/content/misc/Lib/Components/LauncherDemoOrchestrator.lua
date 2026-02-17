@@ -67,7 +67,7 @@ local LauncherDemoOrchestrator = Orchestrator.extend(function(parent)
             onInit = function(self)
                 parent.Sys.onInit(self)
 
-                local config = self._attributes or {}
+                local config = self:getAttributes()
 
                 -- Configure via parent Orchestrator's declarative system
                 parent.In.onConfigure(self, {

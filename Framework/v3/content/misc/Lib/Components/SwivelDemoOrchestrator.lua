@@ -127,9 +127,9 @@ local SwivelDemoOrchestrator = Orchestrator.extend(function(parent)
             onInit = function(self)
                 parent.Sys.onInit(self)
 
-                local yawConfig = self._attributes.yawConfig or {}
-                local pitchConfig = self._attributes.pitchConfig or {}
-                local pitchModel = self._attributes.pitchModel
+                local yawConfig = self:getAttribute("yawConfig") or {}
+                local pitchConfig = self:getAttribute("pitchConfig") or {}
+                local pitchModel = self:getAttribute("pitchModel")
 
                 local Swivel = require(script.Parent.Swivel)
                 local state = getState(self)

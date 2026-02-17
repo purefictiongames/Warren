@@ -3,11 +3,7 @@
     Creates TrussPart elements for doors that need vertical connectors.
 --]]
 
-local Warren = require(game:GetService("ReplicatedStorage").Warren)
-local Node = Warren.Node
-local Dom = Warren.Dom
-
-local TrussBuilder = Node.extend({
+return {
     name = "TrussBuilder",
     domain = "server",
 
@@ -19,12 +15,12 @@ local TrussBuilder = Node.extend({
 
     In = {
         onBuildPass = function(self, payload)
+            local Dom = self._System.Dom
             local rooms = payload.rooms
             local doors = payload.doors or {}
-            local config = payload.config
             print(string.format("[TrussBuilder] Starting with %d doors", #doors))
-            local floorThreshold = config.floorThreshold or 6.5
-            local wt = config.wallThickness or 1
+            local floorThreshold = self:getAttribute("floorThreshold") or 6.5
+            local wt = self:getAttribute("wallThickness") or 1
             local trusses = {}
             local trussId = 1
 
@@ -110,6 +106,4 @@ local TrussBuilder = Node.extend({
             self.Out:Fire("buildPass", payload)
         end,
     },
-})
-
-return TrussBuilder
+}

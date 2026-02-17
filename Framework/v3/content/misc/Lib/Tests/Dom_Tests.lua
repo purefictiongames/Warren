@@ -633,8 +633,13 @@ test("wrapNode creates DomNode from Warren Node", "Bridge", function()
     local warrenNode = {
         id = "test_node_1",
         class = "TestComponent",
-        _attributes = { health = 100 },
         model = nil,
+        getAttributes = function(self)
+            return { health = 100 }
+        end,
+        getAttribute = function(self, name)
+            return ({ health = 100 })[name]
+        end,
     }
 
     local domNode = Dom.wrapNode(warrenNode)
@@ -648,8 +653,8 @@ test("wrapNode stores backing reference", "Bridge", function()
     local warrenNode = {
         id = "test_node_2",
         class = "Foo",
-        _attributes = {},
         model = nil,
+        getAttributes = function() return {} end,
     }
 
     local domNode = Dom.wrapNode(warrenNode)
@@ -670,8 +675,8 @@ test("getElementById finds wrapped nodes", "Bridge", function()
     local warrenNode = {
         id = "bridged_node",
         class = "Test",
-        _attributes = {},
         model = nil,
+        getAttributes = function() return {} end,
     }
 
     local domNode = Dom.wrapNode(warrenNode)

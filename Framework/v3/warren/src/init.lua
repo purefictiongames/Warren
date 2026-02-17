@@ -121,6 +121,14 @@ if isRoblox then
 
     -- PixelFont: Bitmap font rendering for UI components
     Warren.PixelFont = require(script.PixelFont)
+
+    -- Inject public modules onto System so nodes access them via self._System
+    Warren.System.Dom = Warren.Dom
+    Warren.System.Node = Warren.Node
+    Warren.System.ClassResolver = Warren.ClassResolver
+    Warren.System.Styles = Warren.Styles
+    Warren.System.StyleBridge = Warren.Dom.StyleBridge
+    Warren.System.Factory = Warren.Factory
 end
 
 return Warren

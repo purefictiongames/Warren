@@ -441,8 +441,57 @@ function Node:new(config)
     instance.class = self.name or "Node"
     instance.domain = self.domain or "shared"
     instance.model = config.model
-    instance._attributes = config.attributes or {}
     instance._System = nil  -- Will be set by IPC
+
+    -- Closure-based attribute store — no direct table access from nodes
+    local _store = config.attributes or {}
+
+    function instance:getAttribute(name)
+        -- Try model attributes first
+        if self.model and typeof(self.model) == "Instance" then
+            local success, value = pcall(function()
+                return self.model:GetAttribute(name)
+            end)
+            if success and value ~= nil then
+                return value
+            end
+        end
+        return _store[name]
+    end
+
+    function instance:setAttribute(name, value)
+        local old = _store[name]
+        _store[name] = value
+        -- Mirror to model if available
+        if self.model and typeof(self.model) == "Instance" then
+            pcall(function()
+                self.model:SetAttribute(name, value)
+            end)
+        end
+        -- Fire lifecycle hook on change
+        if old ~= value and self.Sys and self.Sys.onAttributeChanged then
+            self.Sys.onAttributeChanged(self, name, old, value)
+        end
+    end
+
+    function instance:getAttributes()
+        local result = {}
+        for k, v in pairs(_store) do
+            result[k] = v
+        end
+        -- Merge model attributes (overwrite internals if conflict)
+        if self.model and typeof(self.model) == "Instance" then
+            local success, attrs = pcall(function()
+                return self.model:GetAttributes()
+            end)
+            if success and attrs then
+                for k, v in pairs(attrs) do
+                    result[k] = v
+                end
+            end
+        end
+        return result
+    end
 
     -- Create output channels
     instance.Out = OutChannel.new(instance)
@@ -599,80 +648,19 @@ function Node:resolvePin(mode, pinType)
 end
 
 --------------------------------------------------------------------------------
--- ATTRIBUTES
+-- ATTRIBUTES (guard errors — real methods are per-instance closures from :new())
 --------------------------------------------------------------------------------
---[[
-    Get an attribute value.
 
-    First checks the associated model (if any), then falls back to
-    internal attribute storage.
-
-    @param name string - Attribute name
-    @return any - Attribute value or nil
---]]
-function Node:getAttribute(name)
-    -- Try model attributes first
-    if self.model and typeof(self.model) == "Instance" then
-        local success, value = pcall(function()
-            return self.model:GetAttribute(name)
-        end)
-        if success and value ~= nil then
-            return value
-        end
-    end
-
-    -- Fall back to internal storage
-    return self._attributes[name]
+function Node:getAttribute(_name)
+    error("[Node] getAttribute is per-instance. Call :new() first.")
 end
 
---[[
-    Set an attribute value.
-
-    Sets on both the model (if any) and internal storage.
-
-    @param name string - Attribute name
-    @param value any - Attribute value
---]]
-function Node:setAttribute(name, value)
-    -- Store internally
-    self._attributes[name] = value
-
-    -- Also set on model if available
-    if self.model and typeof(self.model) == "Instance" then
-        pcall(function()
-            self.model:SetAttribute(name, value)
-        end)
-    end
+function Node:setAttribute(_name, _value)
+    error("[Node] setAttribute is per-instance. Call :new() first.")
 end
 
---[[
-    Get all attributes.
-
-    Merges model attributes with internal storage.
-
-    @return table - All attribute key-value pairs
---]]
 function Node:getAttributes()
-    local result = {}
-
-    -- Copy internal attributes
-    for k, v in pairs(self._attributes) do
-        result[k] = v
-    end
-
-    -- Merge model attributes (overwrite internals if conflict)
-    if self.model and typeof(self.model) == "Instance" then
-        local success, attrs = pcall(function()
-            return self.model:GetAttributes()
-        end)
-        if success and attrs then
-            for k, v in pairs(attrs) do
-                result[k] = v
-            end
-        end
-    end
-
-    return result
+    error("[Node] getAttributes is per-instance. Call :new() first.")
 end
 
 --------------------------------------------------------------------------------
@@ -1477,7 +1465,7 @@ Node.Registry = (function()
                 if target.model then
                     return target.model:GetAttribute(name)
                 end
-                return target._attributes and target._attributes[name]
+                return target.getAttribute and target:getAttribute(name)
             else
                 -- Instance - read attributes directly
                 local success, value = pcall(function()

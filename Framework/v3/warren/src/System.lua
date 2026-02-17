@@ -1173,7 +1173,7 @@ System.IPC = (function()
     local crossDomainRemote = nil           -- RemoteEvent for client/server signals
     local nodeDomains = {}                  -- { className → "server"|"client"|"shared" }
     local crossDomainClasses = {}           -- Classes that exist on the other domain
-    local CROSS_DOMAIN_REMOTE_NAME = "LibPF_IPC_CrossDomain"
+    local CROSS_DOMAIN_REMOTE_NAME = "Warren_IPC_CrossDomain"
 
     -- Forward declarations (for functions used before definition)
     local sendCrossDomain

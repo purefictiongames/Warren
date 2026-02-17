@@ -126,7 +126,7 @@ local TargetSpawnerOrchestrator = Orchestrator.extend(function(parent)
                 -- Call parent onInit first
                 parent.Sys.onInit(self)
 
-                local config = self._attributes or {}
+                local config = self:getAttributes()
 
                 -- Default attributes
                 self:setAttribute("MaxTargets", config.MaxTargets or 5)

@@ -4,12 +4,7 @@
     Terminal pipeline stage — fires buildComplete.
 --]]
 
-local Warren = require(game:GetService("ReplicatedStorage").Warren)
-local Node = Warren.Node
-local Dom = Warren.Dom
-local Canvas = Dom.Canvas
-
-local DoorCutter = Node.extend({
+return {
     name = "DoorCutter",
     domain = "server",
 
@@ -21,9 +16,10 @@ local DoorCutter = Node.extend({
 
     In = {
         onBuildPass = function(self, payload)
+            local Dom = self._System.Dom
+            local Canvas = Dom.Canvas
             local doors = payload.doors or {}
-            local config = payload.config
-            local wt = config.wallThickness or 1
+            local wt = self:getAttribute("wallThickness") or 1
 
             print(string.format("[DoorCutter] Starting with %d doors", #doors))
 
@@ -147,6 +143,4 @@ local DoorCutter = Node.extend({
             self.Out:Fire("buildComplete", payload)
         end,
     },
-})
-
-return DoorCutter
+}

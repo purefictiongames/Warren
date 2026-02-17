@@ -4,16 +4,11 @@
     Stores door specs in payload.doors for downstream use.
 --]]
 
-local Warren = require(game:GetService("ReplicatedStorage").Warren)
-local Node = Warren.Node
-
 --------------------------------------------------------------------------------
 -- DOOR POSITION CALCULATION
 --------------------------------------------------------------------------------
 
-local function calculateDoorPosition(roomA, roomB, config)
-    local wt = config.wallThickness or 1
-    local doorSize = config.doorSize or 12
+local function calculateDoorPosition(roomA, roomB, wt, doorSize)
 
     -- Find which axis they touch on
     local touchAxis = nil
@@ -99,7 +94,7 @@ end
 -- NODE
 --------------------------------------------------------------------------------
 
-local DoorPlanner = Node.extend({
+return {
     name = "DoorPlanner",
     domain = "server",
 
@@ -112,7 +107,8 @@ local DoorPlanner = Node.extend({
     In = {
         onBuildPass = function(self, payload)
             local rooms = payload.rooms
-            local config = payload.config
+            local wt = self:getAttribute("wallThickness") or 1
+            local doorSize = self:getAttribute("doorSize") or 12
             local doors = {}
             local roomCount = 0
             for _ in pairs(rooms) do roomCount = roomCount + 1 end
@@ -123,7 +119,7 @@ local DoorPlanner = Node.extend({
                 if room.parentId then
                     local parentRoom = rooms[room.parentId]
                     if parentRoom then
-                        local doorData = calculateDoorPosition(parentRoom, room, config)
+                        local doorData = calculateDoorPosition(parentRoom, room, wt, doorSize)
                         if doorData then
                             table.insert(doors, {
                                 id = doorId,
@@ -149,6 +145,4 @@ local DoorPlanner = Node.extend({
             self.Out:Fire("buildPass", payload)
         end,
     },
-})
-
-return DoorPlanner
+}

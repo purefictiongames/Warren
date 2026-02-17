@@ -3,13 +3,9 @@
     Places one light fixture per room on a wall without a door.
 --]]
 
-local Warren = require(game:GetService("ReplicatedStorage").Warren)
-local Node = Warren.Node
-local Dom = Warren.Dom
-
 local WALL_ORDER = { "N", "S", "E", "W" }
 
-local LightBuilder = Node.extend({
+return {
     name = "LightBuilder",
     domain = "server",
 
@@ -21,6 +17,7 @@ local LightBuilder = Node.extend({
 
     In = {
         onBuildPass = function(self, payload)
+            local Dom = self._System.Dom
             local rooms = payload.rooms
             local doors = payload.doors or {}
             local paletteClass = payload.paletteClass or ""
@@ -169,6 +166,4 @@ local LightBuilder = Node.extend({
             self.Out:Fire("buildPass", payload)
         end,
     },
-})
-
-return LightBuilder
+}

@@ -4,10 +4,6 @@
     Creates Model elements for each room in the DOM tree.
 --]]
 
-local Warren = require(game:GetService("ReplicatedStorage").Warren)
-local Node = Warren.Node
-local Dom = Warren.Dom
-
 --------------------------------------------------------------------------------
 -- FACE DEFINITIONS
 --------------------------------------------------------------------------------
@@ -88,9 +84,9 @@ local function hasSufficientDoorOverlap(posA, dimsA, posB, dimsB, touchAxis, doo
     return true
 end
 
-local function randomScale(config)
-    local range = config.scaleRange or { min = 4, max = 12, minY = 4, maxY = 8 }
-    local baseUnit = config.baseUnit or 5
+local function randomScale(scaleRange, baseUnit)
+    local range = scaleRange or { min = 4, max = 12, minY = 4, maxY = 8 }
+    baseUnit = baseUnit or 5
     return {
         math.random(range.min, range.max) * baseUnit,
         math.random(range.minY or range.min, range.maxY or range.max) * baseUnit,
@@ -133,7 +129,7 @@ end
 -- NODE
 --------------------------------------------------------------------------------
 
-local RoomMasser = Node.extend({
+return {
     name = "RoomMasser",
     domain = "server",
 
@@ -145,13 +141,18 @@ local RoomMasser = Node.extend({
 
     In = {
         onBuildPass = function(self, payload)
-            local config = payload.config
+            local Dom = self._System.Dom
             local seed = payload.seed or os.time()
-            local gap = 2 * (config.wallThickness or 1)
-            local doorSize = config.doorSize or 12
-            local verticalChance = config.verticalChance or 30
-            local minVerticalRatio = config.minVerticalRatio or 0.2
-            local origin = config.origin or { 0, 20, 0 }
+            local wallThickness = self:getAttribute("wallThickness") or 1
+            local gap = 2 * wallThickness
+            local doorSize = self:getAttribute("doorSize") or 12
+            local verticalChance = self:getAttribute("verticalChance") or 30
+            local minVerticalRatio = self:getAttribute("minVerticalRatio") or 0.2
+            local origin = self:getAttribute("origin") or { 0, 20, 0 }
+            local mainPathLength = self:getAttribute("mainPathLength") or 8
+            local spurCount = self:getAttribute("spurCount") or 4
+            local scaleRange = self:getAttribute("scaleRange") or { min = 4, max = 12, minY = 4, maxY = 8 }
+            local baseUnit = self:getAttribute("baseUnit") or 5
 
             math.randomseed(seed)
 
@@ -159,21 +160,21 @@ local RoomMasser = Node.extend({
             local inventory = {}
             local roomId = 1
 
-            for i = 1, (config.mainPathLength or 8) do
+            for i = 1, mainPathLength do
                 table.insert(inventory, {
                     id = roomId,
-                    dims = randomScale(config),
+                    dims = randomScale(scaleRange, baseUnit),
                     pathType = "main",
                     parentIdx = i > 1 and (i - 1) or nil,
                 })
                 roomId = roomId + 1
             end
 
-            for i = 1, (config.spurCount or 4) do
-                local branchFromIdx = math.random(1, config.mainPathLength or 8)
+            for i = 1, spurCount do
+                local branchFromIdx = math.random(1, mainPathLength)
                 table.insert(inventory, {
                     id = roomId,
-                    dims = randomScale(config),
+                    dims = randomScale(scaleRange, baseUnit),
                     pathType = "spur",
                     parentIdx = branchFromIdx,
                 })
@@ -294,6 +295,4 @@ local RoomMasser = Node.extend({
             self.Out:Fire("buildPass", payload)
         end,
     },
-})
-
-return RoomMasser
+}

@@ -3,11 +3,7 @@
     Creates SpawnLocation element at room 1's floor + 3 studs.
 --]]
 
-local Warren = require(game:GetService("ReplicatedStorage").Warren)
-local Node = Warren.Node
-local Dom = Warren.Dom
-
-local SpawnSetter = Node.extend({
+return {
     name = "SpawnSetter",
     domain = "server",
 
@@ -19,6 +15,7 @@ local SpawnSetter = Node.extend({
 
     In = {
         onBuildPass = function(self, payload)
+            local Dom = self._System.Dom
             local rooms = payload.rooms
             local room1 = rooms[1]
 
@@ -44,6 +41,4 @@ local SpawnSetter = Node.extend({
             self.Out:Fire("buildPass", payload)
         end,
     },
-})
-
-return SpawnSetter
+}

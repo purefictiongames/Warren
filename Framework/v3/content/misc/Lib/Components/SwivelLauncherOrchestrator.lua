@@ -127,7 +127,7 @@ local SwivelLauncherOrchestrator = Orchestrator.extend(function(parent)
             onInit = function(self)
                 parent.Sys.onInit(self)
 
-                local config = self._attributes or {}
+                local config = self:getAttributes()
                 local state = getState(self)
 
                 -- Import sub-orchestrators

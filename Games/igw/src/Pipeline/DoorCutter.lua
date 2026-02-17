@@ -19,9 +19,11 @@ return {
             local Dom = self._System.Dom
             local Canvas = Dom.Canvas
             local doors = payload.doors or {}
+            local biome = payload.biome or {}
+            local isOutdoor = biome.terrainStyle == "outdoor"
             local wt = self:getAttribute("wallThickness") or 1
 
-            print(string.format("[DoorCutter] Starting with %d doors", #doors))
+            print(string.format("[DoorCutter] Starting with %d doors (outdoor=%s)", #doors, tostring(isOutdoor)))
 
             -- Build room model lookup from DOM
             local roomModels = {}
@@ -38,6 +40,7 @@ return {
 
             local cutCount = 0
             local failCount = 0
+            local hideCount = 0
 
             for _, door in ipairs(doors) do
                 local cutterDepth = wt * 8
@@ -55,15 +58,22 @@ return {
 
                 local cutterPos = Vector3.new(door.center[1], door.center[2], door.center[3])
 
-                -- Create temporary cutter part
-                local cutter = Instance.new("Part")
-                cutter.Size = cutterSize
-                cutter.Position = cutterPos
-                cutter.Anchored = true
-                cutter.CanCollide = false
-                cutter.Transparency = 1
+                -- Outdoor horizontal doors: hide wall parts, let terrain shape the opening
+                -- Vertical doors (floor/ceiling) and all cave doors: CSG cut as normal
+                local hideWalls = isOutdoor and door.axis ~= 2
 
-                -- Cut walls in both rooms
+                -- Create temporary cutter part (only needed for CSG)
+                local cutter = nil
+                if not hideWalls then
+                    cutter = Instance.new("Part")
+                    cutter.Size = cutterSize
+                    cutter.Position = cutterPos
+                    cutter.Anchored = true
+                    cutter.CanCollide = false
+                    cutter.Transparency = 1
+                end
+
+                -- Process walls in both rooms
                 local roomsToCheck = { door.fromRoom, door.toRoom }
                 for _, roomId in ipairs(roomsToCheck) do
                     local roomNode = roomModels[roomId]
@@ -89,8 +99,8 @@ return {
                                     local prop = axis == 1 and "X" or axis == 2 and "Y" or "Z"
                                     local wMin = wallPos[prop] - wallSize[prop] / 2
                                     local wMax = wallPos[prop] + wallSize[prop] / 2
-                                    local cMin = cutter.Position[prop] - cutter.Size[prop] / 2
-                                    local cMax = cutter.Position[prop] + cutter.Size[prop] / 2
+                                    local cMin = cutterPos[prop] - cutterSize[prop] / 2
+                                    local cMax = cutterPos[prop] + cutterSize[prop] / 2
 
                                     if wMax <= cMin or cMax <= wMin then
                                         intersects = false
@@ -99,32 +109,40 @@ return {
                                 end
 
                                 if intersects then
-                                    local success, result = pcall(function()
-                                        return child:SubtractAsync({cutter})
-                                    end)
-
-                                    if success and result then
-                                        result.Name = child.Name
-                                        result.Parent = roomContainer
-
-                                        -- Update DomNode _instance reference
-                                        local children = Dom.getChildren(roomNode)
-                                        for _, domChild in ipairs(children) do
-                                            if domChild and domChild._instance == child then
-                                                domChild._instance = result
-                                                break
-                                            end
-                                        end
-
-                                        child:Destroy()
-                                        cutCount = cutCount + 1
+                                    if hideWalls then
+                                        -- Outdoor horizontal: hide the wall part entirely
+                                        child.Transparency = 1
+                                        child.CanCollide = false
+                                        hideCount = hideCount + 1
                                     else
-                                        failCount = failCount + 1
-                                        warn(string.format(
-                                            "[DoorCutter] SubtractAsync FAILED on %s (room %s): %s",
-                                            child.Name, tostring(roomId),
-                                            tostring(result)
-                                        ))
+                                        -- Cave or vertical: CSG cut
+                                        local success, result = pcall(function()
+                                            return child:SubtractAsync({cutter})
+                                        end)
+
+                                        if success and result then
+                                            result.Name = child.Name
+                                            result.Parent = roomContainer
+
+                                            -- Update DomNode _instance reference
+                                            local children = Dom.getChildren(roomNode)
+                                            for _, domChild in ipairs(children) do
+                                                if domChild and domChild._instance == child then
+                                                    domChild._instance = result
+                                                    break
+                                                end
+                                            end
+
+                                            child:Destroy()
+                                            cutCount = cutCount + 1
+                                        else
+                                            failCount = failCount + 1
+                                            warn(string.format(
+                                                "[DoorCutter] SubtractAsync FAILED on %s (room %s): %s",
+                                                child.Name, tostring(roomId),
+                                                tostring(result)
+                                            ))
+                                        end
                                     end
                                 end
                             end
@@ -132,13 +150,16 @@ return {
                     end
                 end
 
-                -- Carve terrain in doorway (AFTER all terrain passes, last terrain op)
+                -- Carve terrain in doorway (always, regardless of style)
                 Canvas.carveDoorway(CFrame.new(cutterPos), cutterSize)
 
-                cutter:Destroy()
+                if cutter then
+                    cutter:Destroy()
+                end
             end
 
-            print(string.format("[DoorCutter] Cut %d wall segments for %d doors (%d CSG failures)", cutCount, #doors, failCount))
+            print(string.format("[DoorCutter] Cut %d, hidden %d wall segments for %d doors (%d CSG failures)",
+                cutCount, hideCount, #doors, failCount))
 
             self.Out:Fire("buildComplete", payload)
         end,

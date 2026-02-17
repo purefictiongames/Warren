@@ -382,10 +382,10 @@ return {
         },
         -- 11. Glacier Ice: White-blue stone, bright white snow, cold white glow
         ["palette-glacier-ice"] = {
-            wallColor = {200, 215, 230},
-            floorColor = {235, 245, 255},
-            lightColor = {220, 235, 255},
-            fixtureColor = {200, 225, 255},
+            wallColor = {140, 190, 235},
+            floorColor = {220, 240, 255},
+            lightColor = {180, 220, 255},
+            fixtureColor = {160, 210, 255},
         },
         -- 12. Highland Meadow: Warm brown stone, green grass, warm sunlight
         ["palette-highland-meadow"] = {

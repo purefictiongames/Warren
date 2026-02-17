@@ -50,9 +50,16 @@ return {
 
             local wallMaterial = Enum.Material[biome.terrainWall or "Glacier"]
             local floorMaterial = Enum.Material[biome.terrainFloor or "Snow"]
+            local wallMixMaterial = biome.terrainWallMix and Enum.Material[biome.terrainWallMix] or nil
 
             -- Set terrain material colors for biome palette
             Canvas.setMaterialColors(palette, wallMaterial, floorMaterial)
+
+            -- Tint mix material with same wall color
+            if wallMixMaterial and palette.wallColor then
+                local terrain = workspace.Terrain
+                terrain:SetMaterialColor(wallMixMaterial, palette.wallColor)
+            end
 
             local VOXEL = Canvas.getVoxelSize()
 
@@ -122,6 +129,10 @@ return {
                     end
                     if cf then
                         Canvas.fillBlock(cf, sz, wallMaterial)
+                        -- Mix in secondary wall material (e.g. Glacier veins through Rock)
+                        if wallMixMaterial then
+                            Canvas.mixBlock(cf, sz, wallMixMaterial, 6, 0.3)
+                        end
                     end
                 end
             end

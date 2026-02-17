@@ -27,7 +27,7 @@ return {
 
             -- Select biome
             local biomes = config.biomes or {}
-            local biome = biomes["village"] or biomes["village"] or {}
+            local biome = biomes["ice"] -- or biomes["village"] or {}
 
             -- Apply biome lighting
             local lc = biome.lighting

@@ -56,7 +56,8 @@ return {
             ice = {
                 paletteClass = "palette-glacier-ice",
                 terrainStyle = "outdoor",
-                terrainWall = "Rock",
+                terrainWall = "Glacier",
+                terrainWallMix = "Rock",
                 terrainFloor = "Snow",
                 partWall = "Ice",
                 partFloor = "Glacier",

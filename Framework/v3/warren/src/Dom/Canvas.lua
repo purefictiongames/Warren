@@ -249,6 +249,45 @@ function Canvas.mixPatches(options)
 end
 
 --[[
+    Mix a secondary material into an existing terrain block using noise.
+
+    @param cframe CFrame - Center of the block
+    @param size Vector3 - Dimensions of the block
+    @param material Enum.Material - Secondary material to mix in
+    @param noiseScale number - Noise frequency (default 6)
+    @param threshold number - Noise threshold (default 0.3, ~35% coverage)
+]]
+function Canvas.mixBlock(cframe, size, material, noiseScale, threshold)
+    local terrain = getTerrain()
+    noiseScale = noiseScale or 6
+    threshold = threshold or 0.3
+
+    local pos = cframe.Position
+    local half = size / 2
+    local minX = pos.X - half.X
+    local maxX = pos.X + half.X
+    local minY = pos.Y - half.Y
+    local maxY = pos.Y + half.Y
+    local minZ = pos.Z - half.Z
+    local maxZ = pos.Z + half.Z
+
+    for x = minX, maxX, VOXEL_SIZE do
+        for y = minY, maxY, VOXEL_SIZE do
+            for z = minZ, maxZ, VOXEL_SIZE do
+                local n = math.noise(x / noiseScale, y / noiseScale, z / noiseScale)
+                if n > threshold then
+                    terrain:FillBlock(
+                        CFrame.new(x, y, z),
+                        Vector3.new(VOXEL_SIZE, VOXEL_SIZE, VOXEL_SIZE),
+                        material
+                    )
+                end
+            end
+        end
+    end
+end
+
+--[[
     Carve a doorway in terrain. Expands by 1 voxel to account for overlap.
 
     @param cframe CFrame - Door center

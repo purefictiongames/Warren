@@ -17,6 +17,15 @@ return {
 
     In = {
         onBuildPass = function(self, payload)
+            local biome = payload.biome or {}
+
+            -- Skip light fixtures for outdoor biomes (daylight)
+            if biome.skipLights then
+                payload.lights = {}
+                self.Out:Fire("buildPass", payload)
+                return
+            end
+
             local Dom = self._System.Dom
             local rooms = payload.rooms
             local doors = payload.doors or {}
@@ -66,6 +75,10 @@ return {
                     roomModels[rid] = child
                 end
             end
+
+            local biome = payload.biome or {}
+            local lightType = biome.lightType or "PointLight"
+            local lightStyle = biome.lightStyle or "cave-point-light"
 
             for id, room in pairs(rooms) do
                 local doorFaces = roomDoorFaces[id] or {}
@@ -136,16 +149,16 @@ return {
                     },
                 }))
 
-                -- Fixture with PointLight child
+                -- Fixture with configurable light child
                 local fixture = Dom.createElement("Part", {
                     class = "cave-light-fixture " .. paletteClass,
                     Name = "Light_" .. lightId,
                     Size = lightSize,
                     Position = lightPos,
                 })
-                Dom.appendChild(fixture, Dom.createElement("PointLight", {
-                    class = "cave-point-light " .. paletteClass,
-                    Name = "PointLight",
+                Dom.appendChild(fixture, Dom.createElement(lightType, {
+                    class = lightStyle .. " " .. paletteClass,
+                    Name = lightType,
                 }))
                 Dom.appendChild(parent, fixture)
 

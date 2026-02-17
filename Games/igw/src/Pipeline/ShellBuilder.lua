@@ -20,6 +20,8 @@ return {
             local paletteClass = payload.paletteClass or ""
             local wt = self:getAttribute("wallThickness") or 1
             local regionNum = payload.regionNum or 1
+            local biome = payload.biome or {}
+            local isOutdoor = biome.terrainStyle == "outdoor"
 
             -- Find room DOM Models by name
             local roomModels = {}
@@ -37,9 +39,19 @@ return {
                 local pos = room.position
                 local dims = room.dims
 
-                -- Floor
+                -- Outdoor biomes: walls start as ice-wall-clear (transparent);
+                -- IceTerrainPainter promotes door walls to ice-wall-solid later.
+                local wallClass = "cave-wall " .. paletteClass
+                    .. (isOutdoor and " ice-wall-clear" or "")
+                local ceilingClass = "cave-ceiling " .. paletteClass
+                    .. (isOutdoor and " ice-wall-clear" or "")
+                local floorClass = "cave-floor " .. paletteClass
+                    .. (isOutdoor and " ice-wall-clear" or "")
+
+                -- Floor (biome.partFloor overrides class style when present)
                 Dom.appendChild(roomModel, Dom.createElement("Part", {
-                    class = "cave-floor " .. paletteClass,
+                    class = floorClass,
+                    Material = biome.partFloor,
                     Name = "Floor",
                     Size = { dims[1] + 2*wt, wt, dims[3] + 2*wt },
                     Position = { pos[1], pos[2] - dims[2]/2 - wt/2, pos[3] },
@@ -47,7 +59,8 @@ return {
 
                 -- Ceiling
                 Dom.appendChild(roomModel, Dom.createElement("Part", {
-                    class = "cave-ceiling " .. paletteClass,
+                    class = ceilingClass,
+                    Material = biome.partWall,
                     Name = "Ceiling",
                     Size = { dims[1] + 2*wt, wt, dims[3] + 2*wt },
                     Position = { pos[1], pos[2] + dims[2]/2 + wt/2, pos[3] },
@@ -55,7 +68,8 @@ return {
 
                 -- North wall (+Z)
                 Dom.appendChild(roomModel, Dom.createElement("Part", {
-                    class = "cave-wall " .. paletteClass,
+                    class = wallClass,
+                    Material = biome.partWall,
                     Name = "Wall_N",
                     Size = { dims[1] + 2*wt, dims[2], wt },
                     Position = { pos[1], pos[2], pos[3] + dims[3]/2 + wt/2 },
@@ -63,7 +77,8 @@ return {
 
                 -- South wall (-Z)
                 Dom.appendChild(roomModel, Dom.createElement("Part", {
-                    class = "cave-wall " .. paletteClass,
+                    class = wallClass,
+                    Material = biome.partWall,
                     Name = "Wall_S",
                     Size = { dims[1] + 2*wt, dims[2], wt },
                     Position = { pos[1], pos[2], pos[3] - dims[3]/2 - wt/2 },
@@ -71,7 +86,8 @@ return {
 
                 -- East wall (+X)
                 Dom.appendChild(roomModel, Dom.createElement("Part", {
-                    class = "cave-wall " .. paletteClass,
+                    class = wallClass,
+                    Material = biome.partWall,
                     Name = "Wall_E",
                     Size = { wt, dims[2], dims[3] },
                     Position = { pos[1] + dims[1]/2 + wt/2, pos[2], pos[3] },
@@ -79,7 +95,8 @@ return {
 
                 -- West wall (-X)
                 Dom.appendChild(roomModel, Dom.createElement("Part", {
-                    class = "cave-wall " .. paletteClass,
+                    class = wallClass,
+                    Material = biome.partWall,
                     Name = "Wall_W",
                     Size = { wt, dims[2], dims[3] },
                     Position = { pos[1] - dims[1]/2 - wt/2, pos[2], pos[3] },

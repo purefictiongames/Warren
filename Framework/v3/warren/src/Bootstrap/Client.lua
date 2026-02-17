@@ -88,3 +88,5 @@ if LocalPlayer then
 end
 
 Debug.info("Bootstrap", "Client ready")
+
+return true

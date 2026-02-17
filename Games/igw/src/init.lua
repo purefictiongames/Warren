@@ -11,5 +11,6 @@ Components.SpawnSetter    = require(script.Pipeline.SpawnSetter)
 Components.Materializer   = require(script.Pipeline.Materializer)
 Components.DoorCutter     = require(script.Pipeline.DoorCutter)
 Components.TerrainPainter = require(script.Pipeline.TerrainPainter)
+Components.IceTerrainPainter = require(script.Pipeline.IceTerrainPainter)
 
 return Components

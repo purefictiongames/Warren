@@ -42,6 +42,7 @@ local TYPE_MAP = {
     Folder = "Folder",
     SpawnLocation = "SpawnLocation",
     PointLight = "PointLight",
+    SpotLight = "SpotLight",
     Sound = "Sound",
 }
 
@@ -90,6 +91,7 @@ local PASSTHROUGH = {
     CanQuery = true,
     Brightness = true,
     Range = true,
+    Angle = true,
     Shadows = true,
     Name = true,
     Neutral = true,

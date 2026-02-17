@@ -283,9 +283,26 @@ return {
             Transparency = 1,
             Neutral = true,
         },
+        -- ICE BIOME - Wall visibility classes
+        ["ice-wall-clear"] = {
+            Transparency = 1,
+        },
+        ["ice-wall-solid"] = {
+            Transparency = 0.4,
+        },
+        ["outdoor-wall-solid"] = {
+            Transparency = 0,
+        },
+
         ["cave-point-light"] = {
             Brightness = 0.7,
             Range = 60,
+            Shadows = false,
+        },
+        ["ice-spot-light"] = {
+            Brightness = 0.5,
+            Range = 50,
+            Angle = 120,
             Shadows = false,
         },
 
@@ -362,6 +379,55 @@ return {
             floorColor = {200, 220, 255},
             lightColor = {180, 200, 255},
             fixtureColor = {200, 220, 255},
+        },
+        -- 11. Glacier Ice: White-blue stone, bright white snow, cold white glow
+        ["palette-glacier-ice"] = {
+            wallColor = {200, 215, 230},
+            floorColor = {235, 245, 255},
+            lightColor = {220, 235, 255},
+            fixtureColor = {200, 225, 255},
+        },
+        -- 12. Highland Meadow: Warm brown stone, green grass, warm sunlight
+        ["palette-highland-meadow"] = {
+            wallColor = {130, 115, 90},
+            floorColor = {85, 140, 55},
+            lightColor = {255, 240, 200},
+            fixtureColor = {180, 160, 130},
+        },
+        -- 13. Dungeon Keep: Dark gray stone, warm tan cobble, orange torchlight
+        ["palette-dungeon-keep"] = {
+            wallColor = {75, 70, 65},
+            floorColor = {140, 125, 100},
+            lightColor = {255, 160, 60},
+            fixtureColor = {255, 180, 80},
+        },
+        -- 14. Desert Ruins: Warm tan sandstone, golden sand, bright sun
+        ["palette-desert-ruins"] = {
+            wallColor = {190, 165, 120},
+            floorColor = {220, 195, 140},
+            lightColor = {255, 235, 180},
+            fixtureColor = {200, 175, 130},
+        },
+        -- 15. Sewer Works: Dark green-gray concrete, brown-green mud, sickly glow
+        ["palette-sewer-works"] = {
+            wallColor = {60, 70, 55},
+            floorColor = {80, 70, 45},
+            lightColor = {120, 180, 60},
+            fixtureColor = {100, 160, 50},
+        },
+        -- 16. Crystal Cave: Dark basalt, bright cyan-white salt, purple glow
+        ["palette-crystal-cave"] = {
+            wallColor = {40, 35, 50},
+            floorColor = {180, 220, 255},
+            lightColor = {160, 80, 255},
+            fixtureColor = {200, 140, 255},
+        },
+        -- 17. Village Green: Warm red-brown brick, green grass, warm daylight
+        ["palette-village-green"] = {
+            wallColor = {150, 90, 70},
+            floorColor = {75, 130, 50},
+            lightColor = {255, 245, 220},
+            fixtureColor = {160, 110, 80},
         },
     },
 

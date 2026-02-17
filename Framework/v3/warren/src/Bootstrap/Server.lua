@@ -159,3 +159,5 @@ game:BindToClose(function()
 end)
 
 Debug.info("Bootstrap", "Server ready")
+
+return true

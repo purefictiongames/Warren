@@ -62,14 +62,16 @@ end
 
     @param palette table - { wallColor = Color3, floorColor = Color3 }
 ]]
-function Canvas.setMaterialColors(palette)
+function Canvas.setMaterialColors(palette, wallMaterial, floorMaterial)
     local terrain = getTerrain()
+    wallMaterial = wallMaterial or Enum.Material.Rock
+    floorMaterial = floorMaterial or Enum.Material.CrackedLava
 
     if palette.wallColor then
-        terrain:SetMaterialColor(Enum.Material.Rock, palette.wallColor)
+        terrain:SetMaterialColor(wallMaterial, palette.wallColor)
     end
     if palette.floorColor then
-        terrain:SetMaterialColor(Enum.Material.CrackedLava, palette.floorColor)
+        terrain:SetMaterialColor(floorMaterial, palette.floorColor)
     end
 end
 

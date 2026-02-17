@@ -25,8 +25,12 @@ return {
             local ClassResolver = self._System.ClassResolver
             local config = self._config
 
-            -- Apply lighting
-            local lc = config.lighting
+            -- Select biome
+            local biomes = config.biomes or {}
+            local biome = biomes["village"] or biomes["village"] or {}
+
+            -- Apply biome lighting
+            local lc = biome.lighting
             if lc then
                 local Lighting = game:GetService("Lighting")
                 Lighting.ClockTime = lc.ClockTime or 0
@@ -57,7 +61,7 @@ return {
             -- Build dungeon
             local seed = (os.time() + math.random(1, 9999))
             local regionNum = 1
-            local paletteClass = StyleBridge.getPaletteClass(regionNum)
+            local paletteClass = biome.paletteClass or StyleBridge.getPaletteClass(regionNum)
 
             if Debug then
                 Debug.info("DungeonOrchestrator", "Seed:", seed, "Palette:", paletteClass)
@@ -77,6 +81,7 @@ return {
                     seed = seed,
                     regionNum = regionNum,
                     paletteClass = paletteClass,
+                    biome = biome,
                 })
             end)
         end,

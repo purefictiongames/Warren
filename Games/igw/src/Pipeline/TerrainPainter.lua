@@ -16,6 +16,14 @@ return {
 
     In = {
         onBuildPass = function(self, payload)
+            local biome = payload.biome or {}
+
+            -- Outdoor biomes use IceTerrainPainter instead; pass through
+            if biome.terrainStyle == "outdoor" then
+                self.Out:Fire("buildPass", payload)
+                return
+            end
+
             local Dom = self._System.Dom
             local Canvas = Dom.Canvas
             local StyleBridge = self._System.StyleBridge
@@ -31,8 +39,9 @@ return {
             -- Resolve palette colors for terrain materials
             local palette = StyleBridge.resolvePalette(paletteClass, Styles, ClassResolver)
 
-            local wallMaterialName = self:getAttribute("wallMaterial") or "Rock"
-            local floorMaterialName = self:getAttribute("floorMaterial") or "CrackedLava"
+            local biome = payload.biome or {}
+            local wallMaterialName = biome.terrainWall or self:getAttribute("wallMaterial") or "Rock"
+            local floorMaterialName = biome.terrainFloor or self:getAttribute("floorMaterial") or "CrackedLava"
             local wallMaterial = Enum.Material[wallMaterialName]
             local floorMaterial = Enum.Material[floorMaterialName]
             local noiseScale = self:getAttribute("noiseScale") or 8
@@ -40,8 +49,8 @@ return {
             local patchScale = self:getAttribute("patchScale") or 12
             local patchThreshold = self:getAttribute("patchThreshold") or 0.4
 
-            -- Set terrain material colors
-            Canvas.setMaterialColors(palette)
+            -- Set terrain material colors (parameterized for biome)
+            Canvas.setMaterialColors(palette, wallMaterial, floorMaterial)
 
             -- PASS 1: Fill terrain shells
             for _, room in pairs(rooms) do

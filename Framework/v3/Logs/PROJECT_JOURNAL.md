@@ -1595,6 +1595,97 @@ Open a fresh Studio file? They're gone. And that's exactly what we kept doing.
 
 ---
 
+### 2026-02-16 — Biome System: 8 Map Styles from Pure Data
+
+**The Goal:** Add visual variety to IGW. Every dungeon currently looks the same — Rock/CrackedLava cave with orange PointLights. Build a biome system that can produce drastically different environments without touching the pipeline wiring.
+
+**The Insight:** Biomes are just data bundles. The pipeline already flows a `payload` table through every node. Add a `biome` key to that payload and let each node read overrides from it, falling back to defaults. No new wiring, no new control flow — just data flowing through existing infrastructure.
+
+**Phase 1: Ice/Glacier Cave**
+
+Started with the simplest case: swap textures. Added `biomes` table to `metadata.lua` under the orchestrator config. Each biome bundles palette class, terrain materials, part materials, light type/style, and lighting settings. Pipeline nodes read `payload.biome.terrainWall` instead of hardcoded `"Rock"`, etc.
+
+Hit three framework bugs along the way:
+- `SpotLight` wasn't in the Renderer's `TYPE_MAP` — ice biome lights were silently skipped at mount
+- `Angle` wasn't in the Renderer's `PASSTHROUGH` — SpotLight cone angle couldn't be set
+- Bootstrap Server/Client modules had no `return` statement — `require()` threw "Module code did not return exactly one value" after successful execution
+
+All three were one-line fixes in the SDK.
+
+**Phase 2: Outdoor Environment**
+
+The ice cave worked, but it still felt like a cave. The user's idea: make it outdoor. Don't fill wall/ceiling terrain, just floors. Let daylight in.
+
+This needed a new pipeline node — `IceTerrainPainter` — because the terrain painting strategy is fundamentally different from cave-style (fill shell → hollow). The outdoor painter only fills:
+1. Floor plane (Snow)
+2. Terrain slabs on door walls (so DoorCutter can carve through them)
+3. Nothing else — no ceiling, no non-door walls
+
+Wall visibility became a style system problem. ShellBuilder marks all outdoor walls with `ice-wall-clear` class (Transparency = 1). After doors are planned, IceTerrainPainter promotes door walls to `ice-wall-solid` (Transparency = 0.4) via `Dom.removeClass` / `Dom.addClass`. The cascade re-resolves on the mounted instance. Pure DOM + style system — no reaching into workspace.
+
+**Terrain Ordering Bug (Hit Twice Now)**
+
+`Canvas.paintFloor` → `Canvas.carveInterior` destroyed the floor because terrain voxels are 4-stud aligned. The carve ate through the boundary voxels. Fixed by reordering: fill door slabs → carve interiors → paint floors (last). Same lesson from the lava cave doorway ordering bug — terrain voxel ops are order-dependent.
+
+**Phase 3: Rapid Biome Authoring**
+
+Once the system was proven with lava (cave) and ice (outdoor), new biomes became pure config. Each one is ~15 lines in `metadata.lua` plus a palette in `Styles.lua`:
+
+| Biome | Style | Terrain | Parts | Vibe |
+|-------|-------|---------|-------|------|
+| `lava` | Cave | Rock / CrackedLava | Cobblestone | Original — DOOM-ish fire cave |
+| `dungeon` | Cave | Granite / Cobblestone | Brick | Dark torchlit keep |
+| `sewer` | Cave | Concrete / Mud | CorrodedMetal / Metal | Grimy tunnels, green light |
+| `crystal` | Cave | Basalt / Salt | Glass / Neon | Glowing purple crystal cave |
+| `ice` | Outdoor | Rock / Snow | Ice (translucent) | Arctic glacier, daylight |
+| `meadow` | Outdoor | Slate / Grass | Cobblestone | Highland fields |
+| `desert` | Outdoor | Sandstone / Sand | Limestone | Tatooine vibes |
+| `village` | Outdoor | Pavement / Grass | Brick / WoodPlanks | Pleasant settlement |
+
+Total time from zero to 8 biomes: one session. The last 5 were done in about 10 minutes — all config, no code.
+
+**Architecture Decisions:**
+
+1. **Biome = payload data, not node swap.** Each pipeline node checks `payload.biome` and adjusts behavior. The wiring stays the same. Cave-only nodes (TerrainPainter) pass through for outdoor biomes; outdoor-only nodes (IceTerrainPainter) pass through for caves.
+
+2. **Style classes for wall visibility.** `ice-wall-clear` / `ice-wall-solid` / `outdoor-wall-solid` — the DOM class system handles transparency per wall face. ShellBuilder applies defaults; IceTerrainPainter refines based on door data. All through `Dom.addClass` / `Dom.removeClass`.
+
+3. **`doorWallClass` in biome config.** Ice gets translucent walls (0.4), meadow/desert/village get solid walls (0.0). The biome data tells IceTerrainPainter which class to promote to.
+
+4. **`Canvas.setMaterialColors` parameterized.** Was hardcoded to Rock/CrackedLava. Now accepts material enums with backward-compatible defaults.
+
+**What's Next:**
+
+The user's vision is a virtual world map broken into biome regions. Elevation and distance drive biome selection — desert plains at the surface, meadow as you climb, ice at peaks, dungeon/lava as you descend. Each dungeon generation reads its biome from the world map. Room-level biome mixing (transition rooms between regions) is architecturally possible since the style cascade is per-element.
+
+Other ideas: terrain mountains/cliffs outside the playable area for outdoor biomes, arctic skybox as biome config, biome-specific door models (igloo blocks, skull doorways), foliage/prop scattering via BiomeDecorator node, alternate massers per biome.
+
+**Files Changed:**
+```
+Framework/v3/warren/src/Bootstrap/Client.lua    — return true
+Framework/v3/warren/src/Bootstrap/Server.lua    — return true
+Framework/v3/warren/src/Dom/Canvas.lua          — parameterized setMaterialColors
+Framework/v3/warren/src/Dom/Renderer.lua        — SpotLight + Angle
+Framework/v3/warren/src/Styles.lua              — 7 new palettes, 3 wall visibility classes
+Games/igw/metadata.lua                          — 8 biome configs, IceTerrainPainter wiring
+Games/igw/src/DungeonOrchestrator.lua           — biome selection + payload
+Games/igw/src/Pipeline/LightBuilder.lua         — skipLights + configurable light type
+Games/igw/src/Pipeline/ShellBuilder.lua         — biome material overrides + wall classes
+Games/igw/src/Pipeline/TerrainPainter.lua       — outdoor pass-through + biome materials
+Games/igw/src/Pipeline/IceTerrainPainter.lua    — NEW: outdoor terrain painter
+Games/igw/src/init.lua                          — register IceTerrainPainter
+```
+
+**Commit:** `003a6e6` on `v3.0`
+
+**Lessons:**
+- **Data-driven beats code-driven.** 8 biomes, 1 new node. The rest was config.
+- **Terrain voxel ordering is a recurring trap.** Fill → carve → paint (floor last). Write it on the wall.
+- **Style classes > inline attributes** for conditional rendering. The cascade does the work; nodes just swap class names.
+- **Every `require()` target needs `return`.** Even boot scripts that are pure side effects.
+
+---
+
 ## Statistics
 
 - **Session Logs Written:** 26

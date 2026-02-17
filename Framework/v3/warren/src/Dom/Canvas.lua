@@ -97,6 +97,28 @@ function Canvas.carveBlock(cframe, size)
 end
 
 --[[
+    Fill a solid terrain wedge.
+
+    @param cframe CFrame - Center of the wedge (orientation determines slope direction)
+    @param size Vector3 - Bounding dimensions of the wedge
+    @param material Enum.Material - Terrain material
+]]
+function Canvas.fillWedge(cframe, size, material)
+    getTerrain():FillWedge(cframe, size, material)
+end
+
+--[[
+    Fill a solid terrain corner wedge.
+
+    @param cframe CFrame - Center of the corner wedge (orientation determines slope)
+    @param size Vector3 - Bounding dimensions of the corner wedge
+    @param material Enum.Material - Terrain material
+]]
+function Canvas.fillCornerWedge(cframe, size, material)
+    getTerrain():FillBlock(cframe, size, material)
+end
+
+--[[
     Fill a terrain shell around a room (solid, no carving).
 
     @param roomPos table - {x, y, z} room center

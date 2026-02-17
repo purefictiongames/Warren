@@ -18,6 +18,8 @@ return {
         onBuildPass = function(self, payload)
             local biome = payload.biome or {}
 
+            local t0 = os.clock()
+
             -- Outdoor biomes use IceTerrainPainter instead; pass through
             if biome.terrainStyle == "outdoor" then
                 self.Out:Fire("buildPass", payload)
@@ -31,6 +33,7 @@ return {
             local ClassResolver = self._System.ClassResolver
 
             local rooms = payload.rooms
+            local portalAssignments = payload.portalAssignments or {}
             local lights = payload.lights or {}
             local pads = payload.pads or {}
             local regionNum = payload.regionNum or 1
@@ -52,41 +55,51 @@ return {
             -- Set terrain material colors (parameterized for biome)
             Canvas.setMaterialColors(palette, wallMaterial, floorMaterial)
 
-            -- PASS 1: Fill terrain shells
-            for _, room in pairs(rooms) do
-                Canvas.fillShell(room.position, room.dims, 0, wallMaterial)
+            -- PASS 1: Fill terrain shells (skip portal rooms)
+            for id, room in pairs(rooms) do
+                if not portalAssignments[id] then
+                    Canvas.fillShell(room.position, room.dims, 0, wallMaterial)
+                end
             end
 
-            -- PASS 2: Carve interiors
-            for _, room in pairs(rooms) do
-                Canvas.carveInterior(room.position, room.dims, 0)
+            -- PASS 2: Carve interiors (skip portal rooms)
+            for id, room in pairs(rooms) do
+                if not portalAssignments[id] then
+                    Canvas.carveInterior(room.position, room.dims, 0)
+                end
             end
 
-            -- PASS 3: Paint lava veins
-            for _, room in pairs(rooms) do
-                Canvas.paintNoise({
-                    roomPos = room.position,
-                    roomDims = room.dims,
-                    material = floorMaterial,
-                    noiseScale = noiseScale,
-                    threshold = noiseThreshold,
-                })
+            -- PASS 3: Paint lava veins (skip portal rooms)
+            for id, room in pairs(rooms) do
+                if not portalAssignments[id] then
+                    Canvas.paintNoise({
+                        roomPos = room.position,
+                        roomDims = room.dims,
+                        material = floorMaterial,
+                        noiseScale = noiseScale,
+                        threshold = noiseThreshold,
+                    })
+                end
             end
 
-            -- PASS 4: Paint floors
-            for _, room in pairs(rooms) do
-                Canvas.paintFloor(room.position, room.dims, floorMaterial)
+            -- PASS 4: Paint floors (skip portal rooms)
+            for id, room in pairs(rooms) do
+                if not portalAssignments[id] then
+                    Canvas.paintFloor(room.position, room.dims, floorMaterial)
+                end
             end
 
-            -- PASS 5: Mix granite patches
-            for _, room in pairs(rooms) do
-                Canvas.mixPatches({
-                    roomPos = room.position,
-                    roomDims = room.dims,
-                    material = wallMaterial,
-                    noiseScale = patchScale,
-                    threshold = patchThreshold,
-                })
+            -- PASS 5: Mix granite patches (skip portal rooms)
+            for id, room in pairs(rooms) do
+                if not portalAssignments[id] then
+                    Canvas.mixPatches({
+                        roomPos = room.position,
+                        roomDims = room.dims,
+                        material = wallMaterial,
+                        noiseScale = patchScale,
+                        threshold = patchThreshold,
+                    })
+                end
             end
 
             -- Carve clearance around lights
@@ -107,7 +120,7 @@ return {
             local roomCount = 0
             for _ in pairs(rooms) do roomCount = roomCount + 1 end
 
-            print(string.format("[TerrainPainter] Painted terrain for %d rooms", roomCount))
+            print(string.format("[TerrainPainter] Painted terrain for %d rooms — %.2fs", roomCount, os.clock() - t0))
 
             payload.roomCount = roomCount
             payload.doorCount = payload.doors and #payload.doors or 0

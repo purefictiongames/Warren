@@ -23,6 +23,7 @@ return {
             local isOutdoor = biome.terrainStyle == "outdoor"
             local wt = self:getAttribute("wallThickness") or 1
 
+            local t0 = os.clock()
             print(string.format("[DoorCutter] Starting with %d doors (outdoor=%s)", #doors, tostring(isOutdoor)))
 
             -- Build room model lookup from DOM
@@ -158,8 +159,8 @@ return {
                 end
             end
 
-            print(string.format("[DoorCutter] Cut %d, hidden %d wall segments for %d doors (%d CSG failures)",
-                cutCount, hideCount, #doors, failCount))
+            print(string.format("[DoorCutter] Cut %d, hidden %d wall segments for %d doors (%d CSG failures) — %.2fs",
+                cutCount, hideCount, #doors, failCount, os.clock() - t0))
 
             self.Out:Fire("buildComplete", payload)
         end,

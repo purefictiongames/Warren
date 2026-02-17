@@ -53,11 +53,11 @@ return {
 
         -- Plan phase (DOM only, no Instances yet)
         self:_syncCall("buildMountain", payload)
-        self:_syncCall("buildRooms", payload)
-        self:_syncCall("buildShells", payload)
-        self:_syncCall("planDoors", payload)
-        self:_syncCall("buildTrusses", payload)
-        self:_syncCall("buildLights", payload)
+        -- self:_syncCall("buildRooms", payload)
+        -- self:_syncCall("buildShells", payload)
+        -- self:_syncCall("planDoors", payload)
+        -- self:_syncCall("buildTrusses", payload)
+        -- self:_syncCall("buildLights", payload)
 
         -- Mount DOM to workspace
         Dom.mount(payload.dom, workspace)
@@ -67,38 +67,38 @@ return {
         self:_syncCall("paintTerrain", payload)
 
         -- Room operations: hide blockouts, air-carve, paint floors
-        local rooms = payload.rooms or {}
-        local biome = payload.biome or {}
-        local floorMatName = biome.terrainFloor or "Grass"
-        local floorMaterial = Enum.Material[floorMatName] or Enum.Material.Grass
-        local container = payload.container
+        -- local rooms = payload.rooms or {}
+        -- local biome = payload.biome or {}
+        -- local floorMatName = biome.terrainFloor or "Grass"
+        -- local floorMaterial = Enum.Material[floorMatName] or Enum.Material.Grass
+        -- local container = payload.container
 
-        if container then
-            for _, child in ipairs(container:GetChildren()) do
-                if child:IsA("Model") then
-                    for _, part in ipairs(child:GetChildren()) do
-                        if part:IsA("BasePart") and part.Name:match("^RoomBlock_") then
-                            part.Transparency = 1
-                            part.CanCollide = false
-                        end
-                    end
-                end
-            end
-        end
+        -- if container then
+        --     for _, child in ipairs(container:GetChildren()) do
+        --         if child:IsA("Model") then
+        --             for _, part in ipairs(child:GetChildren()) do
+        --                 if part:IsA("BasePart") and part.Name:match("^RoomBlock_") then
+        --                     part.Transparency = 1
+        --                     part.CanCollide = false
+        --                 end
+        --             end
+        --         end
+        --     end
+        -- end
 
-        local roomCount = 0
-        for _, room in pairs(rooms) do
-            Canvas.carveInterior(room.position, room.dims, 0)
-            Canvas.paintFloor(room.position, room.dims, floorMaterial)
-            roomCount = roomCount + 1
-        end
+        -- local roomCount = 0
+        -- for _, room in pairs(rooms) do
+        --     Canvas.carveInterior(room.position, room.dims, 0)
+        --     Canvas.paintFloor(room.position, room.dims, floorMaterial)
+        --     roomCount = roomCount + 1
+        -- end
 
-        if Debug then
-            Debug.info("DungeonOrchestrator",
-                "Room terrain: carved + painted", roomCount, "rooms")
-        end
+        -- if Debug then
+        --     Debug.info("DungeonOrchestrator",
+        --         "Room terrain: carved + painted", roomCount, "rooms")
+        -- end
 
-        self:_syncCall("applyDoors", payload)
+        -- self:_syncCall("applyDoors", payload)
 
         -- Done
         self._container = payload.container

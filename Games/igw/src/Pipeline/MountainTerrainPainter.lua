@@ -33,14 +33,21 @@ return {
             end
 
             ----------------------------------------------------------------
-            -- 1. Hide mountain blockout Parts
+            -- 1. Hide blockout Parts + collect wedge instances
             ----------------------------------------------------------------
+
+            local wedges = {}
 
             if container then
                 for _, child in ipairs(container:GetChildren()) do
-                    if child:IsA("BasePart") and child.Name:match("^Mountain_") then
-                        child.Transparency = 1
-                        child.CanCollide = false
+                    if child:IsA("BasePart") then
+                        if child.Name:match("^Mountain_") or child.Name:match("^Slope_") then
+                            child.Transparency = 1
+                            child.CanCollide = false
+                        end
+                        if child:IsA("WedgePart") and child.Name:match("^Slope_") then
+                            table.insert(wedges, child)
+                        end
                     end
                 end
             end
@@ -57,9 +64,73 @@ return {
                 )
             end
 
+            ----------------------------------------------------------------
+            -- 3. Fill slope wedges with terrain
+            ----------------------------------------------------------------
+
+            for _, wedge in ipairs(wedges) do
+                Canvas.fillWedge(wedge.CFrame, wedge.Size, wallMaterial)
+            end
+
+            ----------------------------------------------------------------
+            -- 4. Fill slope corners with voxel layers
+            -- Each corner is the gap between two perpendicular face slopes.
+            -- At each Y layer, the slope's run shrinks linearly (full at
+            -- bottom, zero at top), so we fill a shrinking block per layer.
+            ----------------------------------------------------------------
+
+            local VOXEL = 4
+            local CORNER_DEFS = {
+                { xFace = "E", zFace = "N", xDir =  1, zDir =  1 },
+                { xFace = "W", zFace = "N", xDir = -1, zDir =  1 },
+                { xFace = "E", zFace = "S", xDir =  1, zDir = -1 },
+                { xFace = "W", zFace = "S", xDir = -1, zDir = -1 },
+            }
+
+            local cornerFills = 0
+            for _, vol in ipairs(mountain) do
+                local oh = vol.overhangs
+                if not oh then continue end
+
+                local height = vol.dims[2]
+                local bottom = vol.position[2] - height / 2
+                local layers = math.floor(height / VOXEL)
+
+                for _, corner in ipairs(CORNER_DEFS) do
+                    local ohX = oh[corner.xFace] or 0
+                    local ohZ = oh[corner.zFace] or 0
+                    if ohX <= 0 or ohZ <= 0 then continue end
+
+                    local cornerX = vol.position[1]
+                        + corner.xDir * vol.dims[1] / 2
+                    local cornerZ = vol.position[3]
+                        + corner.zDir * vol.dims[3] / 2
+
+                    for i = 0, layers - 1 do
+                        -- Slope: full run at bottom, zero at top
+                        local progress = (i + 1) / layers
+                        local xExtent = ohX * (1 - progress)
+                        local zExtent = ohZ * (1 - progress)
+
+                        if xExtent < VOXEL or zExtent < VOXEL then continue end
+
+                        local y = bottom + (i + 0.5) * VOXEL
+                        local cx = cornerX + corner.xDir * xExtent / 2
+                        local cz = cornerZ + corner.zDir * zExtent / 2
+
+                        Canvas.fillBlock(
+                            CFrame.new(cx, y, cz),
+                            Vector3.new(xExtent, VOXEL, zExtent),
+                            wallMaterial
+                        )
+                        cornerFills = cornerFills + 1
+                    end
+                end
+            end
+
             print(string.format(
-                "[MountainTerrainPainter] Filled %d mountain volumes with %s — %.2fs",
-                #mountain, wallMatName, os.clock() - t0
+                "[MountainTerrainPainter] Filled %d volumes + %d wedges + %d corner voxels with %s — %.2fs",
+                #mountain, #wedges, cornerFills, wallMatName, os.clock() - t0
             ))
 
             self.Out:Fire("nodeComplete", payload)

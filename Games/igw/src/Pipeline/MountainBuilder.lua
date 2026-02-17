@@ -219,10 +219,106 @@ return {
             end
 
             ----------------------------------------------------------------
-            -- Store in payload
+            -- Generate slope wedges for all layers
+            -- Corners handled by terrain voxel fill in MountainTerrainPainter
+            ----------------------------------------------------------------
+
+            local WEDGE_FACES = {
+                { name = "N", axis = 3, dir =  1, rot = CFrame.Angles(0, math.pi, 0),
+                    depthAxis = 1 },
+                { name = "S", axis = 3, dir = -1, rot = CFrame.Angles(0, 0, 0),
+                    depthAxis = 1 },
+                { name = "E", axis = 1, dir =  1, rot = CFrame.Angles(0, -math.pi/2, 0),
+                    depthAxis = 3 },
+                { name = "W", axis = 1, dir = -1, rot = CFrame.Angles(0, math.pi/2, 0),
+                    depthAxis = 3 },
+            }
+
+            local baseMinSlope = self:getAttribute("baseMinSlope") or 40
+            local baseMaxSlope = self:getAttribute("baseMaxSlope") or 100
+
+            local wedgeCount = 0
+
+            for _, vol in ipairs(volumes) do
+                local overhangs = {}
+                local colorIdx = math.min(vol.layer + 1, #LAYER_COLORS)
+                local rgb = LAYER_COLORS[colorIdx]
+                local wedgeHeight = vol.dims[2]
+
+                -- Calculate per-face overhangs
+                if vol.parentId then
+                    local parent = volumeById[vol.parentId]
+                    if parent then
+                        for _, face in ipairs(WEDGE_FACES) do
+                            local ax = face.axis
+                            local parentEdge = parent.position[ax]
+                                + face.dir * parent.dims[ax] / 2
+                            local childEdge = vol.position[ax]
+                                + face.dir * vol.dims[ax] / 2
+                            local oh = (parentEdge - childEdge) * face.dir
+                            overhangs[face.name] = oh > 1 and oh or 0
+                        end
+                    end
+                elseif vol.layer == 0 then
+                    -- Base layer: random overhangs
+                    for _, face in ipairs(WEDGE_FACES) do
+                        overhangs[face.name] = baseMinSlope
+                            + math.random() * (baseMaxSlope - baseMinSlope)
+                    end
+                end
+
+                -- Store overhangs for terrain painter corner fills
+                vol.overhangs = overhangs
+
+                -- Face wedges
+                for _, face in ipairs(WEDGE_FACES) do
+                    local oh = overhangs[face.name] or 0
+                    if oh <= 0 then continue end
+
+                    local ax = face.axis
+                    local childEdge = vol.position[ax]
+                        + face.dir * vol.dims[ax] / 2
+                    local depthAx = face.depthAxis
+                    local wedgeDepth = vol.dims[depthAx]
+
+                    local cx = vol.position[1]
+                    local cy = vol.position[2]
+                    local cz = vol.position[3]
+                    if ax == 1 then
+                        cx = childEdge + face.dir * oh / 2
+                    else
+                        cz = childEdge + face.dir * oh / 2
+                    end
+
+                    wedgeCount = wedgeCount + 1
+                    local wedge = Dom.createElement("WedgePart", {
+                        Name = "Slope_" .. wedgeCount,
+                        Size = Vector3.new(wedgeDepth, wedgeHeight, oh),
+                        CFrame = CFrame.new(cx, cy, cz) * face.rot,
+                        Anchored = true,
+                        CanCollide = true,
+                        Transparency = 0.3,
+                        Color = Color3.fromRGB(rgb[1], rgb[2], rgb[3]),
+                        Material = Enum.Material.SmoothPlastic,
+                    })
+                    Dom.appendChild(payload.dom, wedge)
+                end
+            end
+
+            ----------------------------------------------------------------
+            -- Store in payload + set spawn on base layer edge
             ----------------------------------------------------------------
 
             payload.mountain = volumes
+
+            local baseTop = base.position[2] + base.dims[2] / 2
+            payload.spawn = {
+                position = {
+                    base.position[1] + 10,
+                    baseTop + 15,
+                    base.position[3] + base.dims[3] / 2 + 10,
+                },
+            }
 
             ----------------------------------------------------------------
             -- Create blockout Parts (mountain volumes)
@@ -248,8 +344,8 @@ return {
             end
 
             print(string.format(
-                "[MountainBuilder] %d volumes, %d layers, %d peaks, %d pads (seed %d) — %.2fs",
-                #volumes, layerCount, peakCount, padCount, seed, os.clock() - t0
+                "[MountainBuilder] %d volumes, %d layers, %d peaks, %d wedges, %d pads (seed %d) — %.2fs",
+                #volumes, layerCount, peakCount, wedgeCount, padCount, seed, os.clock() - t0
             ))
 
             self.Out:Fire("nodeComplete", payload)

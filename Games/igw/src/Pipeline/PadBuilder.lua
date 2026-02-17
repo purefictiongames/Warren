@@ -149,6 +149,7 @@ return {
             end
 
             -- Select rooms for pads (start from room 2, room 1 is spawn)
+            -- Skip spur rooms (they're portal rooms)
             local step = math.max(1, math.floor((roomCount - 1) / padCount))
             local roomId = 2
 
@@ -156,6 +157,13 @@ return {
                 if roomId > roomCount then break end
 
                 local room = rooms[roomId]
+
+                -- Skip spur/portal rooms — advance to next candidate
+                if room and room.pathType == "spur" then
+                    roomId = roomId + step
+                    continue
+                end
+
                 if room then
                     local safePos = findSafeFloorPosition(room, doors, trusses, pads, lights)
 

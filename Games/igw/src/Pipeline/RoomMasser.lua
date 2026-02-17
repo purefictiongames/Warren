@@ -194,6 +194,7 @@ return {
                         id = entry.id,
                         position = { origin[1], origin[2], origin[3] },
                         dims = entry.dims,
+                        pathType = entry.pathType,
                         parentId = nil,
                         attachFace = nil,
                     }
@@ -230,6 +231,7 @@ return {
                                     id = entry.id,
                                     position = newPos,
                                     dims = entry.dims,
+                                    pathType = entry.pathType,
                                     parentId = parentId,
                                     attachFace = face.name,
                                 }
@@ -256,6 +258,7 @@ return {
                                         id = entry.id,
                                         position = newPos,
                                         dims = entry.dims,
+                                        pathType = entry.pathType,
                                         parentId = parentId,
                                         attachFace = face.name,
                                     }
@@ -270,6 +273,33 @@ return {
                             warn("[RoomMasser] Failed to place room " .. entry.id)
                         end
                     end
+                end
+            end
+
+            -- Compute portal assignments (spur rooms → target biomes)
+            local portalAssignments = {}
+            local biomeName = payload.biomeName
+            local worldMap = payload.worldMap or {}
+            local mapEntry = worldMap[biomeName]
+            local neighbors = mapEntry and mapEntry.connects or {}
+            if #neighbors > 0 then
+                local spurIdx = 0
+                for _, id in ipairs(roomOrder) do
+                    local room = rooms[id]
+                    if room and room.pathType == "spur" then
+                        spurIdx = spurIdx + 1
+                        portalAssignments[id] = neighbors[((spurIdx - 1) % #neighbors) + 1]
+                    end
+                end
+            end
+            payload.portalAssignments = portalAssignments
+
+            local portalCount = 0
+            for _ in pairs(portalAssignments) do portalCount = portalCount + 1 end
+            if portalCount > 0 then
+                print(string.format("[RoomMasser] Portal assignments: %d spur rooms → target biomes", portalCount))
+                for roomId, target in pairs(portalAssignments) do
+                    print(string.format("[RoomMasser]   Room %d → %s", roomId, target))
                 end
             end
 

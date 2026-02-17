@@ -43,6 +43,7 @@ return {
             local rooms = payload.rooms
             local doors = payload.doors or {}
             local pads = payload.pads or {}
+            local portalAssignments = payload.portalAssignments or {}
             local regionNum = payload.regionNum or 1
             local paletteClass = payload.paletteClass or StyleBridge.getPaletteClass(regionNum)
 
@@ -106,9 +107,11 @@ return {
             ----------------------------------------------------------------
 
             -- Fill terrain slabs on door walls so DoorCutter can carve through them
+            -- (skip portal rooms — PortalRoomBuilder handles those)
             for roomId, doorFaces in pairs(roomDoorFaces) do
                 local room = rooms[roomId]
                 if not room then continue end
+                if portalAssignments[roomId] then continue end
                 local pos = room.position
                 local dims = room.dims
 
@@ -137,14 +140,18 @@ return {
                 end
             end
 
-            -- Carve interiors so door-wall slabs don't bleed into rooms
-            for _, room in pairs(rooms) do
-                Canvas.carveInterior(room.position, room.dims, 0)
+            -- Carve interiors so door-wall slabs don't bleed into rooms (skip portal rooms)
+            for id, room in pairs(rooms) do
+                if not portalAssignments[id] then
+                    Canvas.carveInterior(room.position, room.dims, 0)
+                end
             end
 
-            -- Paint floors AFTER carve (so voxel boundary doesn't get erased)
-            for _, room in pairs(rooms) do
-                Canvas.paintFloor(room.position, room.dims, floorMaterial)
+            -- Paint floors AFTER carve (skip portal rooms)
+            for id, room in pairs(rooms) do
+                if not portalAssignments[id] then
+                    Canvas.paintFloor(room.position, room.dims, floorMaterial)
+                end
             end
 
             -- Carve clearance around pads

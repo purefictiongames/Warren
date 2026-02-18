@@ -52,14 +52,42 @@ return {
 
             -- Config from cascade
             local baseWidth    = self:getAttribute("baseWidth") or 400
-            local baseDepth    = self:getAttribute("baseDepth") or 400
+            local baseDepth    = self:getAttribute("baseDepth") or 300
+            local peakWidth    = self:getAttribute("peakWidth") or 30
+            local peakDepth    = self:getAttribute("peakDepth") or 30
             local layerHeight  = self:getAttribute("layerHeight") or 50
             local layerCount   = self:getAttribute("layerCount") or 6
-            local taperRatio   = self:getAttribute("taperRatio") or 0.7
             local forkChance   = self:getAttribute("forkChance") or 25
             local maxPeaks     = self:getAttribute("maxPeaks") or 3
             local jitterRange  = self:getAttribute("jitterRange") or 0.15
             local origin       = self:getAttribute("origin") or { 0, 0, 0 }
+            local forkWidthFraction = self:getAttribute("forkWidthFraction") or 0.6
+
+            -- Slope tangent: controls curvature of the silhouette
+            -- -1 to +1 range. 0 = linear, + = dome/hill, - = steep/funnel
+            -- X and Z can differ for asymmetric mountain shapes
+            local SLOPE_PROFILES = {
+                hill    = { tangent = 0.6 },
+                mound   = { tangent = 0.3 },
+                linear  = { tangent = 0.0 },
+                steep   = { tangent = -0.3 },
+                jagged  = { tangent = -0.6 },
+            }
+
+            local slopeProfile = self:getAttribute("slopeProfile")
+            local tangentX = self:getAttribute("tangentX")
+            local tangentZ = self:getAttribute("tangentZ")
+            local tangent  = self:getAttribute("tangent")
+
+            if not tangentX or not tangentZ then
+                if tangent then
+                    tangentX = tangentX or tangent
+                    tangentZ = tangentZ or tangent
+                elseif slopeProfile and SLOPE_PROFILES[slopeProfile] then
+                    tangentX = SLOPE_PROFILES[slopeProfile].tangent
+                    tangentZ = SLOPE_PROFILES[slopeProfile].tangent
+                end
+            end
 
             -- Room size config (shared with room masser via cascade)
             local scaleRange = self:getAttribute("scaleRange")
@@ -70,6 +98,59 @@ return {
 
             local seed = payload.seed or os.time()
             math.randomseed(seed)
+
+            -- Random tangent if not specified (after seed so it's deterministic)
+            if not tangentX or not tangentZ then
+                local names = {}
+                for name in pairs(SLOPE_PROFILES) do
+                    table.insert(names, name)
+                end
+                table.sort(names)
+                slopeProfile = names[math.random(1, #names)]
+                local t = SLOPE_PROFILES[slopeProfile].tangent
+                tangentX = tangentX or t
+                tangentZ = tangentZ or t
+            end
+
+            ----------------------------------------------------------------
+            -- Quadratic Bezier silhouette curve
+            -- The curve defines the outer boundary at each height.
+            -- P0 = base size (ground), P2 = peak size (summit)
+            -- P1 = control point: tangent > 0 shifts above midline (dome),
+            --                     tangent < 0 shifts below (funnel/steep)
+            --
+            -- Each layer's width = curve sampled at the BOTTOM of that
+            -- layer's height band, so the layer fits right up against
+            -- the curve boundary. Wedge rise = layerHeight, run = the
+            -- width difference between adjacent layer bottoms.
+            ----------------------------------------------------------------
+
+            local function bezier(t, p0, p1, p2)
+                local u = 1 - t
+                return u * u * p0 + 2 * u * t * p1 + t * t * p2
+            end
+
+            -- Control points for X and Z curves
+            local midX = (baseWidth + peakWidth) / 2
+            local midZ = (baseDepth + peakDepth) / 2
+            local cpX = midX + tangentX * (baseWidth - peakWidth) / 2
+            local cpZ = midZ + tangentZ * (baseDepth - peakDepth) / 2
+
+            -- Sample at the bottom of each layer's height band:
+            -- t = layer / layerCount (NOT layerCount-1)
+            -- Layer 0 bottom = t=0 (baseWidth), last layer bottom = t=(N-1)/N
+            -- Top of last layer = t=1 (peakWidth, above all layers)
+            local function widthAt(layer)
+                if layerCount <= 1 then return baseWidth end
+                local t = layer / layerCount
+                return math.max(peakWidth, bezier(t, baseWidth, cpX, peakWidth))
+            end
+
+            local function depthAt(layer)
+                if layerCount <= 1 then return baseDepth end
+                local t = layer / layerCount
+                return math.max(peakDepth, bezier(t, baseDepth, cpZ, peakDepth))
+            end
 
             ----------------------------------------------------------------
             -- Generate mountain volume tree
@@ -97,11 +178,13 @@ return {
             volumeById[base.id] = base
             nextId = nextId + 1
 
-            -- Grow layers upward
+            -- Grow layers upward using Bezier curve sizing
             local currentLayer = { base }
 
             for layer = 1, layerCount - 1 do
                 local nextLayer = {}
+                local targetW = widthAt(layer)
+                local targetD = depthAt(layer)
 
                 for _, parent in ipairs(currentLayer) do
                     local shouldFork = peakCount < maxPeaks
@@ -113,18 +196,14 @@ return {
                     end
 
                     for c = 1, childCount do
-                        -- Taper — forks are narrower
-                        local taper = taperRatio
-                        if shouldFork then
-                            taper = taperRatio * 0.75
-                        end
-
-                        local childWidth = parent.dims[1] * taper
-                        local childDepth = parent.dims[3] * taper
+                        local forkMult = shouldFork and forkWidthFraction or 1
+                        -- Curve size, clamped to never exceed parent
+                        local childWidth = math.min(targetW * forkMult, parent.dims[1])
+                        local childDepth = math.min(targetD * forkMult, parent.dims[3])
 
                         -- Jitter constrained to parent footprint
-                        local maxJitterX = (parent.dims[1] - childWidth) / 2
-                        local maxJitterZ = (parent.dims[3] - childDepth) / 2
+                        local maxJitterX = math.max(0, (parent.dims[1] - childWidth) / 2)
+                        local maxJitterZ = math.max(0, (parent.dims[3] - childDepth) / 2)
                         local jitterX = maxJitterX * (math.random() * 2 - 1) * jitterRange
                         local jitterZ = maxJitterZ * (math.random() * 2 - 1) * jitterRange
 
@@ -344,8 +423,10 @@ return {
             end
 
             print(string.format(
-                "[MountainBuilder] %d volumes, %d layers, %d peaks, %d wedges, %d pads (seed %d) — %.2fs",
-                #volumes, layerCount, peakCount, wedgeCount, padCount, seed, os.clock() - t0
+                "[MountainBuilder] %d volumes, %d layers, %d peaks, %d wedges, %d pads — %s (tX=%.2f tZ=%.2f) base %dx%d seed %d — %.2fs",
+                #volumes, layerCount, peakCount, wedgeCount, padCount,
+                slopeProfile or "custom", tangentX, tangentZ,
+                baseWidth, baseDepth, seed, os.clock() - t0
             ))
 
             self.Out:Fire("nodeComplete", payload)

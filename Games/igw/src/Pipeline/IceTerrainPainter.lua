@@ -106,6 +106,9 @@ return {
             -- erase the floor, then floor re-fills the bottom layer)
             ----------------------------------------------------------------
 
+            -- Use buffer if available (orchestrator-managed), else fall back to Canvas
+            local buf = payload.buffer
+
             -- Fill terrain slabs on door walls so DoorCutter can carve through them
             -- (skip portal rooms — PortalRoomBuilder handles those)
             for roomId, doorFaces in pairs(roomDoorFaces) do
@@ -131,10 +134,16 @@ return {
                         sz = Vector3.new(VOXEL * 2, dims[2] + 2*VOXEL, dims[3] + 2*VOXEL)
                     end
                     if cf then
-                        Canvas.fillBlock(cf, sz, wallMaterial)
-                        -- Mix in secondary wall material (e.g. Glacier veins through Rock)
-                        if wallMixMaterial then
-                            Canvas.mixBlock(cf, sz, wallMixMaterial, 6, 0.3)
+                        if buf then
+                            buf:fillBlock(cf, sz, wallMaterial)
+                            if wallMixMaterial then
+                                buf:mixBlock(cf, sz, wallMixMaterial, 6, 0.3)
+                            end
+                        else
+                            Canvas.fillBlock(cf, sz, wallMaterial)
+                            if wallMixMaterial then
+                                Canvas.mixBlock(cf, sz, wallMixMaterial, 6, 0.3)
+                            end
                         end
                     end
                 end
@@ -143,14 +152,22 @@ return {
             -- Carve interiors so door-wall slabs don't bleed into rooms (skip portal rooms)
             for id, room in pairs(rooms) do
                 if not portalAssignments[id] then
-                    Canvas.carveInterior(room.position, room.dims, 0)
+                    if buf then
+                        buf:carveInterior(room.position, room.dims, 0)
+                    else
+                        Canvas.carveInterior(room.position, room.dims, 0)
+                    end
                 end
             end
 
             -- Paint floors AFTER carve (skip portal rooms)
             for id, room in pairs(rooms) do
                 if not portalAssignments[id] then
-                    Canvas.paintFloor(room.position, room.dims, floorMaterial)
+                    if buf then
+                        buf:paintFloor(room.position, room.dims, floorMaterial)
+                    else
+                        Canvas.paintFloor(room.position, room.dims, floorMaterial)
+                    end
                 end
             end
 
@@ -158,7 +175,11 @@ return {
             for _, pad in ipairs(pads) do
                 local padPos = Vector3.new(pad.position[1], pad.position[2], pad.position[3])
                 local padSize = Vector3.new(6, 1, 6)
-                Canvas.carveMargin(CFrame.new(padPos), padSize, 2)
+                if buf then
+                    buf:carveMargin(CFrame.new(padPos), padSize, 2)
+                else
+                    Canvas.carveMargin(CFrame.new(padPos), padSize, 2)
+                end
             end
 
             ----------------------------------------------------------------

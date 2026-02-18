@@ -52,19 +52,20 @@ return {
         local Debug = self._System and self._System.Debug
 
         -- Plan phase (DOM only, no Instances yet)
-        self:_syncCall("buildMountain", payload)
+        self:_syncCall("buildTopology", payload)
+        -- self:_syncCall("buildMountain", payload)
         -- self:_syncCall("buildRooms", payload)
         -- self:_syncCall("buildShells", payload)
         -- self:_syncCall("planDoors", payload)
         -- self:_syncCall("buildTrusses", payload)
         -- self:_syncCall("buildLights", payload)
 
-        -- Mount DOM to workspace
+        -- Mount DOM to workspace (container for future room geometry)
         Dom.mount(payload.dom, workspace)
         payload.container = payload.dom._instance
 
-        -- Apply phase (needs mounted Instances + Canvas)
-        self:_syncCall("paintTerrain", payload)
+        -- Chunk-managed terrain loading (streams voxels near player)
+        self:_syncCall("initChunks", payload)
 
         -- Room operations: hide blockouts, air-carve, paint floors
         -- local rooms = payload.rooms or {}
@@ -72,6 +73,24 @@ return {
         -- local floorMatName = biome.terrainFloor or "Grass"
         -- local floorMaterial = Enum.Material[floorMatName] or Enum.Material.Grass
         -- local container = payload.container
+
+        -- -- Create VoxelBuffer spanning room bounding box (+ margin)
+        -- local rMinX, rMinY, rMinZ = math.huge, math.huge, math.huge
+        -- local rMaxX, rMaxY, rMaxZ = -math.huge, -math.huge, -math.huge
+        -- for _, room in pairs(rooms) do
+        --     local p, d = room.position, room.dims
+        --     rMinX = math.min(rMinX, p[1] - d[1]/2)
+        --     rMinY = math.min(rMinY, p[2] - d[2]/2)
+        --     rMinZ = math.min(rMinZ, p[3] - d[3]/2)
+        --     rMaxX = math.max(rMaxX, p[1] + d[1]/2)
+        --     rMaxY = math.max(rMaxY, p[2] + d[2]/2)
+        --     rMaxZ = math.max(rMaxZ, p[3] + d[3]/2)
+        -- end
+        -- local MARGIN = 20
+        -- payload.buffer = Canvas.createBuffer(
+        --     Vector3.new(rMinX - MARGIN, rMinY - MARGIN, rMinZ - MARGIN),
+        --     Vector3.new(rMaxX + MARGIN, rMaxY + MARGIN, rMaxZ + MARGIN)
+        -- )
 
         -- if container then
         --     for _, child in ipairs(container:GetChildren()) do
@@ -99,6 +118,12 @@ return {
         -- end
 
         -- self:_syncCall("applyDoors", payload)
+
+        -- -- Flush buffer after terminal terrain node (DoorCutter)
+        -- if payload.buffer then
+        --     payload.buffer:flush()
+        --     payload.buffer = nil
+        -- end
 
         -- Done
         self._container = payload.container

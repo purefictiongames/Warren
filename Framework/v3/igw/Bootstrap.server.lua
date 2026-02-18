@@ -8,19 +8,12 @@
     OVERVIEW
     ============================================================================
 
-    This is the Roblox server entry point. It:
-    1. Requires the Warren v3.0 framework package
-    2. Requires game-specific Components
-    3. Configures system subsystems
-    4. Initializes SDK (layout RPC) and OpenCloud (persistence)
-    5. Initializes the framework in the correct order
+    Data-driven server entry point. Reads init.cfg + metadata to create
+    pipeline nodes and the WorldMapOrchestrator. Skips the old RegionManager /
+    System.Player view system — jumps straight to gameplay.
 
-    Warren v3.0 changes:
-    - Layout generation via WarrenSDK → Registry → Lune RPC
-    - Persistence via direct OpenCloud DataStore API calls
-    - Studio fallback: local compute + local DataStore
-
-    Nothing in the framework runs until this script explicitly calls it.
+    Node registration, wiring, and instance creation are all metadata-driven.
+    The orchestrator's onStart triggers the first dungeon build.
 
 --]]
 
@@ -28,6 +21,7 @@ local HttpService = game:GetService("HttpService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
 
 -- Create loading screen RemoteEvents immediately (ReplicatedFirst needs these ASAP)
 local viewReadyEvent = Instance.new("RemoteEvent")
@@ -38,382 +32,245 @@ local loadingDoneEvent = Instance.new("RemoteEvent")
 loadingDoneEvent.Name = "LoadingDone"
 loadingDoneEvent.Parent = ReplicatedStorage
 
--- Wait for Warren package and game modules
-local Warren = require(ReplicatedStorage:WaitForChild("Warren"))
-local Components = require(ReplicatedStorage:WaitForChild("Components"))
-local Debug = Warren.System.Debug
+-- Wait for Warren package and game modules (with timeouts to avoid infinite hang)
+print("[Bootstrap] Waiting for modules...")
+local Warren = require(ReplicatedStorage:WaitForChild("Warren", 30))
+local Components = require(ReplicatedStorage:WaitForChild("Components", 30))
 
---------------------------------------------------------------------------------
--- STUDIO CLI ACCESS
---------------------------------------------------------------------------------
--- Expose globals for command bar testing in Studio
--- These are stripped in production (non-Studio) builds
-
-if RunService:IsStudio() then
-    _G.Warren = Warren
-    _G.Node = Warren.Node
-    _G.Debug = Warren.System.Debug
-    _G.Log = Warren.System.Log
-    _G.IPC = Warren.System.IPC
-    _G.State = Warren.System.State
-    _G.Asset = Warren.System.Asset
-    _G.Store = Warren.System.Store
-    _G.View = Warren.System.View
-    _G.Player = Warren.System.Player
+local initCfgModule = ReplicatedStorage:WaitForChild("init.cfg", 10)
+if not initCfgModule then
+    error("[Bootstrap] FATAL: init.cfg not found in ReplicatedStorage after 10s")
 end
+local manifest = require(initCfgModule)
+
+local metadataModule = ReplicatedStorage:WaitForChild("metadata", 10)
+if not metadataModule then
+    error("[Bootstrap] FATAL: metadata not found in ReplicatedStorage after 10s")
+end
+local metadata = require(metadataModule)
+print("[Bootstrap] All modules loaded")
+
+local Node = Warren.Node
+local Debug = Warren.System.Debug
+local Log = Warren.System.Log
+local Asset = Warren.System.Asset
+local IPC = Warren.System.IPC
+local ClassResolver = Warren.ClassResolver
 
 --------------------------------------------------------------------------------
 -- CONFIGURATION
 --------------------------------------------------------------------------------
 
--- Configure debug output (defaults from Config.lua, override here if needed)
 Debug.configure({
-    level = "info",  -- "error", "warn", "info", "trace"
-    -- show = { "@Core" },  -- Use @GroupName to reference groups
-    -- hide = { "*.Tick" },
-    -- solo = {},  -- If non-empty, ONLY these patterns show
+    level = manifest.debug and manifest.debug.level or "info",
 })
 
--- Configure persistent logging (defaults from Config.lua, override here if needed)
-local Log = Warren.System.Log
 Log.configure({
-    backend = "Memory",  -- "Memory", "DataStore", "None"
-    -- capture = { "@Gameplay" },  -- Use @GroupName to capture specific groups
-    -- ignore = { "*.Tick" },
+    backend = manifest.log and manifest.log.backend or "Memory",
 })
 
 --------------------------------------------------------------------------------
 -- BOOTSTRAP
 --------------------------------------------------------------------------------
 
-Debug.info("Bootstrap", "Warren v" .. Warren._VERSION)
-Debug.info("Bootstrap", "Server starting...")
+Debug.info("Bootstrap", Warren._VERSION and ("Warren v" .. Warren._VERSION) or "Warren")
+Debug.info("Bootstrap", manifest.name .. " v" .. manifest.version .. " — server starting")
 
--- Initialize Log subsystem (generates session ID, starts auto-flush)
 Log.init()
 
 --------------------------------------------------------------------------------
--- ASSET REGISTRATION
+-- STUDIO CLI ACCESS
 --------------------------------------------------------------------------------
--- Register node classes from Warren and Game before IPC initialization.
--- This builds the inheritance tree and validates contracts.
 
-local Asset = Warren.System.Asset
-local IPC = Warren.System.IPC
+if RunService:IsStudio() then
+    _G.Warren = Warren
+    _G.Node = Node
+    _G.Debug = Debug
+    _G.Log = Log
+    _G.IPC = IPC
+end
 
--- Wait for Game module (game-specific node implementations)
-local Game = require(ReplicatedStorage:WaitForChild("Game"))
+--------------------------------------------------------------------------------
+-- NODE REGISTRATION
+--------------------------------------------------------------------------------
 
--- Resolve current Place context via PlaceGraph
-local PlaceGraph = Components.PlaceGraph
-local placeName, placeConfig = PlaceGraph.resolve(game.PlaceId)
+local orchestratorName = manifest.orchestrator
+local allNodes = { orchestratorName }
+for _, nodeName in ipairs(metadata.nodes) do
+    table.insert(allNodes, nodeName)
+end
 
-Debug.info("Bootstrap", "Place:", placeName, "→ initialView:", placeConfig.initialView)
+for _, nodeName in ipairs(allNodes) do
+    local definition = Components[nodeName]
+    if definition then
+        IPC.registerNode(Node.extend(definition))
+    else
+        warn("[Bootstrap] Node not found in Components: " .. nodeName)
+    end
+end
 
--- Register dungeon nodes with IPC
-IPC.registerNode(Components.JumpPad)
-IPC.registerNode(Components.RegionManager)
-IPC.registerNode(Components.TitleScreen)       -- Client-side, but registered for wiring
-IPC.registerNode(Components.ExitScreen)        -- Client-side, but registered for wiring
-IPC.registerNode(Components.ScreenTransition)  -- Client-side, but registered for wiring
-IPC.registerNode(Components.AreaHUD)           -- Client-side, but registered for wiring
-IPC.registerNode(Components.MiniMap)           -- Client-side, but registered for wiring
-IPC.registerNode(Components.LobbyManager)      -- Server-side lobby pad management
-IPC.registerNode(Components.LobbyCountdown)    -- Client-side lobby countdown UI
-
--- Register Game-level nodes (game-specific implementations)
--- Example:
---   Asset.register(Game.MarshmallowBag)
---   Asset.register(Game.Camper)
-
--- Verify all expected classes are registered
--- Asset.verify({ "Dispenser", "MarshmallowBag", "Evaluator", "Camper" })
-
--- Build inheritance tree (for introspection/debugging)
 Asset.buildInheritanceTree()
 
 --------------------------------------------------------------------------------
--- MODE DEFINITION
+-- MODE + WIRING (from metadata)
 --------------------------------------------------------------------------------
--- Define run modes with wiring configurations.
--- Each mode specifies which nodes are active and how they're connected.
 
--- Dungeon mode: JumpPad signals route to RegionManager, screen transitions cross client/server
+local orchestratorMeta = metadata[orchestratorName] or {}
+local wiring = orchestratorMeta.wiring or {}
+
 IPC.defineMode("Dungeon", {
-    nodes = { "JumpPad", "RegionManager", "TitleScreen", "ExitScreen", "ScreenTransition", "AreaHUD", "MiniMap", "LobbyManager", "LobbyCountdown" },
-    wiring = {
-        -- Server-side: JumpPad → RegionManager
-        JumpPad = { "RegionManager" },
-        -- Cross-domain: TitleScreen (client) → RegionManager (server)
-        TitleScreen = { "RegionManager" },
-        -- Cross-domain: ExitScreen (client) → RegionManager (server)
-        ExitScreen = { "RegionManager" },
-        -- Cross-domain: RegionManager (server) → TitleScreen, ExitScreen, ScreenTransition, AreaHUD, MiniMap, LobbyManager, LobbyCountdown (client)
-        RegionManager = { "TitleScreen", "ExitScreen", "ScreenTransition", "AreaHUD", "MiniMap", "LobbyManager", "LobbyCountdown" },
-        -- Cross-domain: ScreenTransition (client) → RegionManager (server)
-        ScreenTransition = { "RegionManager" },
-        -- Cross-domain: MiniMap (client) → RegionManager (server)
-        MiniMap = { "RegionManager" },
-        -- Server-side: LobbyManager → LobbyCountdown (client)
-        LobbyManager = { "LobbyCountdown" },
-    },
+    nodes = allNodes,
+    wiring = wiring,
 })
 
 --------------------------------------------------------------------------------
--- IPC INITIALIZATION
+-- CREATE INSTANCES (server-domain only)
 --------------------------------------------------------------------------------
 
--- Initialize IPC (calls onInit on all registered instances)
+local definitions = metadata.definitions or {}
+local defaults = metadata.defaults or {}
+
+for _, nodeName in ipairs(metadata.nodes) do
+    -- Only create server-domain instances on server
+    local comp = Components[nodeName]
+    if comp and comp.domain == "client" then
+        continue
+    end
+
+    local nodeConfig = metadata[nodeName] or {}
+    local definition = {}
+    for k, v in pairs(defaults) do definition[k] = v end
+    for k, v in pairs(nodeConfig) do definition[k] = v end
+    definition.type = nodeName
+
+    local resolved = ClassResolver.resolve(definition, definitions, {
+        reservedKeys = { type = true, class = true, id = true },
+    })
+
+    IPC.createInstance(nodeName, {
+        id = nodeName .. "_1",
+        attributes = resolved,
+    })
+end
+
+-- Orchestrator last (its onStart triggers the pipeline)
+local orchestratorConfig = {}
+for k, v in pairs(orchestratorMeta) do
+    if k ~= "wiring" then
+        orchestratorConfig[k] = v
+    end
+end
+
+local orchestrator = IPC.createInstance(orchestratorName, {
+    id = orchestratorName .. "_Main",
+    attributes = { config = orchestratorConfig },
+})
+
+if RunService:IsStudio() then
+    _G.Orchestrator = orchestrator
+end
+
+--------------------------------------------------------------------------------
+-- IPC LIFECYCLE
+--------------------------------------------------------------------------------
+
 IPC.init()
-
--- Switch to Dungeon mode (enables wiring)
 IPC.switchMode("Dungeon")
-
--- Start IPC (enables routing, calls onStart on all instances)
 IPC.start()
 
---------------------------------------------------------------------------------
--- ASSET SPAWNING
---------------------------------------------------------------------------------
--- Spawn node instances for models in Workspace.
--- Models must have a NodeClass attribute specifying which class to use.
-
--- Example: Spawn all models in RuntimeAssets container
--- local RuntimeAssets = workspace:FindFirstChild("RuntimeAssets")
--- if RuntimeAssets then
---     Asset.spawnAll(RuntimeAssets)
--- end
+Debug.info("Bootstrap", "IPC started — " .. orchestratorName .. " will build first region")
 
 --------------------------------------------------------------------------------
 -- WARREN v3.0: SDK + OPENCLOUD
 --------------------------------------------------------------------------------
--- Production: SDK handles layout generation via Registry → Lune RPC.
--- OpenCloud handles persistence via direct DataStore API calls.
--- Studio: Falls back to local compute + local DataStore.
 
 if not RunService:IsStudio() then
-    -- Initialize SDK (auth with Registry for RPC compute calls)
-    -- Wrapped in pcall: SDK failure is non-fatal, game falls back to local compute
-    local sdkOk, sdkErr = pcall(function()
-        local WarrenSDK = require(ServerStorage:WaitForChild("WarrenSDK"))
-        WarrenSDK.init({
-            apiKeySecret = "warren_api_key",
-            registryUrl = "https://registry.alpharabbitgames.com",
-        })
-        Debug.info("Bootstrap", "Warren SDK initialized (Registry RPC)")
-    end)
-    if not sdkOk then
-        warn("[Bootstrap] Warren SDK init failed: " .. tostring(sdkErr))
-        warn("[Bootstrap] Game will use local compute fallback")
+    -- SDK init — 5s timeout to avoid blocking game if module is missing
+    local sdkModule = ServerStorage:FindFirstChild("WarrenSDK")
+    if sdkModule then
+        local sdkOk, sdkErr = pcall(function()
+            local WarrenSDK = require(sdkModule)
+            WarrenSDK.init({
+                apiKeySecret = "warren_api_key",
+                registryUrl = "https://registry.alpharabbitgames.com",
+            })
+            Debug.info("Bootstrap", "Warren SDK initialized")
+        end)
+        if not sdkOk then
+            warn("[Bootstrap] Warren SDK init failed: " .. tostring(sdkErr))
+        end
+    else
+        warn("[Bootstrap] WarrenSDK not found in ServerStorage — skipping SDK init")
     end
 
-    -- Initialize OpenCloud for direct DataStore/Messaging access
+    -- OpenCloud init
     local opencloudOk, opencloudErr = pcall(function()
         local secret = HttpService:GetSecret("warren_opencloud_key")
         Warren.OpenCloud._robloxConfig = {
             universeId = tostring(game.GameId),
-            apiKey = secret,  -- Opaque Secret object, works as header value
+            apiKey = secret,
         }
-        Debug.info("Bootstrap", "OpenCloud initialized (direct DataStore access)")
+        Debug.info("Bootstrap", "OpenCloud initialized")
     end)
     if not opencloudOk then
         warn("[Bootstrap] OpenCloud init failed: " .. tostring(opencloudErr))
-        warn("[Bootstrap] Persistence will fall back to local DataStore")
     end
 else
-    Debug.info("Bootstrap", "Studio mode — using local compute + local DataStore")
+    Debug.info("Bootstrap", "Studio mode — local compute + local DataStore")
 end
 
 --------------------------------------------------------------------------------
--- INFINITE DUNGEON SYSTEM
+-- LOADING SCREEN PROTOCOL
 --------------------------------------------------------------------------------
--- Manages infinite dungeon with region-based generation and teleportation
---
--- TODO: This is a temporary hack. Should be its own script in ServerScriptService.
--- See: src/Game/DungeonServer/_ServerScriptService/DungeonStartup.server.lua
---------------------------------------------------------------------------------
+-- ReplicatedFirst shows a black overlay, waits for ViewReady, preloads, fades.
+-- We fire ViewReady once the dungeon is built (shared.dungeonReady set by
+-- WorldMapOrchestrator in onDungeonComplete).
 
-local function startInfiniteDungeon()
-    -- Set dark/nighttime lighting
-    local Lighting = game:GetService("Lighting")
-    Lighting.ClockTime = 0  -- Midnight
-    Lighting.Brightness = 0  -- No ambient light
-    Lighting.OutdoorAmbient = Color3.fromRGB(0, 0, 0)
-    Lighting.Ambient = Color3.fromRGB(20, 20, 25)  -- Slight ambient for visibility
-    Lighting.FogEnd = 1000
-    Lighting.FogColor = Color3.fromRGB(0, 0, 0)
-    Lighting.GlobalShadows = false  -- Disable shadows for performance
+Players.PlayerAdded:Connect(function(player)
+    task.spawn(function()
+        local character = player.Character or player.CharacterAdded:Wait()
+        character:WaitForChild("HumanoidRootPart", 10)
 
-    -- Create region manager via IPC (handles init/start automatically)
-    local regionManager = IPC.createInstance("RegionManager", {
-        id = "InfiniteDungeon",
-    })
-
-    -- Create lobby manager (server-side pad detection, countdown, teleport)
-    IPC.createInstance("LobbyManager", {
-        id = "LobbyManager_Main",
-    })
-
-    -- Store globally for debugging (IPC handles lifecycle)
-    -- Note: Both _G and shared for command bar compatibility in different Studio contexts
-    _G.RegionManager = regionManager
-    shared.RegionManager = regionManager
-
-    -- Configure
-    -- Note: material/color use serializable formats (string/array) for DataStore compatibility
-    regionManager:configure({
-        baseUnit = 5,
-        wallThickness = 1,
-        doorSize = 12,
-        floorThreshold = 6.5,  -- Height diff before truss is placed
-        mainPathLength = 8,
-        spurCount = 4,
-        loopCount = 1,
-        verticalChance = 30,
-        minVerticalRatio = 0.2,
-        scaleRange = {
-            min = 4,
-            max = 12,
-            minY = 4,
-            maxY = 8,
-        },
-        material = "Brick",  -- String for serialization
-        color = { 140, 110, 90 },  -- RGB array for serialization
-        -- Map type distribution (deterministic pattern)
-        hubInterval = 4,          -- Guarantee a hub every N regions
-        hubPadRange = { min = 3, max = 4 },  -- Pads in hub regions
-        origin = { 0, 20, 0 },
-    })
-
-    local Players = game:GetService("Players")
-    local System = Warren.System
-    local dungeonOwner = nil  -- First player to join owns the dungeon
-
-    -- Register view definitions with System.Player
-    regionManager:registerViews()
-
-    -- Set default view based on PlaceGraph
-    if PlaceGraph.isGameplayServer() then
-        System.Player.setDefaultView("gameplay")
-    else
-        System.Player.setDefaultView("title")
-    end
-    Debug.info("Bootstrap", "Default view:", System.Player.getDefaultView())
-
-    -- Pre-build default view geometry (ready before first player arrives)
-    System.Player.preload(System.Player.getDefaultView())
-
-    -- Register join hook for game-specific logic
-    System.Player.onJoin(function(player)
-        if not dungeonOwner then
-            dungeonOwner = player
+        -- Wait for first dungeon to be ready
+        while not shared.dungeonReady do
+            task.wait(0.1)
         end
 
-        if PlaceGraph.isGameplayServer() then
-            -- Gameplay server: anchor player, position, signal loading screen
-            task.spawn(function()
-                local character = player.Character or player.CharacterAdded:Wait()
-                local hrp = character:WaitForChild("HumanoidRootPart")
-                hrp.Anchored = true  -- prevent falling while loading
-
-                local activeRegion = regionManager:getActiveRegion()
-                if activeRegion and activeRegion.layout then
-                    -- Position at dungeon spawn point immediately
-                    local spawnData = activeRegion.layout.spawn
-                    if spawnData and spawnData.position then
-                        hrp.CFrame = CFrame.new(
-                            spawnData.position[1],
-                            spawnData.position[2] + 3,
-                            spawnData.position[3]
-                        )
-                    end
-
-                    regionManager.Out:Fire("buildMiniMap", {
-                        _targetPlayer = player,
-                        player = player,
-                        layout = activeRegion.layout,
-                    })
-                    regionManager.Out:Fire("transitionEnd", {
-                        _targetPlayer = player,
-                        player = player,
-                    })
-                end
-
-                -- Signal client loading screen to preload container assets
-                local containerName = activeRegion and activeRegion.container
-                    and activeRegion.container.Name or nil
-                viewReadyEvent:FireClient(player, { containerName = containerName })
-
-                -- Wait for client to finish preloading, then unanchor
-                local resolved = false
-                local conn
-                conn = loadingDoneEvent.OnServerEvent:Connect(function(p)
-                    if p == player then
-                        resolved = true
-                        conn:Disconnect()
-                        if hrp and hrp.Parent then
-                            hrp.Anchored = false
-                        end
-                    end
-                end)
-                -- Safety timeout: unanchor after 15s even if client never responds
-                task.delay(15, function()
-                    if not resolved then
-                        if conn then conn:Disconnect() end
-                        if hrp and hrp.Parent then
-                            hrp.Anchored = false
-                        end
-                    end
-                end)
-            end)
-        else
-            -- Start server: check TeleportData for lobby re-entry, then signal loading screen
-            task.spawn(function()
-                local joinData = player:GetJoinData()
-                local teleportData = joinData and joinData.TeleportData
-                if teleportData and teleportData.destination == "lobby" then
-                    task.wait(0.5)
-                    System.Player.transitionTo(player, "lobby")
-                end
-
-                -- Yield so activate()'s transitionTo completes first
-                task.wait(0)
-                viewReadyEvent:FireClient(player, { containerName = "TitleDiorama" })
-            end)
-        end
+        -- Signal loading screen to preload + fade
+        local containerName = shared.dungeonReady.containerName
+        viewReadyEvent:FireClient(player, { containerName = containerName })
     end)
+end)
 
-    -- Activate System.Player (connects PlayerAdded/PlayerRemoving, processes existing players)
-    System.Player.activate()
+-- Handle players already in game (Studio fast-start)
+for _, player in ipairs(Players:GetPlayers()) do
+    task.spawn(function()
+        local character = player.Character or player.CharacterAdded:Wait()
+        character:WaitForChild("HumanoidRootPart", 10)
 
-    -- Save dungeon data when owner leaves (only on start server)
-    if placeName == "start" then
-        Players.PlayerRemoving:Connect(function(player)
-            if player == dungeonOwner then
-                Debug.info("Bootstrap", "Dungeon owner leaving, saving data...")
-                regionManager:saveData(player)
-            end
-        end)
-    end
+        while not shared.dungeonReady do
+            task.wait(0.1)
+        end
+
+        local containerName = shared.dungeonReady.containerName
+        viewReadyEvent:FireClient(player, { containerName = containerName })
+    end)
 end
 
 --------------------------------------------------------------------------------
--- CLEANUP ON SHUTDOWN
+-- CLEANUP
 --------------------------------------------------------------------------------
--- Ensure all nodes are properly stopped when the game closes.
--- This disconnects all RunService connections and cleans up state.
 
 game:BindToClose(function()
     Debug.info("Bootstrap", "Server shutting down...")
 
-    -- Despawn region manager via IPC (handles all dungeon cleanup)
-    IPC.despawn("InfiniteDungeon")
-
-    -- Revoke SDK session with Registry
     if not RunService:IsStudio() then
-        local WarrenSDK = require(ServerStorage.WarrenSDK)
-        WarrenSDK.shutdown()
-        Debug.info("Bootstrap", "Warren SDK session revoked")
+        local sdkModule = ServerStorage:FindFirstChild("WarrenSDK")
+        if sdkModule then
+            pcall(function()
+                require(sdkModule).shutdown()
+            end)
+        end
     end
 
     Warren.System.stopAll()
@@ -422,6 +279,3 @@ game:BindToClose(function()
 end)
 
 Debug.info("Bootstrap", "Server ready")
-
--- Start dungeon AFTER bootstrap complete (all systems initialized)
-startInfiniteDungeon()

@@ -166,12 +166,17 @@ return {
             end
 
             -- Carve terrain doorways
+            local buf = payload.buffer
             for _, door in ipairs(doors) do
                 local cutterSize = getCutterSize(door, wt)
                 local cutterPos = CFrame.new(
                     door.center[1], door.center[2], door.center[3]
                 )
-                Canvas.carveDoorway(cutterPos, cutterSize)
+                if buf then
+                    buf:carveDoorway(cutterPos, cutterSize)
+                else
+                    Canvas.carveDoorway(cutterPos, cutterSize)
+                end
             end
 
             -- Disable collision on shell walls at doorways

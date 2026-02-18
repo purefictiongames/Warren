@@ -4,7 +4,8 @@
     "$className": "DataModel",
     "ReplicatedFirst": {
       "$className": "ReplicatedFirst",
-      "Config": { "$path": "ReplicatedFirst/Config.lua" }
+      "Config": { "$path": "ReplicatedFirst/Config.lua" },
+      "LoadingScreen": { "$path": "../../Framework/v3/igw/ReplicatedFirst/LoadingScreen.client.lua" }
     },
     "ReplicatedStorage": {
       "$className": "ReplicatedStorage",

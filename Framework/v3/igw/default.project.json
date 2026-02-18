@@ -17,13 +17,13 @@
         "$path": "../warren/src"
       },
       "Components": {
-        "$path": "src/Components"
+        "$path": "../../../Games/igw/src"
       },
-      "Admin": {
-        "$path": "src/Admin"
+      "init.cfg": {
+        "$path": "../../../Games/igw/init.cfg.lua"
       },
-      "Game": {
-        "$path": "Game"
+      "metadata": {
+        "$path": "../../../Games/igw/metadata.lua"
       }
     },
     "ServerStorage": {

@@ -52,16 +52,21 @@ return {
                 end
             end
 
+            -- Use buffer if available (orchestrator-managed), else fall back to Canvas
+            local buf = payload.buffer
+
             ----------------------------------------------------------------
             -- 2. Fill mountain volumes with terrain
             ----------------------------------------------------------------
 
             for _, vol in ipairs(mountain) do
-                Canvas.fillBlock(
-                    CFrame.new(vol.position[1], vol.position[2], vol.position[3]),
-                    Vector3.new(vol.dims[1], vol.dims[2], vol.dims[3]),
-                    wallMaterial
-                )
+                local cf = CFrame.new(vol.position[1], vol.position[2], vol.position[3])
+                local sz = Vector3.new(vol.dims[1], vol.dims[2], vol.dims[3])
+                if buf then
+                    buf:fillBlock(cf, sz, wallMaterial)
+                else
+                    Canvas.fillBlock(cf, sz, wallMaterial)
+                end
             end
 
             ----------------------------------------------------------------
@@ -69,7 +74,11 @@ return {
             ----------------------------------------------------------------
 
             for _, wedge in ipairs(wedges) do
-                Canvas.fillWedge(wedge.CFrame, wedge.Size, wallMaterial)
+                if buf then
+                    buf:fillWedge(wedge.CFrame, wedge.Size, wallMaterial)
+                else
+                    Canvas.fillWedge(wedge.CFrame, wedge.Size, wallMaterial)
+                end
             end
 
             ----------------------------------------------------------------
@@ -118,11 +127,13 @@ return {
                         local cx = cornerX + corner.xDir * xExtent / 2
                         local cz = cornerZ + corner.zDir * zExtent / 2
 
-                        Canvas.fillBlock(
-                            CFrame.new(cx, y, cz),
-                            Vector3.new(xExtent, VOXEL, zExtent),
-                            wallMaterial
-                        )
+                        local cf = CFrame.new(cx, y, cz)
+                        local sz = Vector3.new(xExtent, VOXEL, zExtent)
+                        if buf then
+                            buf:fillBlock(cf, sz, wallMaterial)
+                        else
+                            Canvas.fillBlock(cf, sz, wallMaterial)
+                        end
                         cornerFills = cornerFills + 1
                     end
                 end

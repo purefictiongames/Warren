@@ -12,10 +12,11 @@ return {
     -- Pipeline node load order (orchestrator is implicit from init.cfg)
     nodes = {
         "DungeonOrchestrator",
-        "MountainBuilder", "MountainRoomMasser",
+        "TopologyManager", "ChunkManager", "TopologyTerrainPainter",
+        "MountainRoomMasser",
         "ShellBuilder", "DoorPlanner",
         "TrussBuilder", "MountainLightBuilder",
-        "MountainTerrainPainter",
+        -- Replaced by topology: "MountainBuilder", "MountainTerrainPainter",
         -- Full pipeline (disabled for mountain blockout testing)
         -- "RoomMasser", "ShellBuilder", "DoorPlanner",
         -- "TrussBuilder", "LightBuilder",
@@ -167,7 +168,7 @@ return {
             mountain = {
                 paletteClass = "palette-highland-meadow",
                 terrainStyle = "outdoor",
-                terrainWall = "Rock",
+                terrainWall = "Sandstone",
                 terrainFloor = "Grass",
                 partWall = "Slate",
                 partFloor = "Grass",
@@ -185,24 +186,25 @@ return {
 
         wiring = {
             -- Hub-and-spoke: orchestrator calls each node sequentially
-            WorldMapOrchestrator   = { "DungeonOrchestrator" },
-            DungeonOrchestrator    = {
-                "MountainBuilder", "MountainRoomMasser",
+            WorldMapOrchestrator    = { "DungeonOrchestrator" },
+            DungeonOrchestrator     = {
+                "TopologyManager", "ChunkManager",
+                "MountainRoomMasser",
                 "ShellBuilder", "DoorPlanner",
                 "TrussBuilder", "MountainLightBuilder",
-                "MountainTerrainPainter", "WorldMapOrchestrator",
+                "WorldMapOrchestrator",
             },
-            MountainBuilder        = { "DungeonOrchestrator" },
-            MountainRoomMasser     = { "DungeonOrchestrator" },
-            ShellBuilder           = { "DungeonOrchestrator" },
-            DoorPlanner            = { "DungeonOrchestrator" },
-            TrussBuilder           = { "DungeonOrchestrator" },
-            MountainLightBuilder   = { "DungeonOrchestrator" },
-            MountainTerrainPainter = { "DungeonOrchestrator" },
-            -- MountainRoomMasser     = { "DungeonOrchestrator" },
-            -- ShellBuilder           = { "DungeonOrchestrator" },
+            TopologyManager         = { "DungeonOrchestrator" },
+            ChunkManager            = { "TopologyTerrainPainter", "DungeonOrchestrator" },
+            TopologyTerrainPainter  = { "ChunkManager" },
+            MountainRoomMasser      = { "DungeonOrchestrator" },
+            ShellBuilder            = { "DungeonOrchestrator" },
+            DoorPlanner             = { "DungeonOrchestrator" },
+            TrussBuilder            = { "DungeonOrchestrator" },
+            MountainLightBuilder    = { "DungeonOrchestrator" },
+            -- Replaced by topology:
+            -- MountainBuilder        = { "DungeonOrchestrator" },
             -- MountainTerrainPainter = { "DungeonOrchestrator" },
-            -- DoorPlanner            = { "DungeonOrchestrator" },
 
             -- Full pipeline (disabled for mountain blockout testing)
             -- WorldMapOrchestrator = { "DungeonOrchestrator", "PortalTrigger", "PortalCountdown" },
@@ -232,14 +234,60 @@ return {
 
     MountainBuilder = {
         baseWidth = 400,
-        baseDepth = 400,
+        baseDepth = 300,
+        peakWidth = 30,
+        peakDepth = 30,
         layerHeight = 50,
         layerCount = 6,
-        taperRatio = 0.7,
+        -- Slope tangent: -1 (funnel) to +1 (dome), 0 = linear
+        -- slopeProfile: "hill" | "mound" | "linear" | "steep" | "jagged"
+        -- or tangent (both axes), or tangentX + tangentZ (asymmetric)
+        -- omit all for random profile per seed
+        -- slopeProfile = "linear",
         forkChance = 25,
         maxPeaks = 3,
         jitterRange = 0.15,
+        forkWidthFraction = 0.6,
         origin = { 0, 0, 0 },
+    },
+
+    TopologyManager = {
+        -- Map extents (terrain grid limit: ±16384 studs per axis)
+        mapWidth = 4000,        -- studs (X axis)
+        mapDepth = 4000,        -- studs (Z axis)
+        groundHeight = 4,       -- studs — ground plane thickness
+        groundY = 0,            -- base Y of ground plane
+
+        -- Feature seeding
+        featureSpacing = 667,   -- grid cell size for feature placement
+        forkChance = 5,         -- % chance a region forks into 2 sub-peaks
+        forkWidthFraction = 0.55,  -- each fork child gets this fraction
+        jitterRange = 0.3,      -- position jitter as fraction of margin
+        minRegionSize = 20,     -- regions smaller than this stop growing
+        attritionChance = 3,    -- % chance a region dies (plateau)
+
+        -- Spine (ridge axis — taller features cluster here)
+        spineAngle = 15,        -- degrees from X axis
+        spineWidth = 0.2,       -- gaussian width (0-1 normalized)
+
+        -- Feature type weights (before spine bias)
+        rollingWeight = 0.35,   -- gentle domes, 20-stud layers
+        hillWeight = 0.60,      -- moderate hills, 12-stud layers
+        mountainWeight = 0.33,  -- steep mountains, 6-stud layers
+        peakWeight = 0.10,      -- steep spires, 4-stud layers
+
+        -- Perimeter features (visual interest at horizon)
+        perimeterRadius = 800,  -- studs from origin
+        perimeterCount = 12,    -- features scattered on ring
+
+        origin = { 0, 0, 0 },
+    },
+
+    ChunkManager = {
+        chunkSize = 512,        -- studs per chunk edge
+        loadRadius = 1024,      -- fill terrain within this radius
+        unloadRadius = 1280,    -- clear terrain beyond this (hysteresis)
+        checkInterval = 0.25,   -- seconds between heartbeat checks
     },
 
     MountainRoomMasser = {

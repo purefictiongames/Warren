@@ -2,23 +2,20 @@
     IGW v2 Pipeline — TopologyTerrainPainter
 
     Stateless terrain executor. Receives paint/clear signals from
-    ChunkManager with chunk bounds + filtered topology data.
+    ChunkManager with chunk bounds + filtered feature data.
 
-    paintChunk: fills ground slab + volume shells + slopes for one chunk.
+    paintChunk: fills ground slab + polygon layer shells for one chunk.
     clearChunk: fills chunk column with Air to unload terrain.
 
     v3.0: All fills write into a VoxelBuffer, flushed in ONE WriteVoxels
-    call per chunk. Replaces ~hundreds of individual FillBlock/FillWedge
-    calls with pure Lua array writes + one API call.
+    call per chunk.
 
-    Adaptive dithering: gap scales with elevation. Gentle low terrain
-    uses large gaps (max savings), steep high terrain uses tight gaps
-    (preserves snapping on vertical faces).
+    v3.1: Polygon contour layers replace box volumes + wedge slopes.
+    Each feature is a stack of shrinking polygon layers. fillFeature
+    rasterizes a smooth height-field via radial distance from centroid.
+    Fractional top-voxel occupancy + height field smoothing produces
+    organic terrain surfaces.
 --]]
-
-local FILL    = 1   -- studs of terrain to fill per shell face
-local MIN_GAP = 3   -- tightest gap (high elevation / steep)
-local MAX_GAP = 7   -- loosest gap (low elevation / gentle)
 
 return {
     name = "TopologyTerrainPainter",
@@ -32,21 +29,15 @@ return {
 
     In = {
         --------------------------------------------------------------------
-        -- Paint one chunk: ground + volume shells + slopes
+        -- Paint one chunk: ground + polygon layer shells
         --------------------------------------------------------------------
 
         onPaintChunk = function(self, data)
             local Canvas = self._System.Dom.Canvas
             local bounds = data.bounds
-            local volumes = data.volumes or {}
-            local slopes = data.slopes or {}
+            local features = data.features or {}
             local biome = data.biome or {}
             local peakElev = data.peakElevation or 500
-            local groundY = 0
-            if data.groundFill then
-                groundY = data.groundFill.position[2]
-                    - data.groundFill.size[2] / 2
-            end
 
             local wallMatName = biome.terrainWall or "Rock"
             local wallMaterial = Enum.Material[wallMatName]
@@ -58,9 +49,6 @@ return {
             local chunkD = bounds.maxZ - bounds.minZ
             local chunkCX = (bounds.minX + bounds.maxX) / 2
             local chunkCZ = (bounds.minZ + bounds.maxZ) / 2
-
-            -- Elevation range for gap interpolation
-            local elevRange = math.max(1, peakElev - groundY)
 
             ----------------------------------------------------------------
             -- Create buffer spanning chunk bounds
@@ -85,74 +73,31 @@ return {
             end
 
             ----------------------------------------------------------------
-            -- 2. Volume shells (top + 4 sides, adaptive gap)
+            -- 2. Feature height-field fills
             ----------------------------------------------------------------
 
-            for _, vol in ipairs(volumes) do
-                local x = vol.position[1]
-                local y = vol.position[2]
-                local z = vol.position[3]
-                local w, h, d = vol.dims[1], vol.dims[2], vol.dims[3]
-
-                -- Elevation fraction: 0 at ground, 1 at peak
-                local elevFrac = math.clamp(
-                    (y - groundY) / elevRange, 0, 1
-                )
-                local gap = MAX_GAP
-                    - (MAX_GAP - MIN_GAP) * elevFrac
-
-                if w <= FILL * 2 or d <= FILL * 2 then
-                    buf:fillBlock(
-                        CFrame.new(x, y, z),
-                        Vector3.new(w, h, d),
-                        wallMaterial
-                    )
-                else
-                    -- Top (inset on X + Z)
-                    buf:fillBlock(
-                        CFrame.new(x, y + h / 2 - FILL / 2, z),
-                        Vector3.new(w - gap, FILL, d - gap),
-                        wallMaterial
-                    )
-                    -- East +X (inset on Y + Z)
-                    buf:fillBlock(
-                        CFrame.new(x + w / 2 - FILL / 2, y, z),
-                        Vector3.new(FILL, h - gap, d - gap),
-                        wallMaterial
-                    )
-                    -- West -X (inset on Y + Z)
-                    buf:fillBlock(
-                        CFrame.new(x - w / 2 + FILL / 2, y, z),
-                        Vector3.new(FILL, h - gap, d - gap),
-                        wallMaterial
-                    )
-                    -- North +Z (inset on X + Y)
-                    buf:fillBlock(
-                        CFrame.new(x, y, z + d / 2 - FILL / 2),
-                        Vector3.new(w - gap, h - gap, FILL),
-                        wallMaterial
-                    )
-                    -- South -Z (inset on X + Y)
-                    buf:fillBlock(
-                        CFrame.new(x, y, z - d / 2 + FILL / 2),
-                        Vector3.new(w - gap, h - gap, FILL),
-                        wallMaterial
-                    )
-                end
+            local groundY = 0
+            if gf then
+                groundY = gf.position[2] + gf.size[2] / 2
             end
 
-            ----------------------------------------------------------------
-            -- 3. Slopes
-            ----------------------------------------------------------------
+            for _, feature in ipairs(features) do
+                -- Scale feather to feature size: wider features get gentler slopes
+                local extentX = (feature.boundMaxX or 0) - (feature.boundMinX or 0)
+                local extentZ = (feature.boundMaxZ or 0) - (feature.boundMinZ or 0)
+                local baseExtent = math.max(extentX, extentZ)
+                local feather = math.max(50, baseExtent * 0.3)
 
-            for _, slope in ipairs(slopes) do
-                buf:fillWedge(
-                    slope.cframe, slope.size, wallMaterial
+                buf:fillFeature(
+                    feature.layers,
+                    groundY,
+                    wallMaterial,
+                    feather
                 )
             end
 
             ----------------------------------------------------------------
-            -- 4. Flush — ONE WriteVoxels call for entire chunk
+            -- 3. Flush — ONE WriteVoxels call for entire chunk
             ----------------------------------------------------------------
 
             buf:flush()

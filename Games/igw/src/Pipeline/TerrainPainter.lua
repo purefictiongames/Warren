@@ -55,50 +55,75 @@ return {
             -- Set terrain material colors (parameterized for biome)
             Canvas.setMaterialColors(palette, wallMaterial, floorMaterial)
 
+            -- Use buffer if available (orchestrator-managed), else fall back to Canvas
+            local buf = payload.buffer
+
             -- PASS 1: Fill terrain shells (skip portal rooms)
             for id, room in pairs(rooms) do
                 if not portalAssignments[id] then
-                    Canvas.fillShell(room.position, room.dims, 0, wallMaterial)
+                    if buf then
+                        buf:fillShell(room.position, room.dims, 0, wallMaterial)
+                    else
+                        Canvas.fillShell(room.position, room.dims, 0, wallMaterial)
+                    end
                 end
             end
 
             -- PASS 2: Carve interiors (skip portal rooms)
             for id, room in pairs(rooms) do
                 if not portalAssignments[id] then
-                    Canvas.carveInterior(room.position, room.dims, 0)
+                    if buf then
+                        buf:carveInterior(room.position, room.dims, 0)
+                    else
+                        Canvas.carveInterior(room.position, room.dims, 0)
+                    end
                 end
             end
 
             -- PASS 3: Paint lava veins (skip portal rooms)
             for id, room in pairs(rooms) do
                 if not portalAssignments[id] then
-                    Canvas.paintNoise({
+                    local opts = {
                         roomPos = room.position,
                         roomDims = room.dims,
                         material = floorMaterial,
                         noiseScale = noiseScale,
                         threshold = noiseThreshold,
-                    })
+                    }
+                    if buf then
+                        buf:paintNoise(opts)
+                    else
+                        Canvas.paintNoise(opts)
+                    end
                 end
             end
 
             -- PASS 4: Paint floors (skip portal rooms)
             for id, room in pairs(rooms) do
                 if not portalAssignments[id] then
-                    Canvas.paintFloor(room.position, room.dims, floorMaterial)
+                    if buf then
+                        buf:paintFloor(room.position, room.dims, floorMaterial)
+                    else
+                        Canvas.paintFloor(room.position, room.dims, floorMaterial)
+                    end
                 end
             end
 
             -- PASS 5: Mix granite patches (skip portal rooms)
             for id, room in pairs(rooms) do
                 if not portalAssignments[id] then
-                    Canvas.mixPatches({
+                    local opts = {
                         roomPos = room.position,
                         roomDims = room.dims,
                         material = wallMaterial,
                         noiseScale = patchScale,
                         threshold = patchThreshold,
-                    })
+                    }
+                    if buf then
+                        buf:mixPatches(opts)
+                    else
+                        Canvas.mixPatches(opts)
+                    end
                 end
             end
 
@@ -106,14 +131,22 @@ return {
             for _, light in ipairs(lights) do
                 local fixturePos = Vector3.new(light.position[1], light.position[2], light.position[3])
                 local fixtureSize = Vector3.new(light.size[1], light.size[2], light.size[3])
-                Canvas.carveMargin(CFrame.new(fixturePos), fixtureSize, 2)
+                if buf then
+                    buf:carveMargin(CFrame.new(fixturePos), fixtureSize, 2)
+                else
+                    Canvas.carveMargin(CFrame.new(fixturePos), fixtureSize, 2)
+                end
             end
 
             -- Carve clearance around pads
             for _, pad in ipairs(pads) do
                 local padPos = Vector3.new(pad.position[1], pad.position[2], pad.position[3])
                 local padSize = Vector3.new(6, 1, 6)
-                Canvas.carveMargin(CFrame.new(padPos), padSize, 2)
+                if buf then
+                    buf:carveMargin(CFrame.new(padPos), padSize, 2)
+                else
+                    Canvas.carveMargin(CFrame.new(padPos), padSize, 2)
+                end
             end
 
             -- Count rooms for report

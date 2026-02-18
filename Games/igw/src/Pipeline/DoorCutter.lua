@@ -152,7 +152,12 @@ return {
                 end
 
                 -- Carve terrain in doorway (always, regardless of style)
-                Canvas.carveDoorway(CFrame.new(cutterPos), cutterSize)
+                local buf = payload.buffer
+                if buf then
+                    buf:carveDoorway(CFrame.new(cutterPos), cutterSize)
+                else
+                    Canvas.carveDoorway(CFrame.new(cutterPos), cutterSize)
+                end
 
                 if cutter then
                     cutter:Destroy()

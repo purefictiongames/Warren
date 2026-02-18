@@ -24,7 +24,7 @@
     ```lua
     local buf = Canvas.createBuffer(worldMin, worldMax)
     buf:fillBlock(cframe, size, material)
-    buf:fillWedge(cframe, size, material)
+    buf:fillFeature(layers, groundY, material, feather)
     buf:flush()  -- ONE WriteVoxels call
     ```
 
@@ -150,14 +150,6 @@ end
 
 function Canvas.carveBlock(cframe, size)
     getTerrain():FillBlock(cframe, size, Enum.Material.Air)
-end
-
-function Canvas.fillWedge(cframe, size, material)
-    getTerrain():FillWedge(cframe, size, material)
-end
-
-function Canvas.fillCornerWedge(cframe, size, material)
-    getTerrain():FillBlock(cframe, size, material)
 end
 
 function Canvas.fillShell(roomPos, roomDims, gap, material)

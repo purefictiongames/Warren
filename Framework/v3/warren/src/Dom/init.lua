@@ -58,6 +58,7 @@ local Dom = {}
 -- Sub-modules exposed for game-level code (e.g. DomBuilder)
 Dom.StyleBridge = require(script.StyleBridge)
 Dom.Canvas = require(script.Canvas)
+Dom.VoxelBuffer = require(script.VoxelBuffer)
 
 --------------------------------------------------------------------------------
 -- ELEMENT CREATION

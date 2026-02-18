@@ -1,6 +1,6 @@
 --[[
-    Warren DOM Architecture v2.5
-    Canvas.lua - Terrain Painting API
+    Warren DOM Architecture v3.0
+    Canvas.lua - Terrain Painting API (Factory + Utility)
 
     Copyright (c) 2025 Adam Stearns / Pure Fiction Records LLC
     All rights reserved.
@@ -9,27 +9,38 @@
     OVERVIEW
     ============================================================================
 
-    Canvas wraps workspace.Terrain with a clean imperative API for cave
-    construction. Palette data comes from the style system (resolved
-    externally), so Canvas has no dependency on Styles.lua itself.
+    Canvas is the public entry point for terrain operations. v3.0 introduces
+    VoxelBuffer for batched writes — create a buffer, fill it, flush once.
 
-    Replaces the terrain functions from LayoutInstantiator.lua.
+    Canvas also exposes backward-compatible one-shot wrappers (fillBlock,
+    paintNoise, etc.) that call terrain directly. Unmigrated consumers keep
+    working with zero code changes. Migrated consumers use createBuffer()
+    for the real performance win.
 
     ============================================================================
-    USAGE
+    USAGE (new — buffered)
     ============================================================================
 
     ```lua
-    Canvas.setMaterialColors(paletteColors) -- Set terrain material colors (no clear)
-    Canvas.fillBlock(cframe, size, mat)   -- Fill solid block
-    Canvas.carveBlock(cframe, size)       -- Fill with Air
-    Canvas.paintNoise(options)            -- Noise scatter (lava veins)
-    Canvas.paintFloor(pos, dims, mat)     -- Floor surface layer
-    Canvas.mixPatches(options)            -- Noise material mixing (granite)
-    Canvas.carveDoorway(cframe, size)     -- Door clearing
-    Canvas.carveMargin(cframe, size, m)   -- Fixture/pad clearance
+    local buf = Canvas.createBuffer(worldMin, worldMax)
+    buf:fillBlock(cframe, size, material)
+    buf:fillWedge(cframe, size, material)
+    buf:flush()  -- ONE WriteVoxels call
+    ```
+
+    ============================================================================
+    USAGE (legacy — one-shot, unchanged API)
+    ============================================================================
+
+    ```lua
+    Canvas.setMaterialColors(palette, wall, floor)
+    Canvas.fillBlock(cframe, size, mat)
+    Canvas.carveBlock(cframe, size)
+    Canvas.paintNoise(options)
     ```
 --]]
+
+local VoxelBuffer = require(script.Parent.VoxelBuffer)
 
 local Canvas = {}
 
@@ -43,7 +54,7 @@ local VOXEL_SIZE = 4  -- Roblox terrain minimum voxel size
 -- STATE
 --------------------------------------------------------------------------------
 
-local _terrain = nil  -- Set during init
+local _terrain = nil
 
 local function getTerrain()
     if not _terrain then
@@ -53,7 +64,47 @@ local function getTerrain()
 end
 
 --------------------------------------------------------------------------------
--- PUBLIC API
+-- FACTORY (new v3.0 API)
+--------------------------------------------------------------------------------
+
+--[[
+    Create an empty VoxelBuffer spanning [worldMin, worldMax].
+    All terrain ops write into the buffer. Call buf:flush() to commit.
+
+    @param worldMin Vector3 - Lower corner in world studs
+    @param worldMax Vector3 - Upper corner in world studs
+    @return VoxelBuffer
+]]
+function Canvas.createBuffer(worldMin, worldMax)
+    return VoxelBuffer.new(worldMin, worldMax)
+end
+
+--[[
+    Create a VoxelBuffer pre-loaded with existing terrain via ReadVoxels.
+
+    @param worldMin Vector3 - Lower corner in world studs
+    @param worldMax Vector3 - Upper corner in world studs
+    @return VoxelBuffer
+]]
+function Canvas.readBuffer(worldMin, worldMax)
+    return VoxelBuffer.fromTerrain(worldMin, worldMax)
+end
+
+--[[
+    Clear a terrain region (fill with Air). Direct FillBlock — no buffer
+    allocation needed since this is already one API call.
+
+    @param worldMin Vector3 - Lower corner in world studs
+    @param worldMax Vector3 - Upper corner in world studs
+]]
+function Canvas.clearRegion(worldMin, worldMax)
+    local center = (worldMin + worldMax) / 2
+    local size = worldMax - worldMin
+    getTerrain():FillBlock(CFrame.new(center), size, Enum.Material.Air)
+end
+
+--------------------------------------------------------------------------------
+-- UTILITY (engine-level, no buffer)
 --------------------------------------------------------------------------------
 
 --[[
@@ -61,6 +112,8 @@ end
     Does NOT clear existing terrain — terrain is managed per-zone.
 
     @param palette table - { wallColor = Color3, floorColor = Color3 }
+    @param wallMaterial Enum.Material? - defaults to Rock
+    @param floorMaterial Enum.Material? - defaults to CrackedLava
 ]]
 function Canvas.setMaterialColors(palette, wallMaterial, floorMaterial)
     local terrain = getTerrain()
@@ -76,56 +129,37 @@ function Canvas.setMaterialColors(palette, wallMaterial, floorMaterial)
 end
 
 --[[
-    Fill a solid terrain block.
+    Get the voxel size constant.
 
-    @param cframe CFrame - Center of the block
-    @param size Vector3 - Dimensions of the block
-    @param material Enum.Material - Terrain material
+    @return number
 ]]
+function Canvas.getVoxelSize()
+    return VOXEL_SIZE
+end
+
+--------------------------------------------------------------------------------
+-- BACKWARD-COMPAT ONE-SHOT WRAPPERS
+--
+-- These call terrain directly (same as v2.5). Unmigrated consumers keep
+-- working unchanged. For batched performance, use createBuffer() instead.
+--------------------------------------------------------------------------------
+
 function Canvas.fillBlock(cframe, size, material)
     getTerrain():FillBlock(cframe, size, material)
 end
 
---[[
-    Carve a block by filling with Air.
-
-    @param cframe CFrame - Center of the block
-    @param size Vector3 - Dimensions of the block
-]]
 function Canvas.carveBlock(cframe, size)
     getTerrain():FillBlock(cframe, size, Enum.Material.Air)
 end
 
---[[
-    Fill a solid terrain wedge.
-
-    @param cframe CFrame - Center of the wedge (orientation determines slope direction)
-    @param size Vector3 - Bounding dimensions of the wedge
-    @param material Enum.Material - Terrain material
-]]
 function Canvas.fillWedge(cframe, size, material)
     getTerrain():FillWedge(cframe, size, material)
 end
 
---[[
-    Fill a solid terrain corner wedge.
-
-    @param cframe CFrame - Center of the corner wedge (orientation determines slope)
-    @param size Vector3 - Bounding dimensions of the corner wedge
-    @param material Enum.Material - Terrain material
-]]
 function Canvas.fillCornerWedge(cframe, size, material)
     getTerrain():FillBlock(cframe, size, material)
 end
 
---[[
-    Fill a terrain shell around a room (solid, no carving).
-
-    @param roomPos table - {x, y, z} room center
-    @param roomDims table - {w, h, d} room dimensions
-    @param gap number - Gap between interior and terrain shell
-    @param material Enum.Material - Shell material
-]]
 function Canvas.fillShell(roomPos, roomDims, gap, material)
     local pos = Vector3.new(roomPos[1], roomPos[2], roomPos[3])
     local dims = Vector3.new(roomDims[1], roomDims[2], roomDims[3])
@@ -137,14 +171,6 @@ function Canvas.fillShell(roomPos, roomDims, gap, material)
     getTerrain():FillBlock(CFrame.new(pos), shellSize, material)
 end
 
---[[
-    Clear terrain in a room's shell zone (fill with Air).
-    Mirrors fillShell dimensions so exactly the same volume is cleared.
-
-    @param roomPos table - {x, y, z} room center
-    @param roomDims table - {w, h, d} room dimensions
-    @param gap number - Gap between interior and terrain shell
-]]
 function Canvas.clearShell(roomPos, roomDims, gap)
     local pos = Vector3.new(roomPos[1], roomPos[2], roomPos[3])
     local dims = Vector3.new(roomDims[1], roomDims[2], roomDims[3])
@@ -156,13 +182,6 @@ function Canvas.clearShell(roomPos, roomDims, gap)
     getTerrain():FillBlock(CFrame.new(pos), shellSize, Enum.Material.Air)
 end
 
---[[
-    Carve out the interior of a room.
-
-    @param roomPos table - {x, y, z} room center
-    @param roomDims table - {w, h, d} room dimensions
-    @param gap number - Gap size
-]]
 function Canvas.carveInterior(roomPos, roomDims, gap)
     local pos = Vector3.new(roomPos[1], roomPos[2], roomPos[3])
     local dims = Vector3.new(roomDims[1], roomDims[2], roomDims[3])
@@ -170,16 +189,6 @@ function Canvas.carveInterior(roomPos, roomDims, gap)
     getTerrain():FillBlock(CFrame.new(pos), interiorSize, Enum.Material.Air)
 end
 
---[[
-    Paint noise-based veins through terrain shell (e.g., lava veins).
-
-    @param options table:
-        - roomPos: {x, y, z}
-        - roomDims: {w, h, d}
-        - material: Enum.Material - Vein material
-        - noiseScale: number (default 8)
-        - threshold: number (default 0.55)
-]]
 function Canvas.paintNoise(options)
     local terrain = getTerrain()
     local pos = Vector3.new(options.roomPos[1], options.roomPos[2], options.roomPos[3])
@@ -215,13 +224,6 @@ function Canvas.paintNoise(options)
     end
 end
 
---[[
-    Paint floor material on the exterior floor surface of a room.
-
-    @param roomPos table - {x, y, z}
-    @param roomDims table - {w, h, d}
-    @param material Enum.Material - Floor material
-]]
 function Canvas.paintFloor(roomPos, roomDims, material)
     local pos = Vector3.new(roomPos[1], roomPos[2], roomPos[3])
     local dims = Vector3.new(roomDims[1], roomDims[2], roomDims[3])
@@ -232,16 +234,6 @@ function Canvas.paintFloor(roomPos, roomDims, material)
     getTerrain():FillBlock(CFrame.new(floorPos), floorSize, material)
 end
 
---[[
-    Mix patches of a secondary material into room floors using noise.
-
-    @param options table:
-        - roomPos: {x, y, z}
-        - roomDims: {w, h, d}
-        - material: Enum.Material - Patch material
-        - noiseScale: number (default 12)
-        - threshold: number (default 0.4) -- ~30% coverage
-]]
 function Canvas.mixPatches(options)
     local terrain = getTerrain()
     local pos = Vector3.new(options.roomPos[1], options.roomPos[2], options.roomPos[3])
@@ -270,15 +262,6 @@ function Canvas.mixPatches(options)
     end
 end
 
---[[
-    Mix a secondary material into an existing terrain block using noise.
-
-    @param cframe CFrame - Center of the block
-    @param size Vector3 - Dimensions of the block
-    @param material Enum.Material - Secondary material to mix in
-    @param noiseScale number - Noise frequency (default 6)
-    @param threshold number - Noise threshold (default 0.3, ~35% coverage)
-]]
 function Canvas.mixBlock(cframe, size, material, noiseScale, threshold)
     local terrain = getTerrain()
     noiseScale = noiseScale or 6
@@ -309,37 +292,15 @@ function Canvas.mixBlock(cframe, size, material, noiseScale, threshold)
     end
 end
 
---[[
-    Carve a doorway in terrain. Expands by 1 voxel to account for overlap.
-
-    @param cframe CFrame - Door center
-    @param size Vector3 - Door cutter size
-]]
 function Canvas.carveDoorway(cframe, size)
     local terrainClearSize = size + Vector3.new(VOXEL_SIZE, VOXEL_SIZE, VOXEL_SIZE)
     getTerrain():FillBlock(cframe, terrainClearSize, Enum.Material.Air)
 end
 
---[[
-    Carve a clearance margin around a fixture or pad.
-
-    @param cframe CFrame - Fixture center
-    @param size Vector3 - Fixture size
-    @param margin number - Clearance margin in studs (default 2)
-]]
 function Canvas.carveMargin(cframe, size, margin)
     margin = margin or 2
     local carveSize = size + Vector3.new(margin * 2, margin * 2, margin * 2)
     getTerrain():FillBlock(cframe, carveSize, Enum.Material.Air)
-end
-
---[[
-    Get the voxel size constant.
-
-    @return number
-]]
-function Canvas.getVoxelSize()
-    return VOXEL_SIZE
 end
 
 return Canvas

@@ -100,6 +100,7 @@ return {
             worldMap = worldMap,
             seed = seed,
             regionNum = self._regionNum,
+            terrainProfiles = config.terrainProfiles,
         })
     end,
 

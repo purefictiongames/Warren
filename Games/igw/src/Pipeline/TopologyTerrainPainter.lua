@@ -4,17 +4,11 @@
     Stateless terrain executor. Receives paint/clear signals from
     ChunkManager with chunk bounds + filtered feature data.
 
-    paintChunk: fills ground slab + polygon layer shells for one chunk.
+    paintChunk: ground slab + per-feature fillFeature, one flush.
     clearChunk: fills chunk column with Air to unload terrain.
 
-    v3.0: All fills write into a VoxelBuffer, flushed in ONE WriteVoxels
-    call per chunk.
-
-    v3.1: Polygon contour layers replace box volumes + wedge slopes.
-    Each feature is a stack of shrinking polygon layers. fillFeature
-    rasterizes a smooth height-field via radial distance from centroid.
-    Fractional top-voxel occupancy + height field smoothing produces
-    organic terrain surfaces.
+    Uses proven fillFeature path — each feature writes its own voxels
+    directly into the buffer. No composed height field.
 --]]
 
 return {
@@ -29,7 +23,7 @@ return {
 
     In = {
         --------------------------------------------------------------------
-        -- Paint one chunk: ground + polygon layer shells
+        -- Paint one chunk: ground + per-feature fills + flush
         --------------------------------------------------------------------
 
         onPaintChunk = function(self, data)
@@ -50,17 +44,13 @@ return {
             local chunkCX = (bounds.minX + bounds.maxX) / 2
             local chunkCZ = (bounds.minZ + bounds.maxZ) / 2
 
-            ----------------------------------------------------------------
-            -- Create buffer spanning chunk bounds
-            ----------------------------------------------------------------
-
             local buf = Canvas.createBuffer(
                 Vector3.new(bounds.minX, -10, bounds.minZ),
                 Vector3.new(bounds.maxX, peakElev + 4, bounds.maxZ)
             )
 
             ----------------------------------------------------------------
-            -- 1. Ground plane (clipped to chunk)
+            -- 1. Ground plane
             ----------------------------------------------------------------
 
             local gf = data.groundFill
@@ -73,7 +63,7 @@ return {
             end
 
             ----------------------------------------------------------------
-            -- 2. Feature height-field fills
+            -- 2. Per-feature fillFeature (convex only for now)
             ----------------------------------------------------------------
 
             local groundY = 0
@@ -82,22 +72,23 @@ return {
             end
 
             for _, feature in ipairs(features) do
-                -- Scale feather to feature size: wider features get gentler slopes
-                local extentX = (feature.boundMaxX or 0) - (feature.boundMinX or 0)
-                local extentZ = (feature.boundMaxZ or 0) - (feature.boundMinZ or 0)
-                local baseExtent = math.max(extentX, extentZ)
-                local feather = math.max(50, baseExtent * 0.3)
+                if feature.geometry ~= "concave" then
+                    local extentX = (feature.boundMaxX or 0) - (feature.boundMinX or 0)
+                    local extentZ = (feature.boundMaxZ or 0) - (feature.boundMinZ or 0)
+                    local baseExtent = math.max(extentX, extentZ)
+                    local feather = math.max(50, baseExtent * 0.3)
 
-                buf:fillFeature(
-                    feature.layers,
-                    groundY,
-                    wallMaterial,
-                    feather
-                )
+                    buf:fillFeature(
+                        feature.layers,
+                        groundY,
+                        wallMaterial,
+                        feather
+                    )
+                end
             end
 
             ----------------------------------------------------------------
-            -- 3. Flush — ONE WriteVoxels call for entire chunk
+            -- 3. Flush
             ----------------------------------------------------------------
 
             buf:flush()
@@ -116,7 +107,7 @@ return {
             local peakH = (data.peakElevation or 500) + 50
 
             Canvas.clearRegion(
-                Vector3.new(bounds.minX, -10, bounds.minZ),
+                Vector3.new(bounds.minX, -50, bounds.minZ),
                 Vector3.new(bounds.maxX, peakH, bounds.maxZ)
             )
 

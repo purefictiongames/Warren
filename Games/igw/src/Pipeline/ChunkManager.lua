@@ -6,6 +6,10 @@
     stores it, then streams terrain voxels by sending paint/clear signals
     to TopologyTerrainPainter for chunks within the load radius.
 
+    v3.1: Region awareness — requests new regions from TopologyBuilder
+    as the player approaches boundaries. Features from all loaded regions
+    are merged into one array for chunk filtering.
+
     Initial load: all chunks around spawn, synchronous (blocks pipeline).
     Ongoing: heartbeat-driven, one chunk per tick, throttled.
 --]]
@@ -31,6 +35,16 @@ return {
             self._heartbeatConn = nil
             self._lastCheck = 0
             self._chunkDone = false
+
+            -- Water + sand levels
+            self._waterLevel = nil   -- studs (Y), nil = no water
+            self._sandLevel = nil    -- studs (Y), nil = no sand
+
+            -- Region expansion
+            self._regionSize = 4000
+            self._loadedRegions = {}  -- { ["rx,rz"] = true }
+            self._regionDone = false
+            self._regionBuffer = nil
         end,
 
         onStart = function(self) end,
@@ -94,6 +108,57 @@ return {
     end,
 
     ------------------------------------------------------------------------
+    -- Region expansion — request new regions from TopologyManager
+    ------------------------------------------------------------------------
+
+    _checkRegions = function(self, px, pz)
+        local rs = self._regionSize
+        local prx = math.floor(px / rs + 0.5)
+        local prz = math.floor(pz / rs + 0.5)
+
+        for drx = -1, 1 do
+            for drz = -1, 1 do
+                local rx, rz = prx + drx, prz + drz
+                local key = rx .. "," .. rz
+
+                -- Clamp to Roblox terrain limits (~16384 studs per axis)
+                if math.abs(rx * rs) + rs / 2 > 16000
+                    or math.abs(rz * rs) + rs / 2 > 16000 then
+                    continue
+                end
+
+                if not self._loadedRegions[key] then
+                    self:_requestRegion(rx, rz)
+                    return  -- one region per heartbeat tick
+                end
+            end
+        end
+    end,
+
+    _requestRegion = function(self, rx, rz)
+        self._regionDone = false
+        self.Out:Fire("expandRegion", { _msgId = nil, rx = rx, rz = rz })
+        while not self._regionDone do task.wait() end
+
+        if self._regionBuffer then
+            for _, f in ipairs(self._regionBuffer.features) do
+                table.insert(self._features, f)
+            end
+            self._peakElevation = math.max(
+                self._peakElevation,
+                self._regionBuffer.peakElevation
+            )
+            self._regionBuffer = nil
+        end
+
+        self._loadedRegions[rx .. "," .. rz] = true
+        print(string.format(
+            "[ChunkManager] Region (%d,%d) merged — %d total features",
+            rx, rz, #self._features
+        ))
+    end,
+
+    ------------------------------------------------------------------------
     -- Load / unload a single chunk (synchronous via IPC flag)
     ------------------------------------------------------------------------
 
@@ -104,15 +169,31 @@ return {
         local bounds = self:_chunkBounds(cx, cz)
         local features = self:_filterForChunk(bounds)
 
+        -- Construct per-chunk groundFill (infinite ground plane)
+        local groundFill = self._groundFill and {
+            position = {
+                (bounds.minX + bounds.maxX) / 2,
+                self._groundFill.y,
+                (bounds.minZ + bounds.maxZ) / 2,
+            },
+            size = {
+                self._chunkSize,
+                self._groundFill.height,
+                self._chunkSize,
+            },
+        }
+
         self._chunkDone = false
         local msg = {
             _msgId = nil,
             action = "paint",
             bounds = bounds,
             features = features,
-            groundFill = self._groundFill,
+            groundFill = groundFill,
             biome = self._biome,
             peakElevation = self._peakElevation,
+            waterLevel = self._waterLevel,
+            sandLevel = self._sandLevel,
         }
         self.Out:Fire("paintChunk", msg)
         while not self._chunkDone do
@@ -192,7 +273,7 @@ return {
     end,
 
     ------------------------------------------------------------------------
-    -- Heartbeat: load/unload one chunk per tick
+    -- Heartbeat: check regions, then load/unload one chunk per tick
     ------------------------------------------------------------------------
 
     _onHeartbeat = function(self)
@@ -202,6 +283,9 @@ return {
 
         local px, pz = self:_getPlayerPos()
         local cs = self._chunkSize
+
+        -- Expand regions around player (one per tick if needed)
+        self:_checkRegions(px, pz)
 
         -- Check for one chunk to load
         local needed = self:_chunksInRadius(px, pz, self._loadRadius)
@@ -238,9 +322,19 @@ return {
 
             -- Store topology data
             self._features = payload.features or {}
-            self._groundFill = payload.groundFill
             self._biome = payload.biome
             self._spawn = payload.spawn and payload.spawn.position
+            self._waterLevel = payload.waterLevel  -- nil = no water
+            self._sandLevel = payload.sandLevel    -- nil = no sand
+
+            -- Store groundFill in simplified form (y + height only)
+            local gf = payload.groundFill
+            if gf then
+                self._groundFill = {
+                    y = gf.y or gf.position[2],
+                    height = gf.height or gf.size[2],
+                }
+            end
 
             -- Find peak elevation from features
             self._peakElevation = 0
@@ -259,6 +353,11 @@ return {
                 self:getAttribute("unloadRadius") or 1280
             self._checkInterval =
                 self:getAttribute("checkInterval") or 0.25
+            self._regionSize =
+                self:getAttribute("regionSize") or 4000
+
+            -- Mark origin region as loaded
+            self._loadedRegions["0,0"] = true
 
             -- Initial load around spawn
             local sx, sz = 0, 0
@@ -295,6 +394,11 @@ return {
 
         onChunkDone = function(self)
             self._chunkDone = true
+        end,
+
+        onRegionReady = function(self, data)
+            self._regionBuffer = data
+            self._regionDone = true
         end,
     },
 }

@@ -52,6 +52,8 @@ return {
         local Debug = self._System and self._System.Debug
 
         -- Plan phase (DOM only, no Instances yet)
+        self:_syncCall("blockoutTerrain", payload)
+        self:_syncCall("placeFeatures", payload)
         self:_syncCall("buildTopology", payload)
         -- self:_syncCall("buildMountain", payload)
         -- self:_syncCall("buildRooms", payload)
@@ -59,6 +61,44 @@ return {
         -- self:_syncCall("planDoors", payload)
         -- self:_syncCall("buildTrusses", payload)
         -- self:_syncCall("buildLights", payload)
+
+        -- Compute water level from percentile of feature peaks
+        local features = payload.features or {}
+        local peaks = {}
+        for _, f in ipairs(features) do
+            if f.geometry ~= "concave" and f.peakY then
+                table.insert(peaks, f.peakY)
+            end
+        end
+        if #peaks > 0 then
+            table.sort(peaks)
+            local p23Index = math.max(1, math.ceil(#peaks * 0.23))
+            local p35Index = math.max(1, math.ceil(#peaks * 0.35))
+            local p23Peak = peaks[p23Index]
+            local p35Peak = peaks[p35Index]
+
+            local gY = 0
+            if payload.groundFill then
+                gY = payload.groundFill.y + payload.groundFill.height / 2
+            end
+            payload.waterLevel = math.max(p23Peak, gY + 1)
+            payload.sandLevel = math.max(p35Peak, gY + 1)
+
+            if Debug then
+                Debug.info("DungeonOrchestrator",
+                    "Water P23:", string.format("%.0f", payload.waterLevel),
+                    "Sand P35:", string.format("%.0f", payload.sandLevel),
+                    "(" .. #peaks, "features)")
+            end
+        end
+
+        -- Store water/sand levels on DOM for downstream nodes
+        if payload.waterLevel then
+            Dom.setAttribute(payload.dom, "waterLevel", payload.waterLevel)
+        end
+        if payload.sandLevel then
+            Dom.setAttribute(payload.dom, "sandLevel", payload.sandLevel)
+        end
 
         -- Mount DOM to workspace (container for future room geometry)
         Dom.mount(payload.dom, workspace)
@@ -205,6 +245,7 @@ return {
                 biomeName = biomeName,
                 allBiomes = allBiomes,
                 worldMap = worldMap,
+                terrainProfiles = data.terrainProfiles,
             }
 
             -- Run in background thread (task.wait in _syncCall needs yieldable context)

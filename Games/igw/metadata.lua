@@ -12,7 +12,10 @@ return {
     -- Pipeline node load order (orchestrator is implicit from init.cfg)
     nodes = {
         "DungeonOrchestrator",
-        "TopologyManager", "ChunkManager", "TopologyTerrainPainter",
+        "TerrainBlockoutManager", "FeaturePlacer", "TopologyBuilder",
+        "ChunkManager", "TopologyTerrainPainter", "ShoreCutterNode",
+        "WaterFloodNode",
+        -- "SandPainterNode",
         "MountainRoomMasser",
         "ShellBuilder", "DoorPlanner",
         "TrussBuilder", "MountainLightBuilder",
@@ -32,6 +35,19 @@ return {
     WorldMapOrchestrator = {
         startBiome = "mountain",
         portalCountdownSeconds = 5,
+
+        terrainProfiles = {
+            rolling  = { geometry = "convex",  baseMin = 3200, baseMax = 10000, layerH = 20, shrinkMin = 0.60, shrinkMax = 0.72, maxLayers = 8,   numVerts = 8,  noiseAmp = 0.30 },
+            hill     = { geometry = "convex",  baseMin = 1600, baseMax = 4800,  layerH = 12, shrinkMin = 0.70, shrinkMax = 0.82, maxLayers = 30,  numVerts = 8,  noiseAmp = 0.25 },
+            mountain = { geometry = "convex",  baseMin = 1000, baseMax = 2800,  layerH = 6,  shrinkMin = 0.88, shrinkMax = 0.95, maxLayers = 60,  numVerts = 8,  noiseAmp = 0.20 },
+            peak     = { geometry = "convex",  baseMin = 480,  baseMax = 1600,  layerH = 4,  shrinkMin = 0.95, shrinkMax = 0.99, maxLayers = 120, numVerts = 8,  noiseAmp = 0.15 },
+            plateau  = { geometry = "convex",  baseMin = 1200, baseMax = 3200,  layerH = 10, shrinkMin = 0.75, shrinkMax = 0.85, maxLayers = 20,  numVerts = 8,  noiseAmp = 0.20, flatTop = true, flatTopLayers = 3 },
+            -- Lake: same growth as hill, inverted by painter into a bowl.
+            -- layerH/shrink/maxLayers control bowl shape (gentle slope = wide shallow bowl).
+            lake     = { geometry = "concave", baseMin = 800,  baseMax = 2400,  layerH = 12, shrinkMin = 0.70, shrinkMax = 0.82, maxLayers = 20,  numVerts = 10, noiseAmp = 0.20, depth = 40, fillRatio = 0.85 },
+            -- River: TODO — needs spline/bezier path system, not polygon growth.
+            -- river = { ... },
+        },
 
         worldMap = {
             mountain = { elevation = 4, connects = {} },  -- blockout testing
@@ -188,15 +204,21 @@ return {
             -- Hub-and-spoke: orchestrator calls each node sequentially
             WorldMapOrchestrator    = { "DungeonOrchestrator" },
             DungeonOrchestrator     = {
-                "TopologyManager", "ChunkManager",
+                "TerrainBlockoutManager", "FeaturePlacer", "TopologyBuilder",
+                "ChunkManager",
                 "MountainRoomMasser",
                 "ShellBuilder", "DoorPlanner",
                 "TrussBuilder", "MountainLightBuilder",
                 "WorldMapOrchestrator",
             },
-            TopologyManager         = { "DungeonOrchestrator" },
-            ChunkManager            = { "TopologyTerrainPainter", "DungeonOrchestrator" },
-            TopologyTerrainPainter  = { "ChunkManager" },
+            TerrainBlockoutManager  = { "DungeonOrchestrator" },
+            FeaturePlacer           = { "DungeonOrchestrator" },
+            TopologyBuilder         = { "DungeonOrchestrator", "ChunkManager" },
+            ChunkManager            = { "TopologyTerrainPainter", "DungeonOrchestrator", "TopologyBuilder" },
+            TopologyTerrainPainter  = { "ShoreCutterNode" },
+            ShoreCutterNode         = { "WaterFloodNode" },
+            WaterFloodNode          = { "ChunkManager" },
+            -- SandPainterNode      = { "ChunkManager" },
             MountainRoomMasser      = { "DungeonOrchestrator" },
             ShellBuilder            = { "DungeonOrchestrator" },
             DoorPlanner             = { "DungeonOrchestrator" },
@@ -251,36 +273,40 @@ return {
         origin = { 0, 0, 0 },
     },
 
-    TopologyManager = {
-        -- Map extents (terrain grid limit: ±16384 studs per axis)
+    TerrainBlockoutManager = {
         mapWidth = 4000,        -- studs (X axis)
         mapDepth = 4000,        -- studs (Z axis)
         groundHeight = 4,       -- studs — ground plane thickness
         groundY = 0,            -- base Y of ground plane
-
-        -- Feature seeding
         featureSpacing = 667,   -- grid cell size for feature placement
-        forkChance = 5,         -- % chance a region forks into 2 sub-peaks
-        forkWidthFraction = 0.55,  -- each fork child gets this fraction
         jitterRange = 0.3,      -- position jitter as fraction of margin
-        minRegionSize = 20,     -- regions smaller than this stop growing
-        attritionChance = 3,    -- % chance a region dies (plateau)
-
-        -- Spine (ridge axis — taller features cluster here)
         spineAngle = 15,        -- degrees from X axis
         spineWidth = 0.2,       -- gaussian width (0-1 normalized)
-
-        -- Feature type weights (before spine bias)
-        rollingWeight = 0.35,   -- gentle domes, 20-stud layers
-        hillWeight = 0.60,      -- moderate hills, 12-stud layers
-        mountainWeight = 0.33,  -- steep mountains, 6-stud layers
-        peakWeight = 0.10,      -- steep spires, 4-stud layers
-
-        -- Perimeter features (visual interest at horizon)
-        perimeterRadius = 800,  -- studs from origin
-        perimeterCount = 12,    -- features scattered on ring
-
+        -- Profile weights (before spine bias)
+        rollingWeight = 0.25,
+        hillWeight = 0.35,
+        mountainWeight = 0.20,
+        peakWeight = 0.05,
+        plateauWeight = 0.03,
+        lakeWeight = 0.12,
+        riverWeight = 0,
         origin = { 0, 0, 0 },
+    },
+
+    FeaturePlacer = {
+        featherDefault = 50,
+        featherScale = 0.3,
+    },
+
+    TopologyBuilder = {
+        minRegionSize = 20,
+        attritionChance = 3,
+    },
+
+    WaterFloodNode = {
+        waterOffset = 33,       -- studs below mean peak to set water level
+        chunkSize = 512,        -- must match ChunkManager
+        loadRadius = 1024,      -- must match ChunkManager
     },
 
     ChunkManager = {
@@ -288,6 +314,7 @@ return {
         loadRadius = 1024,      -- fill terrain within this radius
         unloadRadius = 1280,    -- clear terrain beyond this (hysteresis)
         checkInterval = 0.25,   -- seconds between heartbeat checks
+        regionSize = 4000,      -- studs per region edge (matches TopologyManager mapWidth)
     },
 
     MountainRoomMasser = {

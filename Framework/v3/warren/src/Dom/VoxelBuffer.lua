@@ -264,27 +264,59 @@ function VoxelBuffer:fillBlock(cframe, size, material, occ)
     end
 end
 
+--- Fill only voxels that are currently Air (occupancy 0).
+--- Used for water fills in carved basins — solid terrain stays solid.
+function VoxelBuffer:fillBlockIfAir(cframe, size, material, occ)
+    occ = occ or 1
+    local pos = cframe.Position
+    local hx, hy, hz = size.X / 2, size.Y / 2, size.Z / 2
+
+    local xi1, xi2 = indexRange(pos.X - hx, pos.X + hx, self._mnX, self._sX)
+    if not xi1 then return end
+    local yi1, yi2 = indexRange(pos.Y - hy, pos.Y + hy, self._mnY, self._sY)
+    if not yi1 then return end
+    local zi1, zi2 = indexRange(pos.Z - hz, pos.Z + hz, self._mnZ, self._sZ)
+    if not zi1 then return end
+
+    local mats = self._materials
+    local occs = self._occupancy
+    for xi = xi1, xi2 do
+        local col = mats[xi]
+        local oCol = occs[xi]
+        for yi = yi1, yi2 do
+            local row = col[yi]
+            local oRow = oCol[yi]
+            for zi = zi1, zi2 do
+                if oRow[zi] == 0 then
+                    row[zi] = material
+                    oRow[zi] = occ
+                end
+            end
+        end
+    end
+end
+
 --- Carve (fill with Air, occupancy 0).
 function VoxelBuffer:carveBlock(cframe, size)
     self:fillBlock(cframe, size, Air, 0)
 end
 
---- Fill an entire feature as a smooth height-field using radial distance.
----
---- For each (x,z) column, computes a continuous radial distance from the
---- feature centroid, modulated by the base polygon shape (via precomputed
---- angular bins). Height is smoothly interpolated between layers using
---- the layer stack as a 1D radial profile with smoothstep transitions.
---- No per-layer polygon containment tests — eliminates the concentric
---- contour rings that cause stratification artifacts.
----
---- @param layers  array of {y, height, vertices={{x,z},...}}  bottom-to-top
---- @param groundY number  base ground elevation (bottom of fill)
---- @param material Enum.Material
---- @param feather number?  falloff distance beyond base polygon in studs (default 16)
-function VoxelBuffer:fillFeature(layers, groundY, material, feather)
-    if #layers == 0 then return end
-    feather = feather or 16
+--------------------------------------------------------------------------------
+-- Height-field computation (shared by fillFeature and carveFeature)
+--------------------------------------------------------------------------------
+
+--- Compute a 2D height-field from polygon contour layers.
+--- Returns smoothed height array, width, and depth.
+--- @param layers  array of {y, height, vertices={{x,z},...}}
+--- @param groundY number  base ground elevation
+--- @param feather number  falloff distance beyond base polygon in studs
+--- @param xi1 number  start X index in buffer
+--- @param xi2 number  end X index in buffer
+--- @param zi1 number  start Z index in buffer
+--- @param zi2 number  end Z index in buffer
+--- @param mnX number  buffer min X world coord
+--- @param mnZ number  buffer min Z world coord
+local function computeHeightField(layers, groundY, feather, xi1, xi2, zi1, zi2, mnX, mnZ)
     local nLayers = #layers
 
     -- 1. Compute centroid from base layer (widest polygon)
@@ -299,7 +331,6 @@ function VoxelBuffer:fillFeature(layers, groundY, material, feather)
     cz = cz / nBase
 
     -- 2. Precompute polygon radius at angular bins for each layer
-    --    layerRadii[li][bin] = distance from centroid to polygon edge
     local layerRadii = table.create(nLayers)
     local layerTopY  = table.create(nLayers)
     for li = 1, nLayers do
@@ -315,33 +346,7 @@ function VoxelBuffer:fillFeature(layers, groundY, material, feather)
         layerTopY[li] = layers[li].y + layers[li].height
     end
 
-    -- 3. Bounding box from base layer vertices + feather
-    local xLo, xHi = baseVerts[1][1], baseVerts[1][1]
-    local zLo, zHi = baseVerts[1][2], baseVerts[1][2]
-    for i = 2, nBase do
-        local vx, vz = baseVerts[i][1], baseVerts[i][2]
-        if vx < xLo then xLo = vx end
-        if vx > xHi then xHi = vx end
-        if vz < zLo then zLo = vz end
-        if vz > zHi then zHi = vz end
-    end
-    xLo = xLo - feather
-    xHi = xHi + feather
-    zLo = zLo - feather
-    zHi = zHi + feather
-
-    local xi1, xi2 = indexRange(xLo, xHi, self._mnX, self._sX)
-    if not xi1 then return end
-    local zi1, zi2 = indexRange(zLo, zHi, self._mnZ, self._sZ)
-    if not zi1 then return end
-
-    local mats = self._materials
-    local occs = self._occupancy
-    local mnX, mnY, mnZ = self._mnX, self._mnY, self._mnZ
-
-    -- ================================================================
     -- Phase 1: Compute height field into 2D array
-    -- ================================================================
     local hW = xi2 - xi1 + 1
     local hD = zi2 - zi1 + 1
     local hField = table.create(hW)
@@ -359,12 +364,10 @@ function VoxelBuffer:fillFeature(layers, groundY, material, feather)
             local dxC = wx - cx
             local hxi = xi - xi1 + 1
 
-            -- Distance + angle from centroid
             local dist = sqrt(dxC * dxC + dzC * dzC)
             if dist < 0.001 then dist = 0.001 end
             local angle = atan2(dzC, dxC)
 
-            -- Angular bin with linear interpolation
             local binF = (angle + PI) / BIN_ANGLE + 0.5
             local bin1 = floor(binF)
             local binT = binF - bin1
@@ -374,27 +377,21 @@ function VoxelBuffer:fillFeature(layers, groundY, material, feather)
             if bin2 < 1 then bin2 = bin2 + NUM_BINS end
             if bin2 > NUM_BINS then bin2 = bin2 - NUM_BINS end
 
-            -- Base polygon radius at this angle (lerp between bins)
             local baseR = layerRadii[1][bin1] * (1 - binT) + layerRadii[1][bin2] * binT
             if baseR < 0.01 then continue end
 
-            -- Normalized distance: 0 = centroid, 1 = base polygon edge
             local normDist = dist / baseR
             local featherNorm = feather / baseR
 
             if normDist > 1 + featherNorm then continue end
 
-            -- Compute surface height from radial profile
             local surfaceY
 
             if normDist > 1 then
-                -- Outside base polygon: feather zone → fade to ground
                 local t = 1 - (normDist - 1) / featherNorm
-                t = t * t * (3 - 2 * t) -- smoothstep
+                t = t * t * (3 - 2 * t)
                 surfaceY = groundY + (layerTopY[1] - groundY) * t
             else
-                -- Inside base polygon: walk layers to find height
-                -- Layers: 1=base (widest, lowest), N=peak (narrowest, highest)
                 surfaceY = layerTopY[1]
 
                 for li = 2, nLayers do
@@ -402,16 +399,14 @@ function VoxelBuffer:fillFeature(layers, groundY, material, feather)
                     local normR = r / baseR
 
                     if normDist <= normR then
-                        -- Inside this layer → update floor height
                         surfaceY = layerTopY[li]
                     else
-                        -- Between layer li-1 (outer) and layer li (inner)
                         local rPrev = layerRadii[li - 1][bin1] * (1 - binT) + layerRadii[li - 1][bin2] * binT
                         local normPrev = rPrev / baseR
                         local range = normPrev - normR
                         if range > 0.001 then
                             local t = (normPrev - normDist) / range
-                            t = t * t * (3 - 2 * t) -- smoothstep
+                            t = t * t * (3 - 2 * t)
                             surfaceY = layerTopY[li - 1] + t * (layerTopY[li] - layerTopY[li - 1])
                         end
                         break
@@ -423,13 +418,7 @@ function VoxelBuffer:fillFeature(layers, groundY, material, feather)
         end
     end
 
-    -- ================================================================
     -- Phase 2: Smooth height field (3×3 weighted average)
-    -- Eliminates columnar artifacts on cliff faces: adjacent columns
-    -- converge to similar heights so marching cubes generates a smooth
-    -- surface instead of individual voxel-column bumps.
-    -- On gentle slopes neighbors already match — smoothing is a no-op.
-    -- ================================================================
     local smoothed = table.create(hW)
     for i = 1, hW do
         smoothed[i] = table.create(hD, groundY)
@@ -461,9 +450,57 @@ function VoxelBuffer:fillFeature(layers, groundY, material, feather)
         end
     end
 
-    -- ================================================================
+    return smoothed, hW, hD
+end
+
+--- Fill an entire feature as a smooth height-field using radial distance.
+---
+--- For each (x,z) column, computes a continuous radial distance from the
+--- feature centroid, modulated by the base polygon shape (via precomputed
+--- angular bins). Height is smoothly interpolated between layers using
+--- the layer stack as a 1D radial profile with smoothstep transitions.
+--- No per-layer polygon containment tests — eliminates the concentric
+--- contour rings that cause stratification artifacts.
+---
+--- @param layers  array of {y, height, vertices={{x,z},...}}  bottom-to-top
+--- @param groundY number  base ground elevation (bottom of fill)
+--- @param material Enum.Material
+--- @param feather number?  falloff distance beyond base polygon in studs (default 16)
+function VoxelBuffer:fillFeature(layers, groundY, material, feather)
+    if #layers == 0 then return end
+    feather = feather or 16
+
+    -- Bounding box from base layer vertices + feather
+    local baseVerts = layers[1].vertices
+    local nBase = #baseVerts
+    local xLo, xHi = baseVerts[1][1], baseVerts[1][1]
+    local zLo, zHi = baseVerts[1][2], baseVerts[1][2]
+    for i = 2, nBase do
+        local vx, vz = baseVerts[i][1], baseVerts[i][2]
+        if vx < xLo then xLo = vx end
+        if vx > xHi then xHi = vx end
+        if vz < zLo then zLo = vz end
+        if vz > zHi then zHi = vz end
+    end
+    xLo = xLo - feather
+    xHi = xHi + feather
+    zLo = zLo - feather
+    zHi = zHi + feather
+
+    local xi1, xi2 = indexRange(xLo, xHi, self._mnX, self._sX)
+    if not xi1 then return end
+    local zi1, zi2 = indexRange(zLo, zHi, self._mnZ, self._sZ)
+    if not zi1 then return end
+
+    local mats = self._materials
+    local occs = self._occupancy
+    local mnX, mnY, mnZ = self._mnX, self._mnY, self._mnZ
+
+    local smoothed, hW, hD = computeHeightField(
+        layers, groundY, feather, xi1, xi2, zi1, zi2, mnX, mnZ
+    )
+
     -- Phase 3: Fill columns from smoothed height field
-    -- ================================================================
     for zi = zi1, zi2 do
         local hzi = zi - zi1 + 1
         for xi = xi1, xi2 do
@@ -489,6 +526,220 @@ function VoxelBuffer:fillFeature(layers, groundY, material, feather)
                     if topFrac > occs[xi][yiTop][zi] then
                         mats[xi][yiTop][zi] = material
                         occs[xi][yiTop][zi] = topFrac
+                    end
+                end
+            end
+        end
+    end
+end
+
+--- Carve a concave feature (lake/river basin) below ground level.
+--- Uses the same height-field computation as fillFeature, but interprets
+--- the profile as depth below groundY. Layers go downward: layer 1 is
+--- widest/shallowest, layer N is narrowest/deepest.
+---
+--- @param layers  array of {y, height, vertices={{x,z},...}}
+--- @param groundY number  base ground elevation (top of carve)
+--- @param depth number  maximum carve depth in studs
+--- @param feather number?  falloff distance beyond base polygon in studs
+function VoxelBuffer:carveFeature(layers, groundY, depth, feather)
+    if #layers == 0 then return end
+    feather = feather or 16
+    depth = depth or 30
+
+    -- Bounding box from base layer vertices + feather
+    local baseVerts = layers[1].vertices
+    local nBase = #baseVerts
+    local xLo, xHi = baseVerts[1][1], baseVerts[1][1]
+    local zLo, zHi = baseVerts[1][2], baseVerts[1][2]
+    for i = 2, nBase do
+        local vx, vz = baseVerts[i][1], baseVerts[i][2]
+        if vx < xLo then xLo = vx end
+        if vx > xHi then xHi = vx end
+        if vz < zLo then zLo = vz end
+        if vz > zHi then zHi = vz end
+    end
+    xLo = xLo - feather
+    xHi = xHi + feather
+    zLo = zLo - feather
+    zHi = zHi + feather
+
+    local xi1, xi2 = indexRange(xLo, xHi, self._mnX, self._sX)
+    if not xi1 then return end
+    local zi1, zi2 = indexRange(zLo, zHi, self._mnZ, self._sZ)
+    if not zi1 then return end
+
+    local mats = self._materials
+    local occs = self._occupancy
+    local mnX, mnY, mnZ = self._mnX, self._mnY, self._mnZ
+
+    -- Compute height field — profile heights are relative, used as depth ratios
+    -- The layers use synthetic Y values; computeHeightField produces a profile
+    -- whose height above groundY we interpret as carve depth
+    local smoothed, hW, hD = computeHeightField(
+        layers, groundY, feather, xi1, xi2, zi1, zi2, mnX, mnZ
+    )
+
+    -- Phase 3: Carve columns — profile height → carve depth below ground
+    local peakProfile = groundY
+    for hxi = 1, hW do
+        for hzi = 1, hD do
+            if smoothed[hxi][hzi] > peakProfile then
+                peakProfile = smoothed[hxi][hzi]
+            end
+        end
+    end
+    local profileRange = peakProfile - groundY
+    if profileRange < 0.01 then return end
+
+    for zi = zi1, zi2 do
+        local hzi = zi - zi1 + 1
+        for xi = xi1, xi2 do
+            local hxi = xi - xi1 + 1
+            local profileH = smoothed[hxi][hzi] - groundY
+
+            if profileH > 0.01 then
+                -- Normalize profile height to [0,1], scale by depth
+                local carveDepth = (profileH / profileRange) * depth
+                local carveBottom = groundY - carveDepth
+
+                local yiTop = floor((groundY - mnY) / VOXEL)
+                local yiBottom = max(1, floor((carveBottom - mnY) / VOXEL) + 1)
+                yiTop = min(yiTop, self._sY)
+
+                -- Solid Air voxels above bottom
+                for yi = yiBottom + 1, yiTop do
+                    mats[xi][yi][zi] = Air
+                    occs[xi][yi][zi] = 0
+                end
+
+                -- Bottom voxel: fractional occupancy for smooth basin floor
+                if yiBottom >= 1 and yiBottom <= self._sY then
+                    local voxelTop = mnY + yiBottom * VOXEL
+                    local frac = clamp((voxelTop - carveBottom) / VOXEL, 0, 1)
+                    -- Partial carve: reduce existing occupancy
+                    local newOcc = 1 - frac
+                    if newOcc < occs[xi][yiBottom][zi] then
+                        if newOcc < 0.01 then
+                            mats[xi][yiBottom][zi] = Air
+                            occs[xi][yiBottom][zi] = 0
+                        else
+                            occs[xi][yiBottom][zi] = newOcc
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+--- Get material and occupancy at a world-space position.
+function VoxelBuffer:getWorld(wx, wy, wz)
+    local xi, yi, zi = self:worldToIndex(wx, wy, wz)
+    return self:getVoxel(xi, yi, zi)
+end
+
+--------------------------------------------------------------------------------
+-- Composed height-field terrain
+--------------------------------------------------------------------------------
+
+--- Compute the height-field profile for a set of polygon layers within this
+--- buffer's bounds. Returns a sub-region profile that can be composited into
+--- a full-buffer terrain array.
+---
+--- @param layers  array of {y, height, vertices={{x,z},...}}
+--- @param groundY number  base ground elevation
+--- @param feather number  falloff distance beyond base polygon in studs
+--- @return table|nil  { heights, hW, hD, xi1, zi1 } or nil if out of bounds
+function VoxelBuffer:computeProfile(layers, groundY, feather)
+    if #layers == 0 then return nil end
+    feather = feather or 16
+
+    local baseVerts = layers[1].vertices
+    local nBase = #baseVerts
+    local xLo, xHi = baseVerts[1][1], baseVerts[1][1]
+    local zLo, zHi = baseVerts[1][2], baseVerts[1][2]
+    for i = 2, nBase do
+        local vx, vz = baseVerts[i][1], baseVerts[i][2]
+        if vx < xLo then xLo = vx end
+        if vx > xHi then xHi = vx end
+        if vz < zLo then zLo = vz end
+        if vz > zHi then zHi = vz end
+    end
+    xLo = xLo - feather
+    xHi = xHi + feather
+    zLo = zLo - feather
+    zHi = zHi + feather
+
+    local xi1, xi2 = indexRange(xLo, xHi, self._mnX, self._sX)
+    if not xi1 then return nil end
+    local zi1, zi2 = indexRange(zLo, zHi, self._mnZ, self._sZ)
+    if not zi1 then return nil end
+
+    local smoothed, hW, hD = computeHeightField(
+        layers, groundY, feather, xi1, xi2, zi1, zi2, self._mnX, self._mnZ
+    )
+
+    return {
+        heights = smoothed,
+        hW = hW,
+        hD = hD,
+        xi1 = xi1,
+        zi1 = zi1,
+    }
+end
+
+--- Fill voxels from a pre-composed 2D height field with optional water levels.
+--- The height field and water level arrays are indexed [1..sX][1..sZ] matching
+--- the buffer's full XZ dimensions.
+---
+--- Fills solid material from buffer bottom to terrain surface, with fractional
+--- top voxel. Where waterLevel > terrain surface, fills water above terrain.
+---
+--- @param terrain  2D array [sX][sZ] of surface Y values
+--- @param waterLevel  2D array [sX][sZ] of water surface Y (false = no water)
+--- @param material  Enum.Material for solid terrain
+--- @param waterMaterial  Enum.Material for water (e.g., Enum.Material.Water)
+function VoxelBuffer:fillFromHeightField(terrain, waterLevel, material, waterMaterial)
+    local mats = self._materials
+    local occs = self._occupancy
+    local mnY = self._mnY
+    local sX, sY, sZ = self._sX, self._sY, self._sZ
+
+    for xi = 1, sX do
+        local tCol = terrain[xi]
+        local wCol = waterLevel[xi]
+        for zi = 1, sZ do
+            local surfaceY = tCol[zi]
+
+            -- Solid fill: buffer bottom to terrain surface
+            local yiSurface = floor((surfaceY - mnY) / VOXEL) + 1
+            local yiSolid = min(yiSurface - 1, sY)
+
+            for yi = 1, yiSolid do
+                mats[xi][yi][zi] = material
+                occs[xi][yi][zi] = 1
+            end
+
+            -- Fractional top voxel
+            local yiTop = min(yiSurface, sY)
+            if yiTop >= 1 then
+                local voxelBottom = mnY + (yiTop - 1) * VOXEL
+                local topFrac = clamp((surfaceY - voxelBottom) / VOXEL, 0, 1)
+                if topFrac > 0.01 then
+                    mats[xi][yiTop][zi] = material
+                    occs[xi][yiTop][zi] = topFrac
+                end
+            end
+
+            -- Water fill: above terrain surface up to water level
+            local wLevel = wCol[zi]
+            if wLevel and surfaceY < wLevel then
+                local yiWaterEnd = min(sY, floor((wLevel - mnY) / VOXEL))
+                for yi = max(1, yiSolid + 1), yiWaterEnd do
+                    if occs[xi][yi][zi] == 0 then
+                        mats[xi][yi][zi] = waterMaterial
+                        occs[xi][yi][zi] = 1
                     end
                 end
             end

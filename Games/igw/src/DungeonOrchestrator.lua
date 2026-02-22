@@ -3,6 +3,9 @@
     Hub-and-spoke pipeline orchestrator. Calls each node sequentially
     via unique signals, waits for nodeComplete response before proceeding.
 
+    Phase 1: Subtractive terrain (inventory → splines → blockout → paint → rocks)
+    Phase 2: Mountain rooms (ice/outdoor biome — placeRooms → shells → doors → mount → paint → cut)
+
     Receives buildDungeon from WorldMapOrchestrator.
     Sets up lighting, DOM root, then runs the build pipeline.
     Fires dungeonComplete when done.
@@ -16,11 +19,15 @@ return {
         onInit = function(self)
             self._gotResponse = false
             self._container = nil
+            self._dungeonContainer = nil
         end,
 
         onStart = function(self) end,
 
         onStop = function(self)
+            if self._dungeonContainer and self._dungeonContainer.Parent then
+                self._dungeonContainer:Destroy()
+            end
             if self._container and self._container.Parent then
                 self._container:Destroy()
             end
@@ -48,130 +55,88 @@ return {
 
     _runBuild = function(self, payload)
         local Dom = self._System.Dom
-        local Canvas = Dom.Canvas
         local Debug = self._System and self._System.Debug
 
-        -- Plan phase (DOM only, no Instances yet)
-        self:_syncCall("blockoutTerrain", payload)
-        self:_syncCall("placeFeatures", payload)
-        self:_syncCall("buildTopology", payload)
-        -- self:_syncCall("buildMountain", payload)
-        -- self:_syncCall("buildRooms", payload)
-        -- self:_syncCall("buildShells", payload)
-        -- self:_syncCall("planDoors", payload)
-        -- self:_syncCall("buildTrusses", payload)
-        -- self:_syncCall("buildLights", payload)
+        ----------------------------------------------------------------
+        -- Phase 1: Subtractive terrain
+        ----------------------------------------------------------------
 
-        -- Compute water level from percentile of feature peaks
-        local features = payload.features or {}
-        local peaks = {}
-        for _, f in ipairs(features) do
-            if f.geometry ~= "concave" and f.peakY then
-                table.insert(peaks, f.peakY)
-            end
-        end
-        if #peaks > 0 then
-            table.sort(peaks)
-            local p23Index = math.max(1, math.ceil(#peaks * 0.23))
-            local p35Index = math.max(1, math.ceil(#peaks * 0.35))
-            local p23Peak = peaks[p23Index]
-            local p35Peak = peaks[p35Index]
+        self:_syncCall("buildInventory", payload)
+        self:_syncCall("planSplines", payload)
+        self:_syncCall("buildBlockout", payload)
+        self:_syncCall("paintTerrain", payload)
+        self:_syncCall("scatterRocks", payload)
 
-            local gY = 0
-            if payload.groundFill then
-                gY = payload.groundFill.y + payload.groundFill.height / 2
-            end
-            payload.waterLevel = math.max(p23Peak, gY + 1)
-            payload.sandLevel = math.max(p35Peak, gY + 1)
-
-            if Debug then
-                Debug.info("DungeonOrchestrator",
-                    "Water P23:", string.format("%.0f", payload.waterLevel),
-                    "Sand P35:", string.format("%.0f", payload.sandLevel),
-                    "(" .. #peaks, "features)")
-            end
-        end
-
-        -- Store water/sand levels on DOM for downstream nodes
-        if payload.waterLevel then
-            Dom.setAttribute(payload.dom, "waterLevel", payload.waterLevel)
-        end
-        if payload.sandLevel then
-            Dom.setAttribute(payload.dom, "sandLevel", payload.sandLevel)
-        end
-
-        -- Mount DOM to workspace (container for future room geometry)
+        -- Mount terrain DOM to workspace
         Dom.mount(payload.dom, workspace)
         payload.container = payload.dom._instance
-
-        -- Chunk-managed terrain loading (streams voxels near player)
-        self:_syncCall("initChunks", payload)
-
-        -- Room operations: hide blockouts, air-carve, paint floors
-        -- local rooms = payload.rooms or {}
-        -- local biome = payload.biome or {}
-        -- local floorMatName = biome.terrainFloor or "Grass"
-        -- local floorMaterial = Enum.Material[floorMatName] or Enum.Material.Grass
-        -- local container = payload.container
-
-        -- -- Create VoxelBuffer spanning room bounding box (+ margin)
-        -- local rMinX, rMinY, rMinZ = math.huge, math.huge, math.huge
-        -- local rMaxX, rMaxY, rMaxZ = -math.huge, -math.huge, -math.huge
-        -- for _, room in pairs(rooms) do
-        --     local p, d = room.position, room.dims
-        --     rMinX = math.min(rMinX, p[1] - d[1]/2)
-        --     rMinY = math.min(rMinY, p[2] - d[2]/2)
-        --     rMinZ = math.min(rMinZ, p[3] - d[3]/2)
-        --     rMaxX = math.max(rMaxX, p[1] + d[1]/2)
-        --     rMaxY = math.max(rMaxY, p[2] + d[2]/2)
-        --     rMaxZ = math.max(rMaxZ, p[3] + d[3]/2)
-        -- end
-        -- local MARGIN = 20
-        -- payload.buffer = Canvas.createBuffer(
-        --     Vector3.new(rMinX - MARGIN, rMinY - MARGIN, rMinZ - MARGIN),
-        --     Vector3.new(rMaxX + MARGIN, rMaxY + MARGIN, rMaxZ + MARGIN)
-        -- )
-
-        -- if container then
-        --     for _, child in ipairs(container:GetChildren()) do
-        --         if child:IsA("Model") then
-        --             for _, part in ipairs(child:GetChildren()) do
-        --                 if part:IsA("BasePart") and part.Name:match("^RoomBlock_") then
-        --                     part.Transparency = 1
-        --                     part.CanCollide = false
-        --                 end
-        --             end
-        --         end
-        --     end
-        -- end
-
-        -- local roomCount = 0
-        -- for _, room in pairs(rooms) do
-        --     Canvas.carveInterior(room.position, room.dims, 0)
-        --     Canvas.paintFloor(room.position, room.dims, floorMaterial)
-        --     roomCount = roomCount + 1
-        -- end
-
-        -- if Debug then
-        --     Debug.info("DungeonOrchestrator",
-        --         "Room terrain: carved + painted", roomCount, "rooms")
-        -- end
-
-        -- self:_syncCall("applyDoors", payload)
-
-        -- -- Flush buffer after terminal terrain node (DoorCutter)
-        -- if payload.buffer then
-        --     payload.buffer:flush()
-        --     payload.buffer = nil
-        -- end
-
-        -- Done
         self._container = payload.container
 
+        ----------------------------------------------------------------
+        -- Phase 2: Mountain rooms (ice/outdoor biome override)
+        ----------------------------------------------------------------
+
+        local terrainDom = payload.dom
+        local savedBiome = payload.biome
+        local savedPaletteClass = payload.paletteClass
+
+        -- Override biome to ice/outdoor for room rendering
+        payload.biome = {
+            terrainStyle = "outdoor",
+            paletteClass = "palette-glacier-ice",
+            terrainWall = "Glacier",
+            terrainWallMix = "Rock",
+            terrainFloor = "Snow",
+            partWall = "Ice",
+            partFloor = "Glacier",
+            doorWallClass = "ice-wall-solid",
+            lightType = savedBiome.lightType or "PointLight",
+            lightStyle = savedBiome.lightStyle or "cave-torch-light",
+            lighting = savedBiome.lighting,
+        }
+        payload.paletteClass = "palette-glacier-ice"
+        payload.dom = Dom.createElement("Model", { Name = "Dungeon" })
+
+        self:_syncCall("placeRooms", payload)          -- MountainRoomPlacer
+        self:_syncCall("buildShells", payload)         -- ShellBuilder
+        self:_syncCall("planDoors", payload)            -- DoorPlanner
+        self:_syncCall("buildTrusses", payload)        -- TrussBuilder
+        self:_syncCall("buildLights", payload)         -- LightBuilder (skips — skipLights)
+        self:_syncCall("mount", payload)               -- Materializer
+        self:_syncCall("paintMountainRooms", payload)  -- IceTerrainPainter alias
+        self:_syncCall("applyDoors", payload)          -- DoorPlanner phase 2
+        self:_syncCall("cutDoors", payload)            -- DoorCutter alias
+
+        self._dungeonContainer = payload.container
+
+        -- Restore biome + DOM for downstream (dungeonComplete, spawn, etc.)
+        payload.biome = savedBiome
+        payload.paletteClass = savedPaletteClass
+        payload.dom = terrainDom
+
+        ----------------------------------------------------------------
+        -- Done
+        ----------------------------------------------------------------
+
         if Debug then
+            local splineCount = payload.splines and #payload.splines or 0
+            local roomCount = 0
+            if payload.rooms then
+                for _ in pairs(payload.rooms) do roomCount = roomCount + 1 end
+            end
+            local invParts = {}
+            if payload.inventory then
+                for k, v in pairs(payload.inventory) do
+                    if v > 0 then
+                        table.insert(invParts, k .. "=" .. v)
+                    end
+                end
+                table.sort(invParts)
+            end
             Debug.info("DungeonOrchestrator", "Build complete.",
-                "Rooms:", payload.roomCount or "?",
-                "Doors:", payload.doorCount or "?")
+                "Splines:", splineCount,
+                "Rooms:", roomCount,
+                "Inventory:", table.concat(invParts, " "))
         end
 
         payload._msgId = nil
@@ -245,7 +210,6 @@ return {
                 biomeName = biomeName,
                 allBiomes = allBiomes,
                 worldMap = worldMap,
-                terrainProfiles = data.terrainProfiles,
             }
 
             -- Run in background thread (task.wait in _syncCall needs yieldable context)

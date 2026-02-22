@@ -100,7 +100,7 @@ return {
             worldMap = worldMap,
             seed = seed,
             regionNum = self._regionNum,
-            terrainProfiles = config.terrainProfiles,
+            featureClasses = config.featureClasses,
         })
     end,
 
@@ -110,6 +110,70 @@ return {
             self._container = nil
         end
         workspace.Terrain:Clear()
+
+        -- Clean up minimap geometry
+        local oldGeo = game:GetService("ReplicatedStorage"):FindFirstChild("MiniMapGeo")
+        if oldGeo then oldGeo:Destroy() end
+    end,
+
+    _buildMiniMapGeo = function(self, container, mapCenter)
+        if not container then return end
+
+        local ReplicatedStorage = game:GetService("ReplicatedStorage")
+        local MINIMAP_SCALE = 1 / 100
+
+        -- Clean up previous
+        local oldGeo = ReplicatedStorage:FindFirstChild("MiniMapGeo")
+        if oldGeo then oldGeo:Destroy() end
+
+        local geoFolder = Instance.new("Folder")
+        geoFolder.Name = "MiniMapGeo"
+
+        local mcX, mcY, mcZ = mapCenter[1], mapCenter[2], mapCenter[3]
+        local cloneCount = 0
+
+        for _, roomModel in ipairs(container:GetChildren()) do
+            if not roomModel:IsA("Model") then continue end
+            local roomId = roomModel:GetAttribute("RoomId")
+            if not roomId then continue end
+
+            local roomGeo = Instance.new("Model")
+            roomGeo.Name = "Room_" .. roomId
+            roomGeo:SetAttribute("RoomId", roomId)
+
+            for _, part in ipairs(roomModel:GetChildren()) do
+                if not part:IsA("BasePart") then continue end
+                if part.Name:match("^RoomZone") then continue end
+                local isFloor = (part.Name == "Floor")
+                -- Only include floors + UnionOperations (CSG'd walls with door holes).
+                -- Plain Wall_* Parts have no holes — skip them.
+                if not isFloor and not part:IsA("UnionOperation") then continue end
+
+                local clone = part:Clone()
+                clone.Size = part.Size * MINIMAP_SCALE
+                clone.CFrame = CFrame.new(
+                    (part.Position.X - mcX) * MINIMAP_SCALE,
+                    (part.Position.Y - mcY) * MINIMAP_SCALE,
+                    (part.Position.Z - mcZ) * MINIMAP_SCALE
+                )
+                clone.Anchored = true
+                clone.CanCollide = false
+                clone.Material = Enum.Material.SmoothPlastic
+                clone.Transparency = 1
+                if clone:IsA("UnionOperation") then
+                    clone.UsePartColor = true
+                end
+                clone:SetAttribute("IsFloor", isFloor)
+                clone.Parent = roomGeo
+                cloneCount = cloneCount + 1
+            end
+
+            roomGeo.Parent = geoFolder
+        end
+
+        -- Parent last so entire tree replicates atomically
+        geoFolder.Parent = ReplicatedStorage
+        print(string.format("[WorldMapOrchestrator] MiniMapGeo: %d parts at 1/100 scale", cloneCount))
     end,
 
     _anchorAllPlayers = function(self)
@@ -217,6 +281,92 @@ return {
 
             self:_spawnAllPlayers(spawnPos)
             self:_unanchorAllPlayers()
+
+            -- Build door-face map for MiniMap: { [roomId] = { N=true, E=true, ... } }
+            local doorFaces = {}
+            for _, door in ipairs(payload.doors or {}) do
+                local roomA = payload.rooms[door.fromRoom]
+                local roomB = payload.rooms[door.toRoom]
+                if not (roomA and roomB) then continue end
+
+                if door.axis == 1 then
+                    local aFace = roomA.position[1] < roomB.position[1] and "E" or "W"
+                    local bFace = aFace == "E" and "W" or "E"
+                    doorFaces[door.fromRoom] = doorFaces[door.fromRoom] or {}
+                    doorFaces[door.fromRoom][aFace] = true
+                    doorFaces[door.toRoom] = doorFaces[door.toRoom] or {}
+                    doorFaces[door.toRoom][bFace] = true
+                elseif door.axis == 3 then
+                    local aFace = roomA.position[3] < roomB.position[3] and "N" or "S"
+                    local bFace = aFace == "N" and "S" or "N"
+                    doorFaces[door.fromRoom] = doorFaces[door.fromRoom] or {}
+                    doorFaces[door.fromRoom][aFace] = true
+                    doorFaces[door.toRoom] = doorFaces[door.toRoom] or {}
+                    doorFaces[door.toRoom][bFace] = true
+                elseif door.axis == 2 then
+                    local aFace = roomA.position[2] < roomB.position[2] and "U" or "D"
+                    local bFace = aFace == "U" and "D" or "U"
+                    doorFaces[door.fromRoom] = doorFaces[door.fromRoom] or {}
+                    doorFaces[door.fromRoom][aFace] = true
+                    doorFaces[door.toRoom] = doorFaces[door.toRoom] or {}
+                    doorFaces[door.toRoom][bFace] = true
+                end
+            end
+
+            -- Build adjacency map for MiniMap fog-of-war
+            local adjacency = {}
+            for _, door in ipairs(payload.doors or {}) do
+                adjacency[door.fromRoom] = adjacency[door.fromRoom] or {}
+                table.insert(adjacency[door.fromRoom], door.toRoom)
+                adjacency[door.toRoom] = adjacency[door.toRoom] or {}
+                table.insert(adjacency[door.toRoom], door.fromRoom)
+            end
+
+            -- Strip room data for MiniMap (position + dims only)
+            local miniMapRooms = {}
+            for roomId, room in pairs(payload.rooms or {}) do
+                miniMapRooms[roomId] = {
+                    position = room.position,
+                    dims = room.dims,
+                }
+            end
+
+            -- Compute bounds for map center (used by both server geo + client)
+            local minX, maxX = math.huge, -math.huge
+            local minY, maxY = math.huge, -math.huge
+            local minZ, maxZ = math.huge, -math.huge
+            for _, room in pairs(miniMapRooms) do
+                local p = room.position
+                local d = room.dims
+                minX = math.min(minX, p[1] - d[1]/2)
+                maxX = math.max(maxX, p[1] + d[1]/2)
+                minY = math.min(minY, p[2] - d[2]/2)
+                maxY = math.max(maxY, p[2] + d[2]/2)
+                minZ = math.min(minZ, p[3] - d[3]/2)
+                maxZ = math.max(maxZ, p[3] + d[3]/2)
+            end
+            local mapCenter = {
+                (minX + maxX) / 2,
+                (minY + maxY) / 2,
+                (minZ + maxZ) / 2,
+            }
+
+            -- Build minimap geometry server-side: clone CSG'd walls + floors at 1/100 scale
+            self:_buildMiniMapGeo(payload.container, mapCenter)
+
+            -- Send room data to MiniMap (client clones geometry from ReplicatedStorage)
+            self.Out:Fire("buildMiniMap", {
+                rooms = miniMapRooms,
+                doorFaces = doorFaces,
+                adjacency = adjacency,
+                spawnPos = spawnPos,
+                containerName = "Dungeon",
+                mapCenter = mapCenter,
+                wallThickness = self:getAttribute("wallThickness") or 2,
+            })
+
+            -- Enable map opening now that player is spawned
+            self.Out:Fire("mapReady", {})
 
             -- If this was a portal transition, signal fade-in
             if self._isTransitioning then

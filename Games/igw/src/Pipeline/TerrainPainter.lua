@@ -127,25 +127,29 @@ return {
                 end
             end
 
-            -- Carve clearance around lights
+            -- Carve clearance around lights (only if position data present)
             for _, light in ipairs(lights) do
-                local fixturePos = Vector3.new(light.position[1], light.position[2], light.position[3])
-                local fixtureSize = Vector3.new(light.size[1], light.size[2], light.size[3])
-                if buf then
-                    buf:carveMargin(CFrame.new(fixturePos), fixtureSize, 2)
-                else
-                    Canvas.carveMargin(CFrame.new(fixturePos), fixtureSize, 2)
+                if light.position and light.size then
+                    local fixturePos = Vector3.new(light.position[1], light.position[2], light.position[3])
+                    local fixtureSize = Vector3.new(light.size[1], light.size[2], light.size[3])
+                    if buf then
+                        buf:carveMargin(CFrame.new(fixturePos), fixtureSize, 2)
+                    else
+                        Canvas.carveMargin(CFrame.new(fixturePos), fixtureSize, 2)
+                    end
                 end
             end
 
-            -- Carve clearance around pads
+            -- Carve clearance around pads (only if position data present)
             for _, pad in ipairs(pads) do
-                local padPos = Vector3.new(pad.position[1], pad.position[2], pad.position[3])
-                local padSize = Vector3.new(6, 1, 6)
-                if buf then
-                    buf:carveMargin(CFrame.new(padPos), padSize, 2)
-                else
-                    Canvas.carveMargin(CFrame.new(padPos), padSize, 2)
+                if pad.position then
+                    local padPos = Vector3.new(pad.position[1], pad.position[2], pad.position[3])
+                    local padSize = Vector3.new(6, 1, 6)
+                    if buf then
+                        buf:carveMargin(CFrame.new(padPos), padSize, 2)
+                    else
+                        Canvas.carveMargin(CFrame.new(padPos), padSize, 2)
+                    end
                 end
             end
 

@@ -23,6 +23,7 @@ return {
             self._features = {}
             self._groundFill = nil
             self._biome = nil
+            self._terrainStyle = nil
             self._spawn = nil
             self._peakElevation = 0
 
@@ -191,6 +192,8 @@ return {
             features = features,
             groundFill = groundFill,
             biome = self._biome,
+            terrainStyle = self._terrainStyle,
+            seed = self._seed,
             peakElevation = self._peakElevation,
             waterLevel = self._waterLevel,
             sandLevel = self._sandLevel,
@@ -323,6 +326,8 @@ return {
             -- Store topology data
             self._features = payload.features or {}
             self._biome = payload.biome
+            self._terrainStyle = payload.terrainStyle
+            self._seed = payload.seed
             self._spawn = payload.spawn and payload.spawn.position
             self._waterLevel = payload.waterLevel  -- nil = no water
             self._sandLevel = payload.sandLevel    -- nil = no sand

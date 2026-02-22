@@ -145,6 +145,32 @@ return {
             payload.doors = doors
             payload.doorCount = #doors
 
+            -- Annotate room DOM nodes with door cut metadata (for MiniMap)
+            if payload.dom then
+                local Dom = self._System.Dom
+                local roomModels = {}
+                for _, child in ipairs(Dom.getChildren(payload.dom)) do
+                    local rid = Dom.getAttribute(child, "RoomId")
+                    if rid then roomModels[rid] = child end
+                end
+
+                for _, door in ipairs(doors) do
+                    for _, roomId in ipairs({door.fromRoom, door.toRoom}) do
+                        local rm = roomModels[roomId]
+                        if rm then
+                            local cuts = Dom.getAttribute(rm, "DoorCuts") or {}
+                            table.insert(cuts, {
+                                doorId = door.id, center = door.center,
+                                width = door.width, height = door.height,
+                                axis = door.axis, widthAxis = door.widthAxis,
+                                bottom = door.bottom,
+                            })
+                            Dom.setAttribute(rm, "DoorCuts", cuts)
+                        end
+                    end
+                end
+            end
+
             print(string.format("[DoorPlanner] Planned %d doors", #doors))
             self.Out:Fire("nodeComplete", payload)
         end,

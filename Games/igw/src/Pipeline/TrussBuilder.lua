@@ -24,6 +24,13 @@ return {
             local trusses = {}
             local trussId = 1
 
+            -- Build room DOM lookup for TrussData annotations
+            local roomModels = {}
+            for _, child in ipairs(Dom.getChildren(payload.dom)) do
+                local rid = Dom.getAttribute(child, "RoomId")
+                if rid then roomModels[rid] = child end
+            end
+
             for _, door in ipairs(doors) do
                 local roomA = rooms[door.fromRoom]
                 local roomB = rooms[door.toRoom]
@@ -44,11 +51,13 @@ return {
 
                     local trussX = door.center[1] - door.width / 2 + 1
 
+                    local ceilTrussPos = { trussX, lowerFloor + trussHeight / 2, door.center[3] }
+
                     Dom.appendChild(payload.dom, Dom.createElement("TrussPart", {
                         class = "cave-truss",
                         Name = "Truss_" .. trussId,
                         Size = { 2, trussHeight, 2 },
-                        Position = { trussX, lowerFloor + trussHeight / 2, door.center[3] },
+                        Position = ceilTrussPos,
                     }))
 
                     table.insert(trusses, {
@@ -56,6 +65,22 @@ return {
                         doorId = door.id,
                         type = "ceiling",
                     })
+
+                    -- Annotate both rooms with truss metadata
+                    for _, rid in ipairs({door.fromRoom, door.toRoom}) do
+                        local rm = roomModels[rid]
+                        if rm then
+                            local td = Dom.getAttribute(rm, "TrussData") or {}
+                            table.insert(td, {
+                                trussId = trussId, doorId = door.id,
+                                type = "ceiling",
+                                position = ceilTrussPos,
+                                size = {2, trussHeight, 2},
+                            })
+                            Dom.setAttribute(rm, "TrussData", td)
+                        end
+                    end
+
                     trussId = trussId + 1
                 else
                     -- Wall hole: check each room independently
@@ -75,7 +100,7 @@ return {
                                 door.center[3],
                             }
                             local dirToRoom = room.position[door.axis] > door.center[door.axis] and 1 or -1
-                            trussPos[door.axis] = door.center[door.axis] + dirToRoom * (wt / 2 + 1)
+                            trussPos[door.axis] = door.center[door.axis] + dirToRoom * (wt / 2 + 3)
 
                             Dom.appendChild(payload.dom, Dom.createElement("TrussPart", {
                                 class = "cave-truss",
@@ -89,6 +114,20 @@ return {
                                 doorId = door.id,
                                 type = "wall",
                             })
+
+                            -- Annotate room with truss metadata
+                            local rm = roomModels[entry.id]
+                            if rm then
+                                local td = Dom.getAttribute(rm, "TrussData") or {}
+                                table.insert(td, {
+                                    trussId = trussId, doorId = door.id,
+                                    type = "wall",
+                                    position = {trussPos[1], trussPos[2], trussPos[3]},
+                                    size = {2, dist, 2},
+                                })
+                                Dom.setAttribute(rm, "TrussData", td)
+                            end
+
                             trussId = trussId + 1
                         end
                     end

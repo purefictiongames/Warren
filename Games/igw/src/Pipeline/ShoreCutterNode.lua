@@ -43,10 +43,17 @@ return {
                 task.wait()
 
                 local terrain = workspace.Terrain
-                local lipMaterial = Enum.Material.Sand
 
-                local scanMinY = waterLevel - VOXEL * 2
-                local scanMaxY = waterLevel + VOXEL * 4
+                -- Shore material from terrainStyle, fallback to Sand
+                local shoreMat = "Sand"
+                local style = data.terrainStyle
+                if style and style.water and style.water.shoreMaterial then
+                    shoreMat = style.water.shoreMaterial
+                end
+                local lipMaterial = Enum.Material[shoreMat] or Enum.Material.Sand
+
+                local scanMinY = math.floor((waterLevel - VOXEL * 2) / VOXEL) * VOXEL
+                local scanMaxY = math.ceil((waterLevel + VOXEL * 4) / VOXEL) * VOXEL
 
                 -- Read slightly beyond chunk bounds so we can detect
                 -- shoreline at chunk edges (adjacent chunk terrain)

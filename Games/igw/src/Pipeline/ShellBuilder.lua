@@ -111,6 +111,19 @@ return {
                     RoomId = id,
                     RegionNum = regionNum,
                 }))
+
+                -- Store geometry metadata for downstream nodes (MiniMap)
+                Dom.setAttribute(roomModel, "ShellData", {
+                    wallThickness = wt,
+                    floor   = { size = {dims[1]+2*wt, wt, dims[3]+2*wt},      pos = {pos[1], pos[2]-dims[2]/2-wt/2, pos[3]} },
+                    ceiling = { size = {dims[1]+2*wt, wt, dims[3]+2*wt},      pos = {pos[1], pos[2]+dims[2]/2+wt/2, pos[3]} },
+                    walls = {
+                        N = { size = {dims[1]+2*wt, dims[2], wt}, pos = {pos[1], pos[2], pos[3]+dims[3]/2+wt/2} },
+                        S = { size = {dims[1]+2*wt, dims[2], wt}, pos = {pos[1], pos[2], pos[3]-dims[3]/2-wt/2} },
+                        E = { size = {wt, dims[2], dims[3]},      pos = {pos[1]+dims[1]/2+wt/2, pos[2], pos[3]} },
+                        W = { size = {wt, dims[2], dims[3]},      pos = {pos[1]-dims[1]/2-wt/2, pos[2], pos[3]} },
+                    },
+                })
             end
 
             self.Out:Fire("nodeComplete", payload)

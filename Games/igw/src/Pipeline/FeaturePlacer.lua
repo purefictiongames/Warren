@@ -21,16 +21,17 @@ return {
 
     In = {
         onPlaceFeatures = function(self, payload)
-            local Dom = self._System.Dom
+            local Dom = _G.Warren.Dom
 
             local featherDefault = self:getAttribute("featherDefault") or 50
             local featherScale = self:getAttribute("featherScale") or 0.3
 
             -- Walk FeatureMap children
             local featureMap = nil
-            if payload.dom and payload.dom.children then
-                for _, child in ipairs(payload.dom.children) do
-                    if child.props and child.props.Name == "FeatureMap" then
+            local root = Dom.getRoot()
+            if root then
+                for _, child in ipairs(Dom.getChildren(root)) do
+                    if Dom.getAttribute(child, "Name") == "FeatureMap" then
                         featureMap = child
                         break
                     end

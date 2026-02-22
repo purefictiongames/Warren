@@ -47,7 +47,7 @@ return {
 
     In = {
         onBuildMountain = function(self, payload)
-            local Dom = self._System.Dom
+            local Dom = _G.Warren.Dom
             local t0 = os.clock()
 
             -- Config from cascade
@@ -291,7 +291,7 @@ return {
                                 Face = face.name,
                             })
                             Dom.addClass(padNode, "mountain-pad")
-                            Dom.appendChild(payload.dom, padNode)
+                            Dom.appendChild(Dom.getRoot(), padNode)
                         end
                     end
                 end
@@ -380,7 +380,7 @@ return {
                         Color = Color3.fromRGB(rgb[1], rgb[2], rgb[3]),
                         Material = Enum.Material.SmoothPlastic,
                     })
-                    Dom.appendChild(payload.dom, wedge)
+                    Dom.appendChild(Dom.getRoot(), wedge)
                 end
             end
 
@@ -419,7 +419,7 @@ return {
                     Color = Color3.fromRGB(rgb[1], rgb[2], rgb[3]),
                     Material = Enum.Material.SmoothPlastic,
                 })
-                Dom.appendChild(payload.dom, part)
+                Dom.appendChild(Dom.getRoot(), part)
             end
 
             print(string.format(

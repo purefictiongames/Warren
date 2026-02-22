@@ -41,6 +41,12 @@ return {
 
     In = {
         onPlanSplines = function(self, payload)
+            -- Skip if VPS already computed splines
+            if payload.splines then
+                self.Out:Fire("nodeComplete", payload)
+                return
+            end
+
             local biomeConfig = payload.biomeConfig
             local inventory = payload.inventory or {}
             local spine = biomeConfig and biomeConfig.spine or {}

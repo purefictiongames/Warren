@@ -125,7 +125,7 @@ return {
 
     In = {
         onBuildPass = function(self, payload)
-            local Dom = self._System.Dom
+            local Dom = _G.Warren.Dom
             local rooms = payload.rooms
             local doors = payload.doors or {}
             local trusses = payload.trusses or {}
@@ -141,7 +141,7 @@ return {
 
             -- Find room DOM models by attribute
             local roomModels = {}
-            for _, child in ipairs(Dom.getChildren(payload.dom)) do
+            for _, child in ipairs(Dom.getChildren(Dom.getRoot())) do
                 local rid = Dom.getAttribute(child, "RoomId")
                 if rid then
                     roomModels[rid] = child
@@ -180,7 +180,7 @@ return {
                         local padId = "pad_" .. padNum
                         local padSize = {6, 1, 6}
 
-                        local parent = roomModels[roomId] or payload.dom
+                        local parent = roomModels[roomId] or Dom.getRoot()
                         local baseThickness = 1.5
 
                         -- Base

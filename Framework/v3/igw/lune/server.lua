@@ -13,8 +13,9 @@
     compute backend for:
 
         - Layout generation (LayoutBuilder + style resolution)
+        - Map generation (terrain splines, rooms, doors — VPS compute offload)
 
-    Roblox game servers call layout generation via:
+    Roblox game servers call via:
         - WarrenSDK → Registry → Lune RPC (port 8091)
 
     ============================================================================
@@ -28,6 +29,7 @@
     Environment variables:
         WARREN_AUTH_TOKEN     - Shared secret for RPC auth
         WARREN_RPC_PORT       - RPC port (default 8091)
+        WARREN_REGISTRY_URL   - Registry URL for Postgres pool backing (optional)
 
 --]]
 
@@ -47,6 +49,7 @@ local Warren = require("../../warren/src")
 local config = {
     authToken = process.env.WARREN_AUTH_TOKEN or "igw-dev-token",
     rpcPort = tonumber(process.env.WARREN_RPC_PORT) or 8091,
+    registryUrl = process.env.WARREN_REGISTRY_URL,  -- nil in dev = memory-only pool
 }
 
 --------------------------------------------------------------------------------
@@ -67,6 +70,8 @@ local net = require("@lune/net")
 local serde = require("@lune/serde")
 
 local LayoutBuilder = require("../src/Components/Layout/LayoutBuilder")
+local MapGen = require("./mapgen")
+local Pool = require("./mapgen/pool")
 local Styles = Warren.Styles
 local ClassResolver = Warren.ClassResolver
 
@@ -179,12 +184,68 @@ local function handleLayoutGenerate(payload)
 end
 
 --------------------------------------------------------------------------------
+-- MAP GENERATION (VPS compute offload — terrain, rooms, doors)
+--------------------------------------------------------------------------------
+
+local function handleMapGenerate(payload)
+    if not payload then
+        return { status = "rejected", reason = "missing_payload" }
+    end
+
+    local biomeName = payload.biomeName or "mountain"
+
+    -- Pool-first: instant if available
+    local pooled = Pool.pull(biomeName)
+    if pooled then
+        local roomCount = 0
+        if pooled.rooms then
+            for _ in pairs(pooled.rooms) do roomCount = roomCount + 1 end
+        end
+        stdio.write(string.format(
+            "[IGW] Served pooled map: biome=%s seed=%s rooms=%d (pool: %d remaining)\n",
+            biomeName, tostring(pooled.seed), roomCount, Pool.count(biomeName)
+        ))
+        return { status = "ok", mapData = pooled }
+    end
+
+    -- Fallback: generate synchronously
+    stdio.write("[IGW] Pool empty for " .. biomeName .. ", generating synchronously...\n")
+    local result = MapGen.generate(payload)
+
+    local roomCount = 0
+    if result.rooms then
+        for _ in pairs(result.rooms) do roomCount = roomCount + 1 end
+    end
+
+    stdio.write(string.format(
+        "[IGW] Generated map (sync fallback): biome=%s seed=%s splines=%d rooms=%d doors=%d\n",
+        biomeName,
+        tostring(result.seed or "?"),
+        result.splines and #result.splines or 0,
+        roomCount,
+        result.doors and #result.doors or 0
+    ))
+
+    return { status = "ok", mapData = result }
+end
+
+--------------------------------------------------------------------------------
+-- MAP POOL INIT (pre-build maps for instant serving)
+--------------------------------------------------------------------------------
+
+Pool.init({
+    registryUrl   = config.registryUrl,
+    registryToken = config.authToken,
+})
+
+--------------------------------------------------------------------------------
 -- SYNCHRONOUS RPC SERVER (Registry → Lune compute calls)
 --------------------------------------------------------------------------------
--- The Registry proxies stateless compute (layout, styles) through this endpoint.
+-- The Registry proxies stateless compute (layout, styles, mapgen) through this endpoint.
 
 local rpcHandlers = {
     ["layout.action.generate"] = handleLayoutGenerate,
+    ["mapgen.action.generate"] = handleMapGenerate,
 }
 
 net.serve(config.rpcPort, {

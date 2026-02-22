@@ -141,7 +141,7 @@ return {
 
     In = {
         onBuildPass = function(self, payload)
-            local Dom = self._System.Dom
+            local Dom = _G.Warren.Dom
             local seed = payload.seed or os.time()
             local wallThickness = self:getAttribute("wallThickness") or 1
             local gap = 2 * wallThickness
@@ -313,7 +313,7 @@ return {
                     ParentRoomId = room.parentId,
                     AttachFace = room.attachFace,
                 })
-                Dom.appendChild(payload.dom, roomModel)
+                Dom.appendChild(Dom.getRoot(), roomModel)
             end
 
             -- Attach sidecar data for downstream math

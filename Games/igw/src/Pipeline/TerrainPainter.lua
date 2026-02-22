@@ -26,11 +26,11 @@ return {
                 return
             end
 
-            local Dom = self._System.Dom
+            local Dom = _G.Warren.Dom
             local Canvas = Dom.Canvas
-            local StyleBridge = self._System.StyleBridge
-            local Styles = self._System.Styles
-            local ClassResolver = self._System.ClassResolver
+            local StyleBridge = _G.Warren.Dom.StyleBridge
+            local Styles = _G.Warren.Styles
+            local ClassResolver = _G.Warren.ClassResolver
 
             local rooms = payload.rooms
             local portalAssignments = payload.portalAssignments or {}

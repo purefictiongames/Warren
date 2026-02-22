@@ -13,7 +13,7 @@ return {
     nodes = {
         "DungeonOrchestrator",
         "InventoryNode", "SplinePlannerNode", "BlockoutNode",
-        "TerrainPainterNode", "RockScatterNode",
+        "TerrainPainterNode", "MeshTerrainPainterNode", "RockScatterNode",
         "MountainRoomPlacer", "ShellBuilder", "DoorPlanner",
         "TrussBuilder", "LightBuilder", "Materializer",
         "IceTerrainPainter", "DoorCutter",
@@ -181,7 +181,7 @@ return {
             WorldMapOrchestrator    = { "DungeonOrchestrator", "MiniMap" },
             DungeonOrchestrator     = {
                 "InventoryNode", "SplinePlannerNode", "BlockoutNode",
-                "TerrainPainterNode", "RockScatterNode",
+                "TerrainPainterNode", "MeshTerrainPainterNode", "RockScatterNode",
                 "MountainRoomPlacer", "ShellBuilder", "DoorPlanner",
                 "TrussBuilder", "LightBuilder", "Materializer",
                 "IceTerrainPainter", "DoorCutter",
@@ -191,6 +191,7 @@ return {
             SplinePlannerNode       = { "DungeonOrchestrator" },
             BlockoutNode            = { "DungeonOrchestrator" },
             TerrainPainterNode      = { "DungeonOrchestrator" },
+            MeshTerrainPainterNode  = { "DungeonOrchestrator" },
             RockScatterNode         = { "DungeonOrchestrator" },
             MountainRoomPlacer      = { "DungeonOrchestrator" },
             ShellBuilder            = { "DungeonOrchestrator" },
@@ -205,7 +206,13 @@ return {
     },
 
     -- DungeonOrchestrator is now a pipeline node (receives everything via signal)
-    DungeonOrchestrator = {},
+    DungeonOrchestrator = {
+        -- "warren" = VPS compute (Lune server), "roblox" = local compute on game server
+        computeTarget = "warren",
+        -- "voxel" = Roblox terrain voxels (4-stud resolution)
+        -- "mesh"  = EditableMesh chunks (smooth, 8-stud vertex spacing)
+        terrainRenderer = "voxel",
+    },
 
     ---------------------------------------------------------------------------
     -- Per-node config (JavaFX "type selectors" — Level 2)
@@ -236,6 +243,15 @@ return {
         noiseScale1 = 400,     -- octave 1 wavelength
         noiseScale2 = 160,     -- octave 2 wavelength
         noiseRatio = 0.65,     -- octave 1 weight
+    },
+
+    MeshTerrainPainterNode = {
+        mapWidth = 4000,
+        mapDepth = 4000,
+        groundY = 0,
+        chunkSize = 512,
+        vertexSpacing = 8,
+        maxConcurrency = 8,
     },
 
     MountainRoomPlacer = {

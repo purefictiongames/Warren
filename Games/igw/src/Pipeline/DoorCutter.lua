@@ -18,7 +18,7 @@ return {
     },
 
     _cutDoors = function(self, payload)
-        local Dom = self._System.Dom
+        local Dom = _G.Warren.Dom
         local Canvas = Dom.Canvas
         local doors = payload.doors or {}
         local biome = payload.biome or {}
@@ -30,7 +30,7 @@ return {
 
         -- Build room model lookup from DOM
         local roomModels = {}
-        for _, child in ipairs(Dom.getChildren(payload.dom)) do
+        for _, child in ipairs(Dom.getChildren(Dom.getRoot())) do
             local rid = Dom.getAttribute(child, "RoomId")
             if rid then
                 roomModels[rid] = child

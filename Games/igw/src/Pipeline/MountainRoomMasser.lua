@@ -157,7 +157,7 @@ return {
 
     In = {
         onBuildRooms = function(self, payload)
-            local Dom = self._System.Dom
+            local Dom = _G.Warren.Dom
             local t0 = os.clock()
 
             local mountain = payload.mountain or {}
@@ -184,7 +184,7 @@ return {
             ----------------------------------------------------------------
 
             local pads = {}
-            for _, child in ipairs(Dom.getChildren(payload.dom)) do
+            for _, child in ipairs(Dom.getChildren(Dom.getRoot())) do
                 if Dom.hasClass(child, "mountain-pad") then
                     table.insert(pads, {
                         domNode = child,
@@ -529,7 +529,7 @@ return {
                     Material = Enum.Material.SmoothPlastic,
                 })
                 Dom.appendChild(roomModel, part)
-                Dom.appendChild(payload.dom, roomModel)
+                Dom.appendChild(Dom.getRoot(), roomModel)
             end
 
             ----------------------------------------------------------------

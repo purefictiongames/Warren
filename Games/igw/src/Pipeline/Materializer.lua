@@ -17,7 +17,7 @@ return {
     In = {
         onMount = function(self, payload)
             local t0 = os.clock()
-            local Dom = self._System.Dom
+            local Dom = _G.Warren.Dom
 
             -- Remove existing dungeon SpawnLocations from workspace
             for _, child in ipairs(workspace:GetChildren()) do
@@ -27,10 +27,11 @@ return {
             end
 
             -- Mount the entire DOM tree into workspace
-            Dom.mount(payload.dom, workspace)
+            local root = Dom.getRoot()
+            Dom.mount(root, workspace)
 
             -- Store the container Instance for downstream nodes
-            payload.container = payload.dom._instance
+            payload.container = root._instance
 
             print(string.format("[Materializer] DOM mounted (%.2fs)", os.clock() - t0))
 

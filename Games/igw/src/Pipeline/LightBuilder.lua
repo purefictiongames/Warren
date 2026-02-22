@@ -29,7 +29,7 @@ return {
                 return
             end
 
-            local Dom = self._System.Dom
+            local Dom = _G.Warren.Dom
             local rooms = payload.rooms
             local doors = payload.doors or {}
             local paletteClass = payload.paletteClass or ""
@@ -72,7 +72,7 @@ return {
 
             -- Find room DOM models by attribute
             local roomModels = {}
-            for _, child in ipairs(Dom.getChildren(payload.dom)) do
+            for _, child in ipairs(Dom.getChildren(Dom.getRoot())) do
                 local rid = Dom.getAttribute(child, "RoomId")
                 if rid then
                     roomModels[rid] = child
@@ -137,7 +137,7 @@ return {
                     spacerOffset = { 0, 0, wallDir[3] * (lightSize[3]/2 + spacerThickness/2) }
                 end
 
-                local parent = roomModels[id] or payload.dom
+                local parent = roomModels[id] or Dom.getRoot()
 
                 -- Spacer
                 Dom.appendChild(parent, Dom.createElement("Part", {

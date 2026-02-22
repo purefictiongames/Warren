@@ -113,6 +113,41 @@ return {
         -- Plan phase: compute door positions from room geometry
         --------------------------------------------------------------------
         onPlanDoors = function(self, payload)
+            local Dom = _G.Warren.Dom
+
+            -- Skip if VPS already computed doors (phase 1)
+            if payload.doors and #payload.doors > 0 then
+                -- Still annotate DOM nodes with door cut metadata (for MiniMap)
+                if Dom.getRoot() then
+                    local roomModels = {}
+                    for _, child in ipairs(Dom.getChildren(Dom.getRoot())) do
+                        local rid = Dom.getAttribute(child, "RoomId")
+                        if rid then roomModels[rid] = child end
+                    end
+
+                    for _, door in ipairs(payload.doors) do
+                        for _, roomId in ipairs({door.fromRoom, door.toRoom}) do
+                            local rm = roomModels[roomId]
+                            if rm then
+                                local cuts = Dom.getAttribute(rm, "DoorCuts") or {}
+                                table.insert(cuts, {
+                                    doorId = door.id, center = door.center,
+                                    width = door.width, height = door.height,
+                                    axis = door.axis, widthAxis = door.widthAxis,
+                                    bottom = door.bottom,
+                                })
+                                Dom.setAttribute(rm, "DoorCuts", cuts)
+                            end
+                        end
+                    end
+                end
+
+                payload.doorCount = #payload.doors
+                print(string.format("[DoorPlanner] Using VPS doors: %d", #payload.doors))
+                self.Out:Fire("nodeComplete", payload)
+                return
+            end
+
             local rooms = payload.rooms or {}
             local wt = self:getAttribute("wallThickness") or 1
             local doorSize = self:getAttribute("doorSize") or 12
@@ -146,10 +181,9 @@ return {
             payload.doorCount = #doors
 
             -- Annotate room DOM nodes with door cut metadata (for MiniMap)
-            if payload.dom then
-                local Dom = self._System.Dom
+            if Dom.getRoot() then
                 local roomModels = {}
-                for _, child in ipairs(Dom.getChildren(payload.dom)) do
+                for _, child in ipairs(Dom.getChildren(Dom.getRoot())) do
                     local rid = Dom.getAttribute(child, "RoomId")
                     if rid then roomModels[rid] = child end
                 end
@@ -179,7 +213,7 @@ return {
         -- Apply phase: carve terrain + disable wall collision
         --------------------------------------------------------------------
         onApplyDoors = function(self, payload)
-            local Dom = self._System.Dom
+            local Dom = _G.Warren.Dom
             local Canvas = Dom.Canvas
             local doors = payload.doors or {}
             local container = payload.container

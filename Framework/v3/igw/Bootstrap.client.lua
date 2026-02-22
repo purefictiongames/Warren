@@ -49,8 +49,9 @@ Log.configure({ backend = "Memory" })
 Debug.info("Bootstrap", manifest.name .. " v" .. manifest.version .. " — client starting")
 Log.init()
 
+_G.Warren = Warren
+
 if RunService:IsStudio() then
-    _G.Warren = Warren
     _G.Debug = Debug
     _G.IPC = IPC
 end

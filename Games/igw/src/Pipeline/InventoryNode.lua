@@ -22,8 +22,14 @@ return {
 
     In = {
         onBuildInventory = function(self, payload)
-            local ClassResolver = self._System.ClassResolver
-            local BiomeInventory = require(script.Parent.Parent.BiomeInventory)
+            -- Skip if VPS already computed inventory
+            if payload.biomeConfig and payload.inventory then
+                self.Out:Fire("nodeComplete", payload)
+                return
+            end
+
+            local ClassResolver = _G.Warren.ClassResolver
+            local BiomeInventory = _G.Warren.System.BiomeInventory
 
             local biomeName = payload.biomeName or "mountain"
             local seed = (payload.seed or os.time()) + 4217

@@ -38,7 +38,7 @@ return {
 
     In = {
         onBuildLights = function(self, payload)
-            local Dom = self._System.Dom
+            local Dom = _G.Warren.Dom
             local rooms = payload.rooms
             local mountain = payload.mountain or {}
             local biome = payload.biome or {}
@@ -51,7 +51,7 @@ return {
 
             -- Find room DOM models by attribute
             local roomModels = {}
-            for _, child in ipairs(Dom.getChildren(payload.dom)) do
+            for _, child in ipairs(Dom.getChildren(Dom.getRoot())) do
                 local rid = Dom.getAttribute(child, "RoomId")
                 if rid then
                     roomModels[rid] = child
@@ -73,7 +73,7 @@ return {
                     room.position[3],
                 }
 
-                local parent = roomModels[id] or payload.dom
+                local parent = roomModels[id] or Dom.getRoot()
 
                 local fixture = Dom.createElement("Part", {
                     class = "cave-light-fixture " .. paletteClass,

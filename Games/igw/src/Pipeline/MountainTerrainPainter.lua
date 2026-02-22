@@ -16,7 +16,7 @@ return {
 
     In = {
         onPaintTerrain = function(self, payload)
-            local Dom = self._System.Dom
+            local Dom = _G.Warren.Dom
             local Canvas = Dom.Canvas
             local t0 = os.clock()
 

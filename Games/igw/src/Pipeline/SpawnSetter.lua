@@ -22,7 +22,7 @@ return {
 
     In = {
         onBuildPass = function(self, payload)
-            local Dom = self._System.Dom
+            local Dom = _G.Warren.Dom
             local rooms = payload.rooms
             local doors = payload.doors or {}
 
@@ -54,7 +54,7 @@ return {
             if spawnRoom then
                 local floorY = spawnRoom.position[2] - spawnRoom.dims[2] / 2 + 3
 
-                Dom.appendChild(payload.dom, Dom.createElement("SpawnLocation", {
+                Dom.appendChild(Dom.getRoot(), Dom.createElement("SpawnLocation", {
                     class = "cave-spawn",
                     Name = "Spawn_Region_" .. (payload.regionNum or 1),
                     Size = { 6, 1, 6 },

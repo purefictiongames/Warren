@@ -44,7 +44,7 @@ return {
 
     In = {
         onBuildBlockout = function(self, payload)
-            local Dom = self._System.Dom
+            local Dom = _G.Warren.Dom
             local showBlockout = self:getAttribute("showBlockout")
             if showBlockout == nil then showBlockout = true end
             local groundY = self:getAttribute("groundY") or 0
@@ -59,7 +59,7 @@ return {
             local blockoutFolder = Dom.createElement("Folder", {
                 Name = "Blockout",
             })
-            Dom.appendChild(payload.dom, blockoutFolder)
+            Dom.appendChild(Dom.getRoot(), blockoutFolder)
 
             local partCount = 0
             local featurePartCount = 0

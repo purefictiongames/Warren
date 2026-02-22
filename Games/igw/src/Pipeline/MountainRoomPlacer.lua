@@ -99,8 +99,41 @@ return {
 
     In = {
         onPlaceRooms = function(self, payload)
-            local Dom = self._System.Dom
+            local Dom = _G.Warren.Dom
             local t0 = os.clock()
+
+            ----------------------------------------------------------------
+            -- Skip BFS if VPS already computed rooms; create DOM from data
+            ----------------------------------------------------------------
+
+            if payload.rooms and payload.doors then
+                -- Create DOM room Models from VPS room data
+                for id, room in pairs(payload.rooms) do
+                    local roomModel = Dom.createElement("Model", {
+                        Name = "Room_" .. id,
+                        RoomId = id,
+                        RoomPosition = room.position,
+                        RoomDims = room.dims,
+                        ParentRoomId = room.parentId,
+                        AttachFace = room.attachFace,
+                    })
+                    Dom.appendChild(Dom.getRoot(), roomModel)
+                end
+
+                payload.portalAssignments = {}
+                local roomCount = 0
+                for _ in pairs(payload.rooms) do roomCount = roomCount + 1 end
+                payload.roomCount = roomCount
+                payload.doorCount = #payload.doors
+
+                print(string.format(
+                    "[MountainRoomPlacer] Using VPS data: %d rooms, %d doors — %.2fs",
+                    roomCount, #payload.doors, os.clock() - t0
+                ))
+
+                self.Out:Fire("nodeComplete", payload)
+                return
+            end
 
             ----------------------------------------------------------------
             -- Height field from payload
@@ -347,7 +380,7 @@ return {
                     ParentRoomId = room.parentId,
                     AttachFace = room.attachFace,
                 })
-                Dom.appendChild(payload.dom, roomModel)
+                Dom.appendChild(Dom.getRoot(), roomModel)
             end
 
             ----------------------------------------------------------------

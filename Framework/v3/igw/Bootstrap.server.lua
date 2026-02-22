@@ -57,6 +57,9 @@ local Asset = Warren.System.Asset
 local IPC = Warren.System.IPC
 local ClassResolver = Warren.ClassResolver
 
+-- Inject game-specific data modules onto System for dual-runtime nodes
+Warren.System.BiomeInventory = require(ReplicatedStorage.Components.BiomeInventory)
+
 --------------------------------------------------------------------------------
 -- CONFIGURATION
 --------------------------------------------------------------------------------
@@ -82,8 +85,9 @@ Log.init()
 -- STUDIO CLI ACCESS
 --------------------------------------------------------------------------------
 
+_G.Warren = Warren
+
 if RunService:IsStudio() then
-    _G.Warren = Warren
     _G.Node = Node
     _G.Debug = Debug
     _G.Log = Log

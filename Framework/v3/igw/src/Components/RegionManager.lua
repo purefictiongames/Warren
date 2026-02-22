@@ -325,7 +325,7 @@ local RegionManager = Node.extend(function(parent)
     local function cleanupState(self)
         local state = getState(self)
         -- Despawn all JumpPad instances via IPC
-        local IPC = self._System and self._System.IPC
+        local IPC = Warren.System.IPC
         if IPC then
             for _, padId in ipairs(state.jumpPadIds) do
                 IPC.despawn(padId)
@@ -556,7 +556,7 @@ local RegionManager = Node.extend(function(parent)
 
         local success = persistSave(player.UserId, saveData)
 
-        local System = self._System
+        local System = Warren.System
         if success then
             if System and System.Debug then
                 System.Debug.info("RegionManager", "Saved data for", player.Name)
@@ -604,7 +604,7 @@ local RegionManager = Node.extend(function(parent)
                         savedRegion.padCount or 2
                     )
 
-                    local System = self._System
+                    local System = Warren.System
                     if System and System.Debug then
                         System.Debug.info("RegionManager", "Regenerated", regionId,
                             "from seed", savedRegion.seed)
@@ -639,7 +639,7 @@ local RegionManager = Node.extend(function(parent)
             state.visitedRooms[player] = normalizeVisitedRooms(data.visitedRooms)
         end
 
-        local System = self._System
+        local System = Warren.System
         if System and System.Debug then
             System.Debug.info("RegionManager", "Loaded data for", player.Name,
                 "- regions:", state.regionCount)
@@ -758,7 +758,7 @@ local RegionManager = Node.extend(function(parent)
     local function createJumpPadsForRegion(self, regionId, container)
         local state = getState(self)
         local region = state.regions[regionId]
-        local IPC = self._System and self._System.IPC
+        local IPC = Warren.System.IPC
 
         if not region or not region.layout or not region.layout.pads then return end
         if not IPC then
@@ -805,7 +805,7 @@ local RegionManager = Node.extend(function(parent)
     local function destroyJumpPadsForRegion(self, regionId)
         local state = getState(self)
         local region = state.regions[regionId]
-        local IPC = self._System and self._System.IPC
+        local IPC = Warren.System.IPC
 
         if not IPC then return end
 
@@ -957,7 +957,7 @@ local RegionManager = Node.extend(function(parent)
         }
 
         -- Anchor player to prevent movement/physics during transition
-        self._System.Player.anchorPlayer(player)
+        Warren.System.Player.anchorPlayer(player)
 
         -- Fire transition start signal to client (routed via IPC wiring)
         self.Out:Fire("transitionStart", {
@@ -1189,7 +1189,7 @@ local RegionManager = Node.extend(function(parent)
         -- Player anchoring during title screen is handled by System.Player
         -- (anchor=true in view def + CharacterAdded re-anchoring)
 
-        local System = self._System
+        local System = Warren.System
         if System and System.Debug then
             System.Debug.info("RegionManager", "Title diorama built")
         end
@@ -1224,7 +1224,7 @@ local RegionManager = Node.extend(function(parent)
             isLoaded = false,
         }
 
-        local System = self._System
+        local System = Warren.System
         if System and System.Debug then
             System.Debug.info("RegionManager", "Title diorama destroyed")
         end
@@ -1395,7 +1395,7 @@ local RegionManager = Node.extend(function(parent)
         state.lobby.pads = pads
         state.lobby.padDomNodes = padDomNodes
 
-        local System = self._System
+        local System = Warren.System
         if System and System.Debug then
             System.Debug.info("RegionManager", "Lobby built: single hall "
                 .. LOBBY_HALL_WIDTH .. "x" .. LOBBY_HALL_HEIGHT .. "x" .. LOBBY_HALL_DEPTH
@@ -1443,7 +1443,7 @@ local RegionManager = Node.extend(function(parent)
             padDomNodes = nil,
         }
 
-        local System = self._System
+        local System = Warren.System
         if System and System.Debug then
             System.Debug.info("RegionManager", "Lobby destroyed")
         end
@@ -1458,7 +1458,7 @@ local RegionManager = Node.extend(function(parent)
 
     local function registerViews(self)
         local state = getState(self)
-        local System = self._System
+        local System = Warren.System
 
         System.Player.registerView("title", {
             anchor = true,
@@ -1600,7 +1600,7 @@ local RegionManager = Node.extend(function(parent)
         end
 
         -- Re-anchor at new position to ensure they stay put until transition completes
-        self._System.Player.anchorPlayer(player)
+        Warren.System.Player.anchorPlayer(player)
 
         -- Set as active
         state.regions[newRegionId].isActive = true
@@ -1671,7 +1671,7 @@ local RegionManager = Node.extend(function(parent)
         teleportPlayerToPad(self, targetRegionId, targetPadId, player)
 
         -- Re-anchor at new position to ensure they stay put until transition completes
-        self._System.Player.anchorPlayer(player)
+        Warren.System.Player.anchorPlayer(player)
 
         -- Set as active
         targetRegion.isActive = true
@@ -1727,7 +1727,7 @@ local RegionManager = Node.extend(function(parent)
 
         -- Get JumpPad instance via IPC and set this player to spawnIn mode
         local qualifiedPadId = regionId .. "_" .. padId
-        local IPC = self._System and self._System.IPC
+        local IPC = Warren.System.IPC
         local jumpPad = IPC and IPC.getInstance(qualifiedPadId)
 
         if jumpPad then
@@ -1804,7 +1804,7 @@ local RegionManager = Node.extend(function(parent)
 
                 local state = getState(self)
                 local player = data.player
-                local System = self._System
+                local System = Warren.System
                 if System and System.Debug then
                     System.Debug.info("RegionManager", "Start pressed by", player.Name)
                 end
@@ -1919,7 +1919,7 @@ local RegionManager = Node.extend(function(parent)
                 end
 
                 local player = data.player
-                local System = self._System
+                local System = Warren.System
                 if System and System.Debug then
                     System.Debug.info("RegionManager", "Clearing saved data for", player.Name)
                 end
@@ -1949,7 +1949,7 @@ local RegionManager = Node.extend(function(parent)
                 end
 
                 local player = data.player
-                local System = self._System
+                local System = Warren.System
                 if System and System.Debug then
                     System.Debug.info("RegionManager", "Lobby pressed by", player.Name)
                 end
@@ -1982,7 +1982,7 @@ local RegionManager = Node.extend(function(parent)
                 end
 
                 local player = data.player
-                local System = self._System
+                local System = Warren.System
                 if System and System.Debug then
                     System.Debug.info("RegionManager", "Exit lobby to title by", player.Name)
                 end
@@ -2029,7 +2029,7 @@ local RegionManager = Node.extend(function(parent)
                     return
                 end
 
-                local System = self._System
+                local System = Warren.System
 
                 -- Handle exit-to-title transition
                 if pending.isExitToTitle then
@@ -2106,7 +2106,7 @@ local RegionManager = Node.extend(function(parent)
                 local player = data.player
                 local pending = state.pendingTransitions[player]
 
-                local System = self._System
+                local System = Warren.System
                 if System and System.Debug then
                     System.Debug.info("RegionManager", "Fade-in complete for", player.Name, "- ending transition")
                 end
@@ -2149,7 +2149,7 @@ local RegionManager = Node.extend(function(parent)
                 end
 
                 -- Unanchor player
-                self._System.Player.unanchorPlayer(player)
+                Warren.System.Player.unanchorPlayer(player)
 
                 -- Clear pending transition
                 state.pendingTransitions[player] = nil
@@ -2264,7 +2264,7 @@ local RegionManager = Node.extend(function(parent)
 
                 if not pending then return end
 
-                local System = self._System
+                local System = Warren.System
                 if System and System.Debug then
                     System.Debug.info("RegionManager", "MiniMap ready for", player.Name)
                 end
@@ -2296,7 +2296,7 @@ local RegionManager = Node.extend(function(parent)
                 local state = getState(self)
                 local player = data.player
 
-                local System = self._System
+                local System = Warren.System
                 if System and System.Debug then
                     System.Debug.info("RegionManager", "Exit to title requested by", player.Name)
                 end
@@ -2338,7 +2338,7 @@ local RegionManager = Node.extend(function(parent)
                 local state = getState(self)
                 local player = data.player
 
-                local System = self._System
+                local System = Warren.System
                 if System and System.Debug then
                     System.Debug.info("RegionManager", "Exit to lobby requested by", player.Name)
                 end
@@ -2379,13 +2379,13 @@ local RegionManager = Node.extend(function(parent)
         -- Build the title diorama (called from Bootstrap after configure)
         -- DEPRECATED: Use System.Player.preload("title") instead
         buildTitleDiorama = function(self)
-            self._System.Player.preload("title")
+            Warren.System.Player.preload("title")
         end,
 
         -- Enter lobby directly (for TeleportData re-entry)
         -- DEPRECATED: Use System.Player.transitionTo(player, "lobby") instead
         enterLobbyDirectly = function(self, player)
-            self._System.Player.transitionTo(player, "lobby")
+            Warren.System.Player.transitionTo(player, "lobby")
         end,
 
         -- Start the dungeon for a player (loads existing or creates new)
@@ -2402,7 +2402,7 @@ local RegionManager = Node.extend(function(parent)
             local skipLoad = state.skipDataLoad and state.skipDataLoad[player]
             if skipLoad then
                 state.skipDataLoad[player] = nil  -- Clear the flag
-                local System = self._System
+                local System = Warren.System
                 if System and System.Debug then
                     System.Debug.info("RegionManager", "Skipping DataStore load for", player.Name, "(data was cleared)")
                 end
@@ -2423,7 +2423,7 @@ local RegionManager = Node.extend(function(parent)
 
                     activeRegion.isActive = true
 
-                    local System = self._System
+                    local System = Warren.System
                     if System and System.Debug then
                         System.Debug.info("RegionManager", "Resumed from save - region:",
                             state.activeRegionId, "total regions:", state.regionCount)
@@ -2574,7 +2574,7 @@ local RegionManager = Node.extend(function(parent)
             local success = persistClear(player.UserId)
 
             if success then
-                local System = self._System
+                local System = Warren.System
                 if System and System.Debug then
                     System.Debug.info("RegionManager", "Cleared save data for", player.Name)
                 end

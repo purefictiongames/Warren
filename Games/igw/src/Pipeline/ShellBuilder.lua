@@ -15,7 +15,7 @@ return {
 
     In = {
         onBuildShells = function(self, payload)
-            local Dom = self._System.Dom
+            local Dom = _G.Warren.Dom
             local rooms = payload.rooms
             local paletteClass = payload.paletteClass or ""
             local wt = self:getAttribute("wallThickness") or 1
@@ -25,7 +25,7 @@ return {
 
             -- Find room DOM Models by name
             local roomModels = {}
-            for _, child in ipairs(Dom.getChildren(payload.dom)) do
+            for _, child in ipairs(Dom.getChildren(Dom.getRoot())) do
                 local roomId = Dom.getAttribute(child, "RoomId")
                 if roomId then
                     roomModels[roomId] = child

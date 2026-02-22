@@ -60,6 +60,9 @@ Dom.StyleBridge = require(script.StyleBridge)
 Dom.Canvas = require(script.Canvas)
 Dom.VoxelBuffer = require(script.VoxelBuffer)
 
+-- Active document root (shared state — like `document` in the browser)
+local _root = nil
+
 --------------------------------------------------------------------------------
 -- ELEMENT CREATION
 --------------------------------------------------------------------------------
@@ -532,6 +535,30 @@ function Dom.getClasses(node)
 end
 
 --------------------------------------------------------------------------------
+-- DOCUMENT ROOT
+--------------------------------------------------------------------------------
+
+--[[
+    Set the active document root. Like `document` in the browser — shared
+    state that all nodes access via Dom.getRoot() instead of passing the DOM
+    tree through function parameters.
+
+    @param node table - DomNode to use as root
+]]
+function Dom.setRoot(node)
+    _root = node
+end
+
+--[[
+    Get the active document root.
+
+    @return table - Current root DomNode
+]]
+function Dom.getRoot()
+    return _root
+end
+
+--------------------------------------------------------------------------------
 -- LIFECYCLE
 --------------------------------------------------------------------------------
 
@@ -667,6 +694,7 @@ end
 function Dom._reset()
     DomTree.reset()
     DomNode._resetIdCounter()
+    _root = nil
 end
 
 return Dom

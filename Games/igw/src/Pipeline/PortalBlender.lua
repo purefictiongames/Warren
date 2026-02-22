@@ -41,7 +41,7 @@ return {
 
     In = {
         onBuildPass = function(self, payload)
-            local Dom = self._System.Dom
+            local Dom = _G.Warren.Dom
             local Canvas = Dom.Canvas
             local rooms = payload.rooms
             local doors = payload.doors or {}
@@ -82,9 +82,9 @@ return {
                 end
 
                 -- Set material colors using target biome palette
-                local StyleBridge = self._System.StyleBridge
-                local Styles = self._System.Styles
-                local ClassResolver = self._System.ClassResolver
+                local StyleBridge = _G.Warren.Dom.StyleBridge
+                local Styles = _G.Warren.Styles
+                local ClassResolver = _G.Warren.ClassResolver
                 local targetPalette = StyleBridge.resolvePalette(
                     targetBiome.paletteClass or "", Styles, ClassResolver
                 )

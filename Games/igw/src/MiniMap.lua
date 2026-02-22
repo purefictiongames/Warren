@@ -239,7 +239,7 @@ return {
     ------------------------------------------------------------------------
 
     _startInput = function(self)
-        local InputCapture = self._System and self._System.InputCapture
+        local InputCapture = _G.Warren.System.InputCapture
         if InputCapture then
             self._inputClaim = InputCapture.claim({}, {
                 sinkMovement = true,

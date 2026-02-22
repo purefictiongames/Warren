@@ -6,6 +6,8 @@ import { auth } from "./routes/auth.js";
 import { usage } from "./routes/usage.js";
 import { rpc, registerModule } from "./routes/rpc.js";
 import { layoutModule } from "./modules/layout.js";
+import { mapgenModule } from "./modules/mapgen.js";
+import { poolRoutes } from "./routes/pool.js";
 
 const app = new Hono();
 
@@ -18,9 +20,11 @@ app.get("/health", (c) => c.json({ status: "ok" }));
 app.route("/v1/auth", auth);
 app.route("/v1/usage", usage);
 app.route("/v1/rpc", rpc);
+app.route("/v1/pool", poolRoutes);
 
 // --- Warren modules ---
 registerModule("Layout", layoutModule);
+registerModule("MapGen", mapgenModule);
 
 // 404 fallback
 app.notFound((c) =>

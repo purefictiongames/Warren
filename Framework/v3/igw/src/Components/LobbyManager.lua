@@ -157,7 +157,7 @@ local LobbyManager = Node.extend(function(parent)
 
     local function startCountdown(self, padId)
         local state = getState(self)
-        local System = self._System
+        local System = Warren.System
         local placeId = PlaceGraph.getPlace("gameplay").placeId
 
         -- Already counting down?
@@ -343,7 +343,7 @@ local LobbyManager = Node.extend(function(parent)
             -- Add player (first body part contact)
             table.insert(occupants, player)
 
-            local System = self._System
+            local System = Warren.System
             if System and System.Debug then
                 System.Debug.info("LobbyManager", player.Name, "stepped on pad", padId, "(" .. #occupants .. "/" .. MAX_PLAYERS_PER_PAD .. ")")
             end
@@ -392,7 +392,7 @@ local LobbyManager = Node.extend(function(parent)
                 removePlayerFromPad(state, padId, player)
                 local occupants = state.padOccupants[padId]
 
-                local System = self._System
+                local System = Warren.System
                 if System and System.Debug then
                     System.Debug.info("LobbyManager", player.Name, "left pad", padId, "(" .. #occupants .. "/" .. MAX_PLAYERS_PER_PAD .. ")")
                 end
@@ -471,7 +471,7 @@ local LobbyManager = Node.extend(function(parent)
                     wirePad(self, padInfo.id, padInfo.part)
                 end
 
-                local System = self._System
+                local System = Warren.System
                 if System and System.Debug then
                     System.Debug.info("LobbyManager", "Wired", #data.pads, "portal pads")
                 end

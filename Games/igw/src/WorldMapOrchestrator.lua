@@ -111,6 +111,10 @@ return {
         end
         workspace.Terrain:Clear()
 
+        -- Clean up mesh terrain (EditableMesh renderer)
+        local meshTerrain = workspace:FindFirstChild("MeshTerrain")
+        if meshTerrain then meshTerrain:Destroy() end
+
         -- Clean up minimap geometry
         local oldGeo = game:GetService("ReplicatedStorage"):FindFirstChild("MiniMapGeo")
         if oldGeo then oldGeo:Destroy() end
@@ -214,7 +218,7 @@ return {
         onDungeonComplete = function(self, payload)
             print(string.format("[WorldMapOrchestrator] onDungeonComplete received (region %d)",
                 self._regionNum))
-            local Debug = self._System and self._System.Debug
+            local Debug = _G.Warren.System.Debug
             self._container = payload.container
 
             -- Build portal room list from assignments

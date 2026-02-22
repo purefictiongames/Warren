@@ -16,7 +16,7 @@ return {
 
     In = {
         onBuildTrusses = function(self, payload)
-            local Dom = self._System.Dom
+            local Dom = _G.Warren.Dom
             local rooms = payload.rooms
             local doors = payload.doors or {}
             local floorThreshold = self:getAttribute("floorThreshold") or 6.5
@@ -26,7 +26,7 @@ return {
 
             -- Build room DOM lookup for TrussData annotations
             local roomModels = {}
-            for _, child in ipairs(Dom.getChildren(payload.dom)) do
+            for _, child in ipairs(Dom.getChildren(Dom.getRoot())) do
                 local rid = Dom.getAttribute(child, "RoomId")
                 if rid then roomModels[rid] = child end
             end
@@ -53,7 +53,7 @@ return {
 
                     local ceilTrussPos = { trussX, lowerFloor + trussHeight / 2, door.center[3] }
 
-                    Dom.appendChild(payload.dom, Dom.createElement("TrussPart", {
+                    Dom.appendChild(Dom.getRoot(), Dom.createElement("TrussPart", {
                         class = "cave-truss",
                         Name = "Truss_" .. trussId,
                         Size = { 2, trussHeight, 2 },
@@ -102,7 +102,7 @@ return {
                             local dirToRoom = room.position[door.axis] > door.center[door.axis] and 1 or -1
                             trussPos[door.axis] = door.center[door.axis] + dirToRoom * (wt / 2 + 3)
 
-                            Dom.appendChild(payload.dom, Dom.createElement("TrussPart", {
+                            Dom.appendChild(Dom.getRoot(), Dom.createElement("TrussPart", {
                                 class = "cave-truss",
                                 Name = "Truss_" .. trussId,
                                 Size = { 2, dist, 2 },

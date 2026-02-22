@@ -72,6 +72,7 @@ local serde = require("@lune/serde")
 local LayoutBuilder = require("../src/Components/Layout/LayoutBuilder")
 local MapGen = require("./mapgen")
 local Pool = require("./mapgen/pool")
+local WorldManager = require("./mapgen/worldmanager")
 local Styles = Warren.Styles
 local ClassResolver = Warren.ClassResolver
 
@@ -230,6 +231,42 @@ local function handleMapGenerate(payload)
 end
 
 --------------------------------------------------------------------------------
+-- WORLD MANAGEMENT (chunked serving — WorldManager wraps MapGen + Chunker)
+--------------------------------------------------------------------------------
+
+local function handleWorldCreate(payload)
+    if not payload then
+        return { status = "rejected", reason = "missing_payload" }
+    end
+
+    local biomeName = payload.biomeName or "mountain"
+    local worldId, global = WorldManager.createWorld(biomeName)
+
+    return { status = "ok", worldId = worldId, global = global }
+end
+
+local function handleWorldGetChunks(payload)
+    if not payload or not payload.worldId then
+        return { status = "rejected", reason = "missing_worldId" }
+    end
+    if not payload.coords then
+        return { status = "rejected", reason = "missing_coords" }
+    end
+
+    local chunks = WorldManager.getChunks(payload.worldId, payload.coords)
+    return { status = "ok", chunks = chunks }
+end
+
+local function handleWorldDestroy(payload)
+    if not payload or not payload.worldId then
+        return { status = "rejected", reason = "missing_worldId" }
+    end
+
+    WorldManager.destroyWorld(payload.worldId)
+    return { status = "ok" }
+end
+
+--------------------------------------------------------------------------------
 -- MAP POOL INIT (pre-build maps for instant serving)
 --------------------------------------------------------------------------------
 
@@ -244,8 +281,11 @@ Pool.init({
 -- The Registry proxies stateless compute (layout, styles, mapgen) through this endpoint.
 
 local rpcHandlers = {
-    ["layout.action.generate"] = handleLayoutGenerate,
-    ["mapgen.action.generate"] = handleMapGenerate,
+    ["layout.action.generate"]  = handleLayoutGenerate,
+    ["mapgen.action.generate"]  = handleMapGenerate,
+    ["world.action.create"]     = handleWorldCreate,
+    ["world.action.getChunks"]  = handleWorldGetChunks,
+    ["world.action.destroy"]    = handleWorldDestroy,
 }
 
 net.serve(config.rpcPort, {

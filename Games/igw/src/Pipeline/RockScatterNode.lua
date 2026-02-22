@@ -88,6 +88,9 @@ return {
                 local material     = Enum.Material[materialName] or Enum.Material.Rock
                 local flagMaterial = Enum.Material[flagMatName] or Enum.Material.Slate
 
+                -- Optional chunk bounds filter: skip rocks outside loaded area
+                local chunkBounds = payload.chunkBounds  -- { minX, minZ, maxX, maxZ } or nil
+
                 local seed = (payload.seed or os.time()) + 31337
                 local rng = Random.new(seed)
 
@@ -135,7 +138,14 @@ return {
                     local cz = mapMinZ + rng:NextNumber() * mapDepth
                     local ch = sampleHeight(cx, cz)
 
-                    if ch >= groundY + minHeight then
+                    -- Skip clusters outside chunk bounds (RNG still advanced below for determinism)
+                    local inBounds = true
+                    if chunkBounds then
+                        inBounds = cx >= chunkBounds.minX and cx <= chunkBounds.maxX
+                            and cz >= chunkBounds.minZ and cz <= chunkBounds.maxZ
+                    end
+
+                    if inBounds and ch >= groundY + minHeight then
                         local n = rng:NextInteger(
                             clusterSize[1],
                             max(clusterSize[1], clusterSize[2])

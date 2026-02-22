@@ -21,6 +21,7 @@ return {
             self._sourceBiome = nil
             self._dungeonReady = false
             self._spawnPos = nil
+            self._miniMapRunning = false
 
             -- Handle late joiners: anchor during build, position when ready
             local Players = game:GetService("Players")
@@ -67,7 +68,7 @@ return {
                         selfRef._spawnPos[3]
                     )
                 else
-                    -- Dungeon still building — anchor until onDungeonComplete
+                    -- Dungeon still building — anchor until ready
                     hrp.Anchored = true
                 end
             end)
@@ -93,6 +94,35 @@ return {
         print(string.format("[WorldMapOrchestrator] Building region %d — biome: %s (seed %d)",
             self._regionNum, biomeName, seed))
 
+        -- Chunked path: WorldClient handles VPS creation + incremental chunk loading
+        self.Out:Fire("buildWorld", {
+            biome = biome,
+            biomeName = biomeName,
+            allBiomes = biomes,
+            worldMap = worldMap,
+            seed = seed,
+            regionNum = self._regionNum,
+            featureClasses = config.featureClasses,
+        })
+    end,
+
+    _buildDungeonMonolithic = function(self, biomeName)
+        -- Legacy monolithic path (kept for computeTarget = "roblox" fallback)
+        local config = self._config
+        local biomes = config.biomes or {}
+        local worldMap = config.worldMap or {}
+        local biome = biomes[biomeName]
+
+        if not biome then
+            warn("[WorldMapOrchestrator] Unknown biome: " .. tostring(biomeName))
+            return
+        end
+
+        self._regionNum = self._regionNum + 1
+        self._currentBiome = biomeName
+
+        local seed = os.time() + math.random(1, 9999)
+
         self.Out:Fire("buildDungeon", {
             biome = biome,
             biomeName = biomeName,
@@ -116,68 +146,215 @@ return {
         if meshTerrain then meshTerrain:Destroy() end
 
         -- Clean up minimap geometry
-        local oldGeo = game:GetService("ReplicatedStorage"):FindFirstChild("MiniMapGeo")
-        if oldGeo then oldGeo:Destroy() end
+        self._miniMapRunning = false
+        local mmGeo = game:GetService("ReplicatedStorage"):FindFirstChild("MiniMapGeo")
+        if mmGeo then mmGeo:Destroy() end
+        local mmBuild = workspace:FindFirstChild("_MiniMapBuild")
+        if mmBuild then mmBuild:Destroy() end
     end,
 
-    _buildMiniMapGeo = function(self, container, mapCenter)
-        if not container then return end
+    ------------------------------------------------------------------------
+    -- MINIMAP GEOMETRY — server-side CSG, results to ReplicatedStorage
+    --
+    -- For each room in workspace.Dungeon: clone Floor + door-intersecting
+    -- walls, CSG door holes at full scale, scale to 1/100, parent to
+    -- ReplicatedStorage.MiniMapGeo. Client clones from there.
+    -- Runs in background, processes rooms as they appear (DescendantAdded).
+    ------------------------------------------------------------------------
 
-        local ReplicatedStorage = game:GetService("ReplicatedStorage")
-        local MINIMAP_SCALE = 1 / 100
+    _buildMiniMapGeo = function(self, doors, mapCenter, wallThickness)
+        local RS = game:GetService("ReplicatedStorage")
+        local wt = wallThickness or 2
+        local SCALE = 1 / 100
 
         -- Clean up previous
-        local oldGeo = ReplicatedStorage:FindFirstChild("MiniMapGeo")
+        local oldGeo = RS:FindFirstChild("MiniMapGeo")
         if oldGeo then oldGeo:Destroy() end
-
         local geoFolder = Instance.new("Folder")
         geoFolder.Name = "MiniMapGeo"
+        geoFolder.Parent = RS
 
-        local mcX, mcY, mcZ = mapCenter[1], mapCenter[2], mapCenter[3]
-        local cloneCount = 0
+        local tempFolder = Instance.new("Folder")
+        tempFolder.Name = "_MiniMapBuild"
+        tempFolder.Parent = workspace
 
-        for _, roomModel in ipairs(container:GetChildren()) do
-            if not roomModel:IsA("Model") then continue end
-            local roomId = roomModel:GetAttribute("RoomId")
-            if not roomId then continue end
-
-            local roomGeo = Instance.new("Model")
-            roomGeo.Name = "Room_" .. roomId
-            roomGeo:SetAttribute("RoomId", roomId)
-
-            for _, part in ipairs(roomModel:GetChildren()) do
-                if not part:IsA("BasePart") then continue end
-                if part.Name:match("^RoomZone") then continue end
-                local isFloor = (part.Name == "Floor")
-                -- Only include floors + UnionOperations (CSG'd walls with door holes).
-                -- Plain Wall_* Parts have no holes — skip them.
-                if not isFloor and not part:IsA("UnionOperation") then continue end
-
-                local clone = part:Clone()
-                clone.Size = part.Size * MINIMAP_SCALE
-                clone.CFrame = CFrame.new(
-                    (part.Position.X - mcX) * MINIMAP_SCALE,
-                    (part.Position.Y - mcY) * MINIMAP_SCALE,
-                    (part.Position.Z - mcZ) * MINIMAP_SCALE
-                )
-                clone.Anchored = true
-                clone.CanCollide = false
-                clone.Material = Enum.Material.SmoothPlastic
-                clone.Transparency = 1
-                if clone:IsA("UnionOperation") then
-                    clone.UsePartColor = true
-                end
-                clone:SetAttribute("IsFloor", isFloor)
-                clone.Parent = roomGeo
-                cloneCount = cloneCount + 1
-            end
-
-            roomGeo.Parent = geoFolder
+        -- Index doors by room
+        local doorsByRoom = {}
+        for _, door in ipairs(doors) do
+            local fromId = tonumber(door.fromRoom) or door.fromRoom
+            local toId = tonumber(door.toRoom) or door.toRoom
+            doorsByRoom[fromId] = doorsByRoom[fromId] or {}
+            table.insert(doorsByRoom[fromId], door)
+            doorsByRoom[toId] = doorsByRoom[toId] or {}
+            table.insert(doorsByRoom[toId], door)
         end
 
-        -- Parent last so entire tree replicates atomically
-        geoFolder.Parent = ReplicatedStorage
-        print(string.format("[WorldMapOrchestrator] MiniMapGeo: %d parts at 1/100 scale", cloneCount))
+        local mc = mapCenter
+        local processed = {}
+
+        local function processRoom(roomContainer)
+            if not self._miniMapRunning then return end
+            local idStr = roomContainer.Name:match("^Room_(%d+)")
+            if not idStr then return end
+            local roomId = tonumber(idStr)
+            if processed[roomId] then return end
+            processed[roomId] = true
+
+            local roomModel = Instance.new("Model")
+            roomModel.Name = "Room_" .. roomId
+            roomModel:SetAttribute("RoomId", roomId)
+
+            -- Clone Floor — always
+            local floorPart = roomContainer:FindFirstChild("Floor")
+            if floorPart and floorPart:IsA("BasePart") then
+                local f = floorPart:Clone()
+                local wp = f.Position
+                f.Size = f.Size * SCALE
+                f.CFrame = CFrame.new(
+                    (wp.X - mc[1]) * SCALE,
+                    (wp.Y - mc[2]) * SCALE,
+                    (wp.Z - mc[3]) * SCALE
+                )
+                f.Anchored = true
+                f.CanCollide = false
+                f.Material = Enum.Material.SmoothPlastic
+                f:SetAttribute("IsFloor", true)
+                f.Parent = roomModel
+            end
+
+            -- Collect Wall_* parts
+            local wallParts = {}
+            for _, child in ipairs(roomContainer:GetChildren()) do
+                if child:IsA("BasePart") and child.Name:match("^Wall_") then
+                    wallParts[child.Name] = child
+                end
+            end
+
+            -- For each door touching this room, find intersecting walls → CSG
+            local wallsToCSG = {} -- { [wallName] = { part, cutters = {{size,pos},...} } }
+            local roomDoors = doorsByRoom[roomId] or {}
+
+            for _, door in ipairs(roomDoors) do
+                if not door.center then continue end
+                if door.axis == 2 then continue end
+
+                local cutterDepth = wt * 8
+                local cutterSize
+                if door.widthAxis == 1 then
+                    cutterSize = Vector3.new(door.width, door.height, cutterDepth)
+                else
+                    cutterSize = Vector3.new(cutterDepth, door.height, door.width)
+                end
+                local cutterPos = Vector3.new(door.center[1], door.center[2], door.center[3])
+
+                for wallName, wallPart in pairs(wallParts) do
+                    local wPos = wallPart.Position
+                    local wSize = wallPart.Size
+                    local intersects = true
+                    for axis = 1, 3 do
+                        local prop = axis == 1 and "X" or axis == 2 and "Y" or "Z"
+                        local wMin = wPos[prop] - wSize[prop] / 2
+                        local wMax = wPos[prop] + wSize[prop] / 2
+                        local cMin = cutterPos[prop] - cutterSize[prop] / 2
+                        local cMax = cutterPos[prop] + cutterSize[prop] / 2
+                        if wMax <= cMin or cMax <= wMin then
+                            intersects = false
+                            break
+                        end
+                    end
+                    if intersects then
+                        if not wallsToCSG[wallName] then
+                            wallsToCSG[wallName] = { part = wallPart, cutters = {} }
+                        end
+                        table.insert(wallsToCSG[wallName].cutters, {
+                            size = cutterSize, pos = cutterPos,
+                        })
+                    end
+                end
+            end
+
+            -- CSG each door wall at full scale, then scale to 1/100
+            for _, entry in pairs(wallsToCSG) do
+                local wall = entry.part:Clone()
+                wall.Transparency = 0
+                wall.Anchored = true
+                wall.CanCollide = false
+                wall.Parent = tempFolder
+
+                local result = wall
+                for _, cut in ipairs(entry.cutters) do
+                    local cutter = Instance.new("Part")
+                    cutter.Size = cut.size
+                    cutter.CFrame = CFrame.new(cut.pos)
+                    cutter.Anchored = true
+                    cutter.CanCollide = false
+                    cutter.Parent = tempFolder
+
+                    local ok, union = pcall(function()
+                        return result:SubtractAsync({ cutter })
+                    end)
+                    if ok and union then
+                        result.Parent = nil
+                        result:Destroy()
+                        union.Anchored = true
+                        union.CanCollide = false
+                        union.Parent = tempFolder
+                        result = union
+                    end
+                    cutter:Destroy()
+                end
+
+                -- Scale + reposition
+                local wp = result.Position
+                result.Size = result.Size * SCALE
+                result.CFrame = CFrame.new(
+                    (wp.X - mc[1]) * SCALE,
+                    (wp.Y - mc[2]) * SCALE,
+                    (wp.Z - mc[3]) * SCALE
+                )
+                result.Material = Enum.Material.SmoothPlastic
+                if result:IsA("UnionOperation") then
+                    result.UsePartColor = true
+                end
+                result.Parent = nil
+                result:SetAttribute("IsFloor", false)
+                result.Parent = roomModel
+            end
+
+            -- Only add if we produced something
+            if #roomModel:GetChildren() > 0 then
+                roomModel.Parent = geoFolder
+            else
+                roomModel:Destroy()
+            end
+        end
+
+        -- Process rooms already in Dungeon
+        local dungeon = workspace:FindFirstChild("Dungeon")
+        if dungeon then
+            for _, child in ipairs(dungeon:GetDescendants()) do
+                if child:IsA("Model") and child.Name:match("^Room_") then
+                    processRoom(child)
+                end
+            end
+
+            -- Watch for new rooms as chunks load in background
+            local conn
+            conn = dungeon.DescendantAdded:Connect(function(desc)
+                if not self._miniMapRunning then
+                    conn:Disconnect()
+                    return
+                end
+                if desc:IsA("Model") and desc.Name:match("^Room_") then
+                    -- Defer so children are populated
+                    task.defer(function()
+                        processRoom(desc)
+                    end)
+                end
+            end)
+        end
+
+        -- Temp folder cleaned up by _destroyCurrentRegion on next transition
     end,
 
     _anchorAllPlayers = function(self)
@@ -215,6 +392,117 @@ return {
     end,
 
     In = {
+        --------------------------------------------------------------------
+        -- Chunked path: WorldClient reports world is ready with initial chunks loaded
+        --------------------------------------------------------------------
+        onWorldReady = function(self, data)
+            print(string.format("[WorldMapOrchestrator] onWorldReady: %s (region %d)",
+                data.worldId or "?", self._regionNum))
+
+            self._worldId = data.worldId
+
+            -- Store spawn for late joiners
+            local spawnPos = data.spawn and data.spawn.position
+            self._spawnPos = spawnPos
+            self._dungeonReady = true
+            shared.dungeonReady = { worldId = data.worldId }
+
+            self:_spawnAllPlayers(spawnPos)
+            self:_unanchorAllPlayers()
+
+            -- Send room/door DATA to MiniMap — client builds geometry incrementally
+            local global = data.global or {}
+            local doors = global.doors or {}
+
+            -- Normalize room keys (JSON round-trip may stringify numeric keys)
+            local rooms = nil
+            if global.rooms then
+                rooms = {}
+                for id, room in pairs(global.rooms) do
+                    rooms[tonumber(id) or id] = room
+                end
+            end
+
+            if rooms then
+                local roomCount = 0
+                for _ in pairs(rooms) do roomCount = roomCount + 1 end
+                print(string.format("[WorldMapOrchestrator] Sending minimap data: %d rooms, %d doors",
+                    roomCount, #doors))
+
+                -- Adjacency map for fog-of-war
+                local adjacency = {}
+                for _, door in ipairs(doors) do
+                    adjacency[door.fromRoom] = adjacency[door.fromRoom] or {}
+                    table.insert(adjacency[door.fromRoom], door.toRoom)
+                    adjacency[door.toRoom] = adjacency[door.toRoom] or {}
+                    table.insert(adjacency[door.toRoom], door.fromRoom)
+                end
+
+                -- Strip room data (position + dims only)
+                local miniMapRooms = {}
+                for roomId, room in pairs(rooms) do
+                    miniMapRooms[roomId] = {
+                        position = room.position,
+                        dims = room.dims,
+                    }
+                end
+
+                -- Compute map center from bounds
+                local minX, maxX = math.huge, -math.huge
+                local minY, maxY = math.huge, -math.huge
+                local minZ, maxZ = math.huge, -math.huge
+                for _, room in pairs(miniMapRooms) do
+                    local p = room.position
+                    local d = room.dims
+                    minX = math.min(minX, p[1] - d[1]/2)
+                    maxX = math.max(maxX, p[1] + d[1]/2)
+                    minY = math.min(minY, p[2] - d[2]/2)
+                    maxY = math.max(maxY, p[2] + d[2]/2)
+                    minZ = math.min(minZ, p[3] - d[3]/2)
+                    maxZ = math.max(maxZ, p[3] + d[3]/2)
+                end
+                local mapCenter = {
+                    (minX + maxX) / 2,
+                    (minY + maxY) / 2,
+                    (minZ + maxZ) / 2,
+                }
+
+                -- Send all data to client (client builds geometry as chunks load)
+                self.Out:Fire("buildMiniMap", {
+                    rooms = miniMapRooms,
+                    doors = doors,
+                    adjacency = adjacency,
+                    spawnPos = spawnPos,
+                    containerName = "Dungeon",
+                    mapCenter = mapCenter,
+                    wallThickness = self:getAttribute("wallThickness") or 2,
+                })
+                print("[WorldMapOrchestrator] buildMiniMap fired (data only)")
+
+                -- Start background CSG for minimap walls (server-side only)
+                self._miniMapRunning = true
+                local selfRef = self
+                task.spawn(function()
+                    selfRef:_buildMiniMapGeo(doors, mapCenter, selfRef:getAttribute("wallThickness") or 2)
+                end)
+            end
+
+            -- Enable map opening
+            self.Out:Fire("mapReady", {})
+
+            -- If this was a portal transition, signal fade-in
+            if self._isTransitioning then
+                self._isTransitioning = false
+                self._sourceBiome = nil
+                self.Out:Fire("portalTransitionEnd", {
+                    biomeName = self._currentBiome,
+                })
+            end
+        end,
+
+        --------------------------------------------------------------------
+        -- Monolithic path: DungeonOrchestrator reports dungeon complete
+        --------------------------------------------------------------------
         onDungeonComplete = function(self, payload)
             print(string.format("[WorldMapOrchestrator] onDungeonComplete received (region %d)",
                 self._regionNum))
@@ -286,37 +574,6 @@ return {
             self:_spawnAllPlayers(spawnPos)
             self:_unanchorAllPlayers()
 
-            -- Build door-face map for MiniMap: { [roomId] = { N=true, E=true, ... } }
-            local doorFaces = {}
-            for _, door in ipairs(payload.doors or {}) do
-                local roomA = payload.rooms[door.fromRoom]
-                local roomB = payload.rooms[door.toRoom]
-                if not (roomA and roomB) then continue end
-
-                if door.axis == 1 then
-                    local aFace = roomA.position[1] < roomB.position[1] and "E" or "W"
-                    local bFace = aFace == "E" and "W" or "E"
-                    doorFaces[door.fromRoom] = doorFaces[door.fromRoom] or {}
-                    doorFaces[door.fromRoom][aFace] = true
-                    doorFaces[door.toRoom] = doorFaces[door.toRoom] or {}
-                    doorFaces[door.toRoom][bFace] = true
-                elseif door.axis == 3 then
-                    local aFace = roomA.position[3] < roomB.position[3] and "N" or "S"
-                    local bFace = aFace == "N" and "S" or "N"
-                    doorFaces[door.fromRoom] = doorFaces[door.fromRoom] or {}
-                    doorFaces[door.fromRoom][aFace] = true
-                    doorFaces[door.toRoom] = doorFaces[door.toRoom] or {}
-                    doorFaces[door.toRoom][bFace] = true
-                elseif door.axis == 2 then
-                    local aFace = roomA.position[2] < roomB.position[2] and "U" or "D"
-                    local bFace = aFace == "U" and "D" or "U"
-                    doorFaces[door.fromRoom] = doorFaces[door.fromRoom] or {}
-                    doorFaces[door.fromRoom][aFace] = true
-                    doorFaces[door.toRoom] = doorFaces[door.toRoom] or {}
-                    doorFaces[door.toRoom][bFace] = true
-                end
-            end
-
             -- Build adjacency map for MiniMap fog-of-war
             local adjacency = {}
             for _, door in ipairs(payload.doors or {}) do
@@ -335,7 +592,7 @@ return {
                 }
             end
 
-            -- Compute bounds for map center (used by both server geo + client)
+            -- Compute bounds for map center
             local minX, maxX = math.huge, -math.huge
             local minY, maxY = math.huge, -math.huge
             local minZ, maxZ = math.huge, -math.huge
@@ -355,19 +612,25 @@ return {
                 (minZ + maxZ) / 2,
             }
 
-            -- Build minimap geometry server-side: clone CSG'd walls + floors at 1/100 scale
-            self:_buildMiniMapGeo(payload.container, mapCenter)
-
-            -- Send room data to MiniMap (client clones geometry from ReplicatedStorage)
+            -- Send all data to MiniMap (client builds geometry)
+            local monolithicWt = self:getAttribute("wallThickness") or 2
             self.Out:Fire("buildMiniMap", {
                 rooms = miniMapRooms,
-                doorFaces = doorFaces,
+                doors = payload.doors or {},
                 adjacency = adjacency,
                 spawnPos = spawnPos,
-                containerName = "Dungeon",
+                containerName = self._container and self._container.Name or "Dungeon",
                 mapCenter = mapCenter,
-                wallThickness = self:getAttribute("wallThickness") or 2,
+                wallThickness = monolithicWt,
             })
+
+            -- Start background CSG for minimap walls (server-side only)
+            self._miniMapRunning = true
+            local selfRef = self
+            local monolithicDoors = payload.doors or {}
+            task.spawn(function()
+                selfRef:_buildMiniMapGeo(monolithicDoors, mapCenter, monolithicWt)
+            end)
 
             -- Enable map opening now that player is spawned
             self.Out:Fire("mapReady", {})
@@ -407,13 +670,18 @@ return {
             task.wait(1.0)
             print(string.format("[WorldMapOrchestrator] +%.1fs: fade done, destroying old region", os.clock() - t0))
 
-            -- Destroy old region
-            self:_destroyCurrentRegion()
+            -- Destroy via WorldClient (chunked path) or direct (monolithic)
+            if self._worldId then
+                self.Out:Fire("destroyWorld", {})
+                self._worldId = nil
+            else
+                self:_destroyCurrentRegion()
+            end
             print(string.format("[WorldMapOrchestrator] +%.1fs: destroyed, building new region", os.clock() - t0))
 
             -- Build new region
             self:_buildDungeon(targetBiome)
-            print(string.format("[WorldMapOrchestrator] +%.1fs: buildDungeon signal fired", os.clock() - t0))
+            print(string.format("[WorldMapOrchestrator] +%.1fs: buildWorld signal fired", os.clock() - t0))
         end,
     },
 }

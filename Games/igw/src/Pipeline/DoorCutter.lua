@@ -1,6 +1,8 @@
 --[[
     IGW v2 Pipeline — DoorCutter
-    Post-mount: uses CSG SubtractAsync to cut door openings in walls.
+    Post-mount: cuts door openings in walls.
+    Hides intersecting wall parts + carves air into terrain.
+    No CSG — terrain air carving achieves the same doorway effect.
 
     Signals:
       onBuildPass — original pipeline path (fires buildComplete)
@@ -21,12 +23,10 @@ return {
         local Dom = _G.Warren.Dom
         local Canvas = Dom.Canvas
         local doors = payload.doors or {}
-        local biome = payload.biome or {}
-        local isOutdoor = biome.terrainStyle == "outdoor"
         local wt = self:getAttribute("wallThickness") or 1
 
         local t0 = os.clock()
-        print(string.format("[DoorCutter] Starting with %d doors (outdoor=%s)", #doors, tostring(isOutdoor)))
+        print(string.format("[DoorCutter] Starting with %d doors", #doors))
 
         -- Build room model lookup from DOM
         local roomModels = {}
@@ -41,8 +41,6 @@ return {
         for _ in pairs(roomModels) do modelCount = modelCount + 1 end
         print(string.format("[DoorCutter] Found %d room models in DOM", modelCount))
 
-        local cutCount = 0
-        local failCount = 0
         local hideCount = 0
 
         for _, door in ipairs(doors) do
@@ -60,18 +58,6 @@ return {
             end
 
             local cutterPos = Vector3.new(door.center[1], door.center[2], door.center[3])
-
-            -- Outdoor horizontal doors: CSG first, THEN hide.
-            -- CSG geometry preserved in workspace for minimap cloning.
-            local hideAfterCsg = isOutdoor and door.axis ~= 2
-
-            -- Always create cutter for CSG
-            local cutter = Instance.new("Part")
-            cutter.Size = cutterSize
-            cutter.Position = cutterPos
-            cutter.Anchored = true
-            cutter.CanCollide = false
-            cutter.Transparency = 1
 
             -- Process walls in both rooms
             local roomsToCheck = { door.fromRoom, door.toRoom }
@@ -109,48 +95,10 @@ return {
                             end
 
                             if intersects then
-                                -- Always CSG cut
-                                local success, result = pcall(function()
-                                    return child:SubtractAsync({cutter})
-                                end)
-
-                                if success and result then
-                                    result.Name = child.Name
-                                    result.Parent = roomContainer
-
-                                    -- Update DomNode _instance reference
-                                    local children = Dom.getChildren(roomNode)
-                                    for _, domChild in ipairs(children) do
-                                        if domChild and domChild._instance == child then
-                                            domChild._instance = result
-                                            break
-                                        end
-                                    end
-
-                                    child:Destroy()
-                                    cutCount = cutCount + 1
-
-                                    -- Outdoor horizontal: hide AFTER CSG
-                                    -- (geometry preserved for minimap cloning)
-                                    if hideAfterCsg then
-                                        result.Transparency = 1
-                                        result.CanCollide = false
-                                        hideCount = hideCount + 1
-                                    end
-                                else
-                                    failCount = failCount + 1
-                                    -- Fallback: hide if outdoor horizontal
-                                    if hideAfterCsg then
-                                        child.Transparency = 1
-                                        child.CanCollide = false
-                                        hideCount = hideCount + 1
-                                    end
-                                    warn(string.format(
-                                        "[DoorCutter] SubtractAsync FAILED on %s (room %s): %s",
-                                        child.Name, tostring(roomId),
-                                        tostring(result)
-                                    ))
-                                end
+                                -- Hide wall part; terrain air carve handles the opening
+                                child.Transparency = 1
+                                child.CanCollide = false
+                                hideCount = hideCount + 1
                             end
                         end
                     end
@@ -165,11 +113,10 @@ return {
                 Canvas.carveDoorway(CFrame.new(cutterPos), cutterSize)
             end
 
-            cutter:Destroy()
         end
 
-        print(string.format("[DoorCutter] Cut %d, hidden %d wall segments for %d doors (%d CSG failures) — %.2fs",
-            cutCount, hideCount, #doors, failCount, os.clock() - t0))
+        print(string.format("[DoorCutter] Hidden %d wall segments for %d doors — %.2fs",
+            hideCount, #doors, os.clock() - t0))
     end,
 
     In = {

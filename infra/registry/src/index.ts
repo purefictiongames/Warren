@@ -7,6 +7,7 @@ import { usage } from "./routes/usage.js";
 import { rpc, registerModule } from "./routes/rpc.js";
 import { layoutModule } from "./modules/layout.js";
 import { mapgenModule } from "./modules/mapgen.js";
+import { worldModule } from "./modules/world.js";
 import { poolRoutes } from "./routes/pool.js";
 
 const app = new Hono();
@@ -25,6 +26,7 @@ app.route("/v1/pool", poolRoutes);
 // --- Warren modules ---
 registerModule("Layout", layoutModule);
 registerModule("MapGen", mapgenModule);
+registerModule("World", worldModule);
 
 // 404 fallback
 app.notFound((c) =>

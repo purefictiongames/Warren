@@ -605,19 +605,39 @@ return {
 
                 ----------------------------------------------------------------
                 -- Compute height field (pure math — shared with Lune adapter)
+                -- Cached height field may be provided by WorldClient on payload
                 ----------------------------------------------------------------
 
-                local hfResult = computeHeightField(splines, biomeConfig, {
-                    mapWidth       = mapWidth,
-                    mapDepth       = mapDepth,
-                    groundY        = groundY,
-                    noiseAmplitude = noiseAmplitude,
-                    noiseScale1    = noiseScale1,
-                    noiseScale2    = noiseScale2,
-                    noiseRatio     = noiseRatio,
-                    seed           = payload.seed,
-                    yield          = task.wait,
-                })
+                local hfResult
+
+                if payload.heightField then
+                    -- Use cached height field from WorldClient (skip recomputation)
+                    hfResult = {
+                        heightField = payload.heightField,
+                        gridW       = payload.heightFieldGridW,
+                        gridD       = payload.heightFieldGridD,
+                        mapMinX     = payload.heightFieldMinX,
+                        mapMinZ     = payload.heightFieldMinZ,
+                        maxH        = vpsMaxH or 0,
+                        spawn       = payload.spawn,
+                    }
+                    print(string.format(
+                        "[TerrainPainterNode] Using cached height field (%dx%d)",
+                        payload.heightFieldGridW, payload.heightFieldGridD
+                    ))
+                else
+                    hfResult = computeHeightField(splines, biomeConfig, {
+                        mapWidth       = mapWidth,
+                        mapDepth       = mapDepth,
+                        groundY        = groundY,
+                        noiseAmplitude = noiseAmplitude,
+                        noiseScale1    = noiseScale1,
+                        noiseScale2    = noiseScale2,
+                        noiseRatio     = noiseRatio,
+                        seed           = payload.seed,
+                        yield          = task.wait,
+                    })
+                end
 
                 local hField  = hfResult.heightField
                 local gridW   = hfResult.gridW
@@ -627,7 +647,7 @@ return {
                 local maxH    = vpsMaxH or hfResult.maxH
 
                 print(string.format(
-                    "[TerrainPainterNode] Height field complete: min=%.0f max=%.0f (%.2fs)",
+                    "[TerrainPainterNode] Height field ready: min=%.0f max=%.0f (%.2fs)",
                     groundY, maxH, os.clock() - startTime
                 ))
 
@@ -645,9 +665,15 @@ return {
                 ))
 
                 local tileCount = 0
+                local chunkFilter = payload.chunkFilter  -- optional: { ["tx,tz"] = true }
 
                 for tx = 0, tilesX - 1 do
                     for tz = 0, tilesZ - 1 do
+                        -- Chunk filter: skip tiles not in the requested set
+                        if chunkFilter then
+                            local key = tx .. "," .. tz
+                            if not chunkFilter[key] then continue end
+                        end
                         local tileMinX = mapMinX + tx * tileSize
                         local tileMinZ = mapMinZ + tz * tileSize
                         local tileMaxX = min(tileMinX + tileSize, mapMinX + mapWidth)

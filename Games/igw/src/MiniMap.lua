@@ -1,20 +1,25 @@
 --[[
     IGW v2 — MiniMap
     Client-side full-screen 3D map view using ViewportFrame.
-    Fog-of-war: only visited rooms (orange) and adjacent unexplored
-    rooms (grey) are shown. Rooms discovered via RoomZone Touched events.
+    DOM-driven: observes workspace for RoomZone_ parts and builds minimap
+    geometry from ReplicatedStorage (server builds CSG'd walls per-room,
+    client clones). Cutaway view: floors always, walls only where doors
+    are with CSG holes.
 
-    Server builds CSG'd geometry at 1/100 scale into ReplicatedStorage/MiniMapGeo.
-    Client clones from ReplicatedStorage — real CSG door holes, no race condition.
+    Fog-of-war states:
+        visited  (orange)  — player entered room
+        adjacent (grey)    — neighbor of visited room
+        unknown            — room not yet visited/adjacent (invisible)
 
     Controls:
-        ButtonY (Triangle): Toggle map
-        Right Stick: Rotate camera
-        Left Stick: Pan map
-        L1/R1: Zoom out/in
+        M / ButtonY (Triangle): Toggle map
+        WASD / Left Stick: Pan map
+        Arrow Keys / Right Stick: Rotate camera
+        Q/E / L1/R1: Zoom out/in
 
-    Signal: onBuildMiniMap({ rooms, doorFaces, adjacency, spawnPos, containerName, mapCenter })
-    Signal: onMapReady() → enables map opening (called after spawn)
+    Signals:
+        onBuildMiniMap({ rooms, doors, adjacency, spawnPos, containerName, mapCenter })
+        onMapReady() → enables map opening (called after spawn)
 --]]
 
 local Players = game:GetService("Players")
@@ -29,13 +34,11 @@ local GRACE_PERIOD = 0.5
 local VISITED_TRANSPARENCY = 0.3
 local ADJACENT_TRANSPARENCY = 0.55
 local VISITED_COLOR = Color3.fromRGB(220, 160, 80)
-local VISITED_FLOOR = Color3.fromRGB(180, 130, 60)
 local ADJACENT_COLOR = Color3.fromRGB(130, 130, 140)
-local ADJACENT_FLOOR = Color3.fromRGB(100, 100, 110)
 
 -- Player marker
 local MARKER_COLOR = Color3.fromRGB(80, 255, 120)
-local MARKER_SIZE = 0.5
+local MARKER_SIZE = 0.25
 
 -- Shared input rate factor (per-second base, halved from original)
 local INPUT_RATE = 1.5
@@ -65,14 +68,22 @@ return {
             self._panX = 0
             self._panZ = 0
 
+            -- Keyboard held-key state (for per-frame pan/rotate)
+            self._heldKeys = {}
+            self._inputConns = {}
+
             -- Fog-of-war state
             self._rooms = {}
             self._visitedRooms = {}
             self._currentRoom = nil
             self._adjacency = {}
             self._roomClones = {}   -- { [roomId] = { {clone, isFloor}, ... } }
+            self._builtRooms = {}   -- { [roomId] = true } — tracks which rooms have geometry
             self._zoneConns = {}
             self._graceTimers = {}
+
+            -- Geo observer (ReplicatedStorage.MiniMapGeo)
+            self._geoConns = {}
 
             -- Player marker
             self._playerMarker = nil
@@ -83,10 +94,13 @@ return {
         end,
 
         onStart = function(self)
+            print("[MiniMap] onStart — binding ButtonY + M key")
             local selfRef = self
             self._toggleConn = UserInputService.InputBegan:Connect(function(input, processed)
                 if processed then return end
-                if not selfRef._isOpen and input.KeyCode == Enum.KeyCode.ButtonY then
+                if not selfRef._isOpen
+                    and (input.KeyCode == Enum.KeyCode.ButtonY
+                      or input.KeyCode == Enum.KeyCode.M) then
                     selfRef:_toggleMap()
                 end
             end)
@@ -94,6 +108,7 @@ return {
 
         onStop = function(self)
             self:_disconnectZones()
+            self:_disconnectGeo()
             if self._markerConn then
                 self._markerConn:Disconnect()
                 self._markerConn = nil
@@ -204,8 +219,14 @@ return {
 
     _openMap = function(self)
         if self._isOpen then return end
-        if not self._canOpen then return end
-        if not self._hasModel then return end
+        if not self._canOpen then
+            print("[MiniMap] _openMap blocked: _canOpen=false (mapReady signal not received)")
+            return
+        end
+        if not self._hasModel then
+            print("[MiniMap] _openMap blocked: _hasModel=false (buildMiniMap signal not received)")
+            return
+        end
 
         self._isOpen = true
         self._panX = 0
@@ -248,6 +269,32 @@ return {
 
         local selfRef = self
 
+        -- Keyboard held-key tracking for per-frame pan/rotate
+        self._heldKeys = {}
+        self._inputConns = {}
+        table.insert(self._inputConns, UserInputService.InputBegan:Connect(function(input, processed)
+            if processed then return end
+            selfRef._heldKeys[input.KeyCode] = true
+        end))
+        table.insert(self._inputConns, UserInputService.InputEnded:Connect(function(input)
+            selfRef._heldKeys[input.KeyCode] = nil
+        end))
+
+        -- Mouse scroll wheel zoom
+        table.insert(self._inputConns, UserInputService.InputChanged:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseWheel then
+                local scroll = input.Position.Z  -- +1 scroll up, -1 scroll down
+                local factor = 1 - scroll * 0.15
+                selfRef._cameraDistance = math.clamp(
+                    selfRef._cameraDistance * factor,
+                    selfRef._initCamDist * 0.05,
+                    selfRef._initCamDist * 4
+                )
+                selfRef:_updateCamera()
+            end
+        end))
+
+        -- Gamepad: right stick rotate
         ContextActionService:BindAction(
             "MiniMapRotate",
             function(_, inputState, inputObject)
@@ -270,6 +317,7 @@ return {
             Enum.KeyCode.Thumbstick2
         )
 
+        -- Gamepad: left stick pan
         ContextActionService:BindAction(
             "MiniMapPan",
             function(_, inputState, inputObject)
@@ -293,6 +341,7 @@ return {
             Enum.KeyCode.Thumbstick1
         )
 
+        -- Zoom: L1/Q = out, R1/E = in
         ContextActionService:BindAction(
             "MiniMapZoomOut",
             function(_, inputState)
@@ -304,7 +353,8 @@ return {
                 return Enum.ContextActionResult.Sink
             end,
             false,
-            Enum.KeyCode.ButtonL1
+            Enum.KeyCode.ButtonL1,
+            Enum.KeyCode.Q
         )
 
         ContextActionService:BindAction(
@@ -318,9 +368,11 @@ return {
                 return Enum.ContextActionResult.Sink
             end,
             false,
-            Enum.KeyCode.ButtonR1
+            Enum.KeyCode.ButtonR1,
+            Enum.KeyCode.E
         )
 
+        -- Close: ButtonY / M
         ContextActionService:BindAction(
             "MiniMapClose",
             function(_, inputState)
@@ -330,7 +382,8 @@ return {
                 return Enum.ContextActionResult.Sink
             end,
             false,
-            Enum.KeyCode.ButtonY
+            Enum.KeyCode.ButtonY,
+            Enum.KeyCode.M
         )
     end,
 
@@ -339,6 +392,11 @@ return {
             self._inputClaim:release()
             self._inputClaim = nil
         end
+        for _, conn in ipairs(self._inputConns or {}) do
+            conn:Disconnect()
+        end
+        self._inputConns = {}
+        self._heldKeys = {}
         ContextActionService:UnbindAction("MiniMapRotate")
         ContextActionService:UnbindAction("MiniMapPan")
         ContextActionService:UnbindAction("MiniMapZoomIn")
@@ -423,16 +481,54 @@ return {
         if self._markerConn then return end
         local selfRef = self
         self._markerConn = RunService.RenderStepped:Connect(function(dt)
-            -- Fluid zoom: apply per-frame while L1/R1 held
+            local keys = selfRef._heldKeys or {}
+
+            -- Fluid zoom: apply per-frame while L1/R1/Q/E held
             if selfRef._zoomDir ~= 0 then
                 local zoomRate = INPUT_RATE * dt
-                local factor = 1 + zoomRate * (-selfRef._zoomDir)  -- L1 zooms out, R1 zooms in
+                local factor = 1 + zoomRate * (-selfRef._zoomDir)
                 selfRef._cameraDistance = math.clamp(
                     selfRef._cameraDistance * factor,
                     selfRef._initCamDist * 0.05,
                     selfRef._initCamDist * 4
                 )
             end
+
+            -- Keyboard pan: WASD (yaw-relative)
+            local panSpeed = selfRef._cameraDistance * 0.02
+            local yawRad = math.rad(selfRef._cameraYaw)
+            if keys[Enum.KeyCode.W] then
+                selfRef._panX = selfRef._panX + math.sin(yawRad) * panSpeed
+                selfRef._panZ = selfRef._panZ + math.cos(yawRad) * panSpeed
+            end
+            if keys[Enum.KeyCode.S] then
+                selfRef._panX = selfRef._panX - math.sin(yawRad) * panSpeed
+                selfRef._panZ = selfRef._panZ - math.cos(yawRad) * panSpeed
+            end
+            if keys[Enum.KeyCode.A] then
+                selfRef._panX = selfRef._panX - math.cos(yawRad) * panSpeed
+                selfRef._panZ = selfRef._panZ + math.sin(yawRad) * panSpeed
+            end
+            if keys[Enum.KeyCode.D] then
+                selfRef._panX = selfRef._panX + math.cos(yawRad) * panSpeed
+                selfRef._panZ = selfRef._panZ - math.sin(yawRad) * panSpeed
+            end
+
+            -- Keyboard rotate: arrow keys
+            local rotSpeed = 90 * dt  -- degrees per second
+            if keys[Enum.KeyCode.Left] then
+                selfRef._cameraYaw = selfRef._cameraYaw + rotSpeed
+            end
+            if keys[Enum.KeyCode.Right] then
+                selfRef._cameraYaw = selfRef._cameraYaw - rotSpeed
+            end
+            if keys[Enum.KeyCode.Up] then
+                selfRef._cameraPitch = math.clamp(selfRef._cameraPitch + rotSpeed, -89, 89)
+            end
+            if keys[Enum.KeyCode.Down] then
+                selfRef._cameraPitch = math.clamp(selfRef._cameraPitch - rotSpeed, -89, 89)
+            end
+
             selfRef:_updateMarker()
             selfRef:_updateCamera()
         end)
@@ -483,12 +579,12 @@ return {
                 end))
             end
 
-            -- Connect zones that already exist
+            -- Connect zones that already exist in DOM
             for _, desc in ipairs(container:GetDescendants()) do
                 connectZone(desc)
             end
 
-            -- Catch zones that replicate later
+            -- React to new zones as chunks load (DescendantAdded)
             table.insert(selfRef._zoneConns, container.DescendantAdded:Connect(function(desc)
                 connectZone(desc)
             end))
@@ -543,8 +639,6 @@ return {
                 and sz >= p[3] - d[3]/2 and sz <= p[3] + d[3]/2 then
                 self._currentRoom = roomId
                 self._visitedRooms[roomId] = true
-                self:_updateDisplay()
-                self:_updateLabel()
                 return
             end
         end
@@ -554,8 +648,6 @@ return {
         if firstId then
             self._currentRoom = firstId
             self._visitedRooms[firstId] = true
-            self:_updateDisplay()
-            self:_updateLabel()
         end
     end,
 
@@ -564,7 +656,7 @@ return {
     ------------------------------------------------------------------------
 
     _updateDisplay = function(self)
-        -- Determine visibility: visited (orange), adjacent (grey), hidden
+        -- Determine visibility: visited (orange), adjacent (grey), unknown (invisible)
         local showState = {}
 
         for roomId in pairs(self._visitedRooms) do
@@ -585,11 +677,11 @@ return {
             for _, entry in ipairs(clones) do
                 if state == "visited" then
                     entry.clone.Transparency = VISITED_TRANSPARENCY
-                    entry.clone.Color = entry.isFloor and VISITED_FLOOR or VISITED_COLOR
+                    entry.clone.Color = VISITED_COLOR
                 elseif state == "adjacent" then
                     entry.clone.Transparency = ADJACENT_TRANSPARENCY
-                    entry.clone.Color = entry.isFloor and ADJACENT_FLOOR or ADJACENT_COLOR
-                else
+                    entry.clone.Color = ADJACENT_COLOR
+                else -- unknown: invisible
                     entry.clone.Transparency = 1
                 end
             end
@@ -606,40 +698,72 @@ return {
     end,
 
     ------------------------------------------------------------------------
-    -- MODEL BUILDING — clone server-built CSG geometry from ReplicatedStorage
+    -- ROOM GEOMETRY — clone from ReplicatedStorage.MiniMapGeo
+    --
+    -- Server builds CSG'd walls + floors, scales to 1/100, puts in
+    -- ReplicatedStorage. Client just clones into ViewportFrame.
     ------------------------------------------------------------------------
 
-    _cloneFromServer = function(self)
+    _cloneRoomGeo = function(self, roomModel)
+        local roomId = roomModel:GetAttribute("RoomId")
+        if not roomId or self._builtRooms[roomId] then return end
+        self._builtRooms[roomId] = true
+
+        local clones = {}
+        for _, child in ipairs(roomModel:GetChildren()) do
+            if child:IsA("BasePart") or child:IsA("UnionOperation") then
+                local clone = child:Clone()
+                clone.Anchored = true
+                clone.CanCollide = false
+                clone.Transparency = 1  -- starts hidden, _updateDisplay sets visibility
+                clone.Parent = self._worldModel
+                table.insert(clones, {
+                    clone = clone,
+                    isFloor = child:GetAttribute("IsFloor") == true,
+                })
+            end
+        end
+
+        if #clones > 0 then
+            self._roomClones[roomId] = clones
+        end
+    end,
+
+    _connectGeo = function(self)
+        self:_disconnectGeo()
+        local RS = game:GetService("ReplicatedStorage")
         local selfRef = self
-        task.spawn(function()
-            local geoFolder = game:GetService("ReplicatedStorage"):WaitForChild("MiniMapGeo", 30)
-            if not geoFolder then
-                warn("[MiniMap] MiniMapGeo not found in ReplicatedStorage")
-                return
+
+        local geoFolder = RS:FindFirstChild("MiniMapGeo")
+        if geoFolder then
+            -- Clone rooms already built by server
+            for _, child in ipairs(geoFolder:GetChildren()) do
+                selfRef:_cloneRoomGeo(child)
             end
-
-            local cloneCount = 0
-            for _, roomGeo in ipairs(geoFolder:GetChildren()) do
-                if not roomGeo:IsA("Model") then continue end
-                local roomId = roomGeo:GetAttribute("RoomId")
-                if not roomId then continue end
-                roomId = tonumber(roomId) or roomId
-
-                for _, part in ipairs(roomGeo:GetChildren()) do
-                    if not part:IsA("BasePart") then continue end
-                    local isFloor = part:GetAttribute("IsFloor") or false
-                    local clone = part:Clone()
-                    clone.Parent = selfRef._worldModel
-                    selfRef._roomClones[roomId] = selfRef._roomClones[roomId] or {}
-                    table.insert(selfRef._roomClones[roomId], { clone = clone, isFloor = isFloor })
-                    cloneCount = cloneCount + 1
-                end
-            end
-
-            print(string.format("[MiniMap] Cloned %d parts from server", cloneCount))
             selfRef:_updateDisplay()
+        end
+
+        -- Watch for new rooms as server CSG completes them incrementally
+        task.spawn(function()
+            local folder = RS:WaitForChild("MiniMapGeo", 30)
+            if not folder then return end
+            table.insert(selfRef._geoConns, folder.ChildAdded:Connect(function(child)
+                selfRef:_cloneRoomGeo(child)
+                selfRef:_updateDisplay()
+            end))
         end)
     end,
+
+    _disconnectGeo = function(self)
+        for _, conn in ipairs(self._geoConns) do
+            conn:Disconnect()
+        end
+        self._geoConns = {}
+    end,
+
+    ------------------------------------------------------------------------
+    -- MODEL BUILDING — store data, camera setup, NO geometry
+    ------------------------------------------------------------------------
 
     _buildModel = function(self, data)
         -- Clear existing
@@ -649,11 +773,13 @@ return {
         self._hasModel = false
         self._rooms = {}
         self._roomClones = {}
+        self._builtRooms = {}
         self._visitedRooms = {}
         self._currentRoom = nil
         self._graceTimers = {}
         self._playerMarker = nil
         self:_disconnectZones()
+        self:_disconnectGeo()
 
         local spawnPos = data.spawnPos
         local containerName = data.containerName
@@ -735,16 +861,17 @@ return {
         -- Detect initial room from data (no workspace dependency)
         self:_detectInitialRoom(spawnPos)
 
-        -- Clone geometry from server (async, waits for ReplicatedStorage)
-        self:_cloneFromServer()
-
-        -- Zone detection for ongoing Touched events
+        -- Zone detection for ongoing Touched events (fog-of-war)
         self:_connectZones(containerName)
 
+        -- Clone geometry from ReplicatedStorage (server builds CSG'd walls)
+        self:_connectGeo()
+
+        self:_updateDisplay()
         self:_updateLabel()
 
         print(string.format(
-            "[MiniMap] %d rooms, initial room: %s, cloning from server",
+            "[MiniMap] %d rooms stored, initial room: %s, watching ReplicatedStorage",
             roomCount, tostring(self._currentRoom)
         ))
     end,
@@ -755,6 +882,7 @@ return {
 
     In = {
         onBuildMiniMap = function(self, data)
+            print("[MiniMap] onBuildMiniMap received", data and "with data" or "NO DATA")
             if not data then return end
 
             local player = Players.LocalPlayer
@@ -766,12 +894,15 @@ return {
             self.Out:Fire("miniMapReady", {
                 player = player,
             })
+            print("[MiniMap] onBuildMiniMap complete, _hasModel =", self._hasModel)
         end,
 
         onMapReady = function(self, data)
+            print("[MiniMap] onMapReady received")
             local player = Players.LocalPlayer
             if data and data._targetPlayer and data._targetPlayer ~= player then return end
             self._canOpen = true
+            print("[MiniMap] _canOpen set to true")
         end,
     },
 

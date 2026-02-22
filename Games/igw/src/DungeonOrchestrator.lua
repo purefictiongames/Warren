@@ -257,7 +257,143 @@ return {
         self.Out:Fire("dungeonComplete", payload)
     end,
 
+    ------------------------------------------------------------------------
+    -- Chunk build: WorldClient sends pre-filtered payload per chunk.
+    -- Skip compute — data already provided. Just render terrain + rooms.
+    ------------------------------------------------------------------------
+
+    _runChunkBuild = function(self, payload)
+        local Dom = _G.Warren.Dom
+        local Debug = _G.Warren.System.Debug
+
+        ----------------------------------------------------------------
+        -- Rendering: terrain voxels (filtered by chunkFilter on payload)
+        ----------------------------------------------------------------
+
+        local terrainRenderer = self:getAttribute("terrainRenderer") or "voxel"
+        if terrainRenderer == "mesh" then
+            self:_syncCall("paintMeshTerrain", payload)
+        else
+            self:_syncCall("paintTerrain", payload)
+            self:_syncCall("scatterRocks", payload)
+        end
+
+        -- Mount terrain DOM to workspace
+        local terrainRoot = Dom.getRoot()
+        Dom.mount(terrainRoot, workspace)
+        payload.container = terrainRoot._instance
+        self._container = payload.container
+
+        ----------------------------------------------------------------
+        -- Phase 2: Mountain rooms for this chunk
+        ----------------------------------------------------------------
+
+        local roomCount = 0
+        if payload.rooms then
+            for _ in pairs(payload.rooms) do roomCount = roomCount + 1 end
+        end
+
+        if roomCount > 0 then
+            -- Normalize room keys: chunker stringifies for JSON compat,
+            -- but door.fromRoom/toRoom remain numeric. Re-key to match.
+            local normalizedRooms = {}
+            for id, room in pairs(payload.rooms) do
+                normalizedRooms[tonumber(id) or id] = room
+            end
+            payload.rooms = normalizedRooms
+
+            local savedBiome = payload.biome
+            local savedPaletteClass = payload.paletteClass
+
+            payload.biome = {
+                terrainStyle = "outdoor",
+                paletteClass = "palette-glacier-ice",
+                terrainWall = "Glacier",
+                terrainWallMix = "Rock",
+                terrainFloor = "Snow",
+                partWall = "Ice",
+                partFloor = "Glacier",
+                doorWallClass = "ice-wall-solid",
+                lightType = savedBiome and savedBiome.lightType or "PointLight",
+                lightStyle = savedBiome and savedBiome.lightStyle or "cave-torch-light",
+                lighting = savedBiome and savedBiome.lighting,
+            }
+            payload.paletteClass = "palette-glacier-ice"
+
+            Dom.setRoot(Dom.createElement("Model", { Name = "Chunk_" .. (payload.chunkKey or "?") }))
+
+            -- Populate DOM root with room models (monolithic path uses MountainRoomPlacer)
+            for id, room in pairs(payload.rooms) do
+                Dom.appendChild(Dom.getRoot(), Dom.createElement("Model", {
+                    Name         = "Room_" .. id,
+                    RoomId       = id,
+                    RoomPosition = room.position,
+                    RoomDims     = room.dims,
+                    ParentRoomId = room.parentId,
+                    AttachFace   = room.attachFace,
+                }))
+            end
+
+            self:_syncCall("buildShells", payload)
+            self:_syncCall("planDoors", payload)
+            self:_syncCall("buildTrusses", payload)
+            self:_syncCall("buildLights", payload)
+            self:_syncCall("mount", payload)
+            self:_syncCall("paintMountainRooms", payload)
+            self:_syncCall("applyDoors", payload)
+            self:_syncCall("cutDoors", payload)
+
+            self._dungeonContainer = payload.container
+
+            payload.biome = savedBiome
+            payload.paletteClass = savedPaletteClass
+            Dom.setRoot(terrainRoot)
+        end
+
+        ----------------------------------------------------------------
+        -- Done — fire back to WorldClient
+        ----------------------------------------------------------------
+
+        if Debug then
+            Debug.info("DungeonOrchestrator", "Chunk build complete:",
+                payload.chunkKey or "?", "rooms:", roomCount)
+        end
+
+        payload._msgId = nil
+        self.Out:Fire("chunkBuildComplete", payload)
+    end,
+
     In = {
+        onBuildChunk = function(self, data)
+            local Dom = _G.Warren.Dom
+            local StyleBridge = _G.Warren.Dom.StyleBridge
+            local Styles = _G.Warren.Styles
+            local ClassResolver = _G.Warren.ClassResolver
+
+            -- Set up style resolver
+            local resolver = StyleBridge.createResolver(Styles, ClassResolver)
+            Dom.setStyleResolver(resolver)
+
+            local paletteClass = data.biome and data.biome.paletteClass
+                or StyleBridge.getPaletteClass(data.regionNum or 1)
+
+            Dom.setRoot(Dom.createElement("Model", {
+                Name = "ChunkTerrain_" .. (data.chunkKey or "?"),
+            }))
+
+            local payload = {}
+            for k, v in pairs(data) do
+                payload[k] = v
+            end
+            payload.paletteClass = paletteClass
+            payload._msgId = nil
+
+            local selfRef = self
+            task.spawn(function()
+                selfRef:_runChunkBuild(payload)
+            end)
+        end,
+
         onBuildDungeon = function(self, data)
             local Dom = _G.Warren.Dom
             local StyleBridge = _G.Warren.Dom.StyleBridge

@@ -11,6 +11,7 @@
 return {
     -- Pipeline node load order (orchestrator is implicit from init.cfg)
     nodes = {
+        "WorldClient",
         "DungeonOrchestrator",
         "InventoryNode", "SplinePlannerNode", "BlockoutNode",
         "TerrainPainterNode", "MeshTerrainPainterNode", "RockScatterNode",
@@ -178,14 +179,16 @@ return {
 
         wiring = {
             -- Hub-and-spoke: orchestrator calls each node sequentially
-            WorldMapOrchestrator    = { "DungeonOrchestrator", "MiniMap" },
+            -- WorldMapOrchestrator → WorldClient → DungeonOrchestrator → pipeline nodes
+            WorldMapOrchestrator    = { "WorldClient", "DungeonOrchestrator", "MiniMap" },
+            WorldClient             = { "DungeonOrchestrator", "WorldMapOrchestrator" },
             DungeonOrchestrator     = {
                 "InventoryNode", "SplinePlannerNode", "BlockoutNode",
                 "TerrainPainterNode", "MeshTerrainPainterNode", "RockScatterNode",
                 "MountainRoomPlacer", "ShellBuilder", "DoorPlanner",
                 "TrussBuilder", "LightBuilder", "Materializer",
                 "IceTerrainPainter", "DoorCutter",
-                "WorldMapOrchestrator",
+                "WorldMapOrchestrator", "WorldClient",
             },
             InventoryNode           = { "DungeonOrchestrator" },
             SplinePlannerNode       = { "DungeonOrchestrator" },
@@ -203,6 +206,17 @@ return {
             DoorCutter              = { "DungeonOrchestrator" },
             MiniMap                 = { "WorldMapOrchestrator" },
         },
+    },
+
+    -- WorldClient manages chunked world loading/unloading
+    WorldClient = {
+        computeTarget = "warren",
+        loadRadius = 2,        -- chunks around player to keep loaded (5x5 = 25)
+        unloadRadius = 4,      -- chunks beyond this get unloaded
+        pollInterval = 1.0,    -- seconds between position checks
+        mapWidth = 4000,
+        mapDepth = 4000,
+        groundY = 0,
     },
 
     -- DungeonOrchestrator is now a pipeline node (receives everything via signal)

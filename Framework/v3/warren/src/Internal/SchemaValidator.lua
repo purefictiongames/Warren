@@ -108,8 +108,6 @@
 
 --]]
 
-local Players = game:GetService("Players")
-
 local SchemaValidator = {}
 
 --------------------------------------------------------------------------------

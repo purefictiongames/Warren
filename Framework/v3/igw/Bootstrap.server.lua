@@ -88,10 +88,9 @@ Log.init()
 _G.Warren = Warren
 
 if RunService:IsStudio() then
-    _G.Node = Node
-    _G.Debug = Debug
-    _G.Log = Log
-    _G.IPC = IPC
+    _G.Warren.Debug = Warren.System.Debug
+    _G.Warren.Log   = Warren.System.Log
+    _G.Warren.IPC   = Warren.System.IPC
 end
 
 --------------------------------------------------------------------------------
@@ -210,10 +209,10 @@ if not RunService:IsStudio() then
     -- OpenCloud init
     local opencloudOk, opencloudErr = pcall(function()
         local secret = HttpService:GetSecret("warren_opencloud_key")
-        Warren.OpenCloud._robloxConfig = {
+        Warren.OpenCloud.setRobloxConfig({
             universeId = tostring(game.GameId),
             apiKey = secret,
-        }
+        })
         Debug.info("Bootstrap", "OpenCloud initialized")
     end)
     if not opencloudOk then

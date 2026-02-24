@@ -818,7 +818,13 @@ end
     ```
 --]]
 
-local CollectionService = game:GetService("CollectionService")
+local _CollectionService
+local function getCollectionService()
+    if not _CollectionService then
+        _CollectionService = game:GetService("CollectionService")
+    end
+    return _CollectionService
+end
 
 Node.Registry = (function()
     local Registry = {}
@@ -860,24 +866,24 @@ Node.Registry = (function()
         if not model then return end
 
         -- Unique instance tag
-        CollectionService:AddTag(model, TAG_PREFIX .. id)
+        getCollectionService():AddTag(model, TAG_PREFIX .. id)
 
         -- Class tag
         if meta.class then
-            CollectionService:AddTag(model, TAG_PREFIX .. "Class_" .. meta.class)
+            getCollectionService():AddTag(model, TAG_PREFIX .. "Class_" .. meta.class)
         end
 
         -- Inheritance chain tags
         if meta.inheritanceChain then
             for _, ancestor in ipairs(meta.inheritanceChain) do
-                CollectionService:AddTag(model, TAG_PREFIX .. "Class_" .. ancestor)
+                getCollectionService():AddTag(model, TAG_PREFIX .. "Class_" .. ancestor)
             end
         end
 
         -- Custom tags
         if meta.tags then
             for _, tag in ipairs(meta.tags) do
-                CollectionService:AddTag(model, TAG_PREFIX .. "Tag_" .. tag)
+                getCollectionService():AddTag(model, TAG_PREFIX .. "Tag_" .. tag)
             end
         end
     end
@@ -888,21 +894,21 @@ Node.Registry = (function()
     local function untagModel(model, id, meta)
         if not model then return end
 
-        CollectionService:RemoveTag(model, TAG_PREFIX .. id)
+        getCollectionService():RemoveTag(model, TAG_PREFIX .. id)
 
         if meta.class then
-            CollectionService:RemoveTag(model, TAG_PREFIX .. "Class_" .. meta.class)
+            getCollectionService():RemoveTag(model, TAG_PREFIX .. "Class_" .. meta.class)
         end
 
         if meta.inheritanceChain then
             for _, ancestor in ipairs(meta.inheritanceChain) do
-                CollectionService:RemoveTag(model, TAG_PREFIX .. "Class_" .. ancestor)
+                getCollectionService():RemoveTag(model, TAG_PREFIX .. "Class_" .. ancestor)
             end
         end
 
         if meta.tags then
             for _, tag in ipairs(meta.tags) do
-                CollectionService:RemoveTag(model, TAG_PREFIX .. "Tag_" .. tag)
+                getCollectionService():RemoveTag(model, TAG_PREFIX .. "Tag_" .. tag)
             end
         end
     end
@@ -1213,7 +1219,7 @@ Node.Registry = (function()
         -- Update CollectionService if model present
         local node = nodes[id]
         if node and node.model then
-            CollectionService:AddTag(node.model, TAG_PREFIX .. "Tag_" .. tag)
+            getCollectionService():AddTag(node.model, TAG_PREFIX .. "Tag_" .. tag)
         end
 
         return true
@@ -1239,7 +1245,7 @@ Node.Registry = (function()
                 -- Update CollectionService if model present
                 local node = nodes[id]
                 if node and node.model then
-                    CollectionService:RemoveTag(node.model, TAG_PREFIX .. "Tag_" .. tag)
+                    getCollectionService():RemoveTag(node.model, TAG_PREFIX .. "Tag_" .. tag)
                 end
 
                 return true
@@ -1489,14 +1495,14 @@ Node.Registry = (function()
                 end
                 -- Check CollectionService on model
                 if target.model then
-                    return CollectionService:HasTag(target.model, tagName)
-                        or CollectionService:HasTag(target.model, TAG_PREFIX .. "Tag_" .. tagName)
+                    return getCollectionService():HasTag(target.model, tagName)
+                        or getCollectionService():HasTag(target.model, TAG_PREFIX .. "Tag_" .. tagName)
                 end
                 return false
             else
                 -- Instance - check CollectionService directly
-                return CollectionService:HasTag(target, tagName)
-                    or CollectionService:HasTag(target, TAG_PREFIX .. "Tag_" .. tagName)
+                return getCollectionService():HasTag(target, tagName)
+                    or getCollectionService():HasTag(target, TAG_PREFIX .. "Tag_" .. tagName)
             end
         end
 

@@ -82,12 +82,15 @@ Log.init()
 -- STUDIO CLI ACCESS
 --------------------------------------------------------------------------------
 
+-- _G.Warren is required at runtime (50+ access sites in pipeline nodes)
+-- Warren.Node and Warren.System.{Debug,Log,IPC} are already set by warren/init.lua.
+-- Studio CLI shortcuts: _G.Warren.Debug etc. alias Warren.System.Debug for quick REPL access.
+_G.Warren = Warren
+
 if RunService:IsStudio() then
-    _G.Warren = Warren
-    _G.Node = Node
-    _G.Debug = Debug
-    _G.Log = Log
-    _G.IPC = IPC
+    _G.Warren.Debug = Warren.System.Debug
+    _G.Warren.Log   = Warren.System.Log
+    _G.Warren.IPC   = Warren.System.IPC
 end
 
 --------------------------------------------------------------------------------
@@ -206,10 +209,10 @@ if not RunService:IsStudio() then
     -- OpenCloud init
     local opencloudOk, opencloudErr = pcall(function()
         local secret = HttpService:GetSecret("warren_opencloud_key")
-        Warren.OpenCloud._robloxConfig = {
+        Warren.OpenCloud.setRobloxConfig({
             universeId = tostring(game.GameId),
             apiKey = secret,
-        }
+        })
         Debug.info("Bootstrap", "OpenCloud initialized")
     end)
     if not opencloudOk then
@@ -224,37 +227,33 @@ end
 --------------------------------------------------------------------------------
 -- ReplicatedFirst shows a black overlay, waits for ViewReady, preloads, fades.
 -- We fire ViewReady once the dungeon is built (shared.dungeonReady set by
--- WorldMapOrchestrator in onDungeonComplete).
+-- WorldMapOrchestrator). DungeonReady BindableEvent avoids polling loops.
 
-Players.PlayerAdded:Connect(function(player)
+local dungeonReadyEvent = Instance.new("BindableEvent")
+dungeonReadyEvent.Name = "DungeonReady"
+dungeonReadyEvent.Parent = ServerStorage
+
+local function onPlayerReady(player)
     task.spawn(function()
         local character = player.Character or player.CharacterAdded:Wait()
         character:WaitForChild("HumanoidRootPart", 10)
 
-        -- Wait for first dungeon to be ready
-        while not shared.dungeonReady do
-            task.wait(0.1)
+        -- Wait for first dungeon to be ready (event or already set)
+        if not shared.dungeonReady then
+            dungeonReadyEvent.Event:Wait()
         end
 
         -- Signal loading screen to preload + fade
         local containerName = shared.dungeonReady.containerName
         viewReadyEvent:FireClient(player, { containerName = containerName })
     end)
-end)
+end
+
+Players.PlayerAdded:Connect(onPlayerReady)
 
 -- Handle players already in game (Studio fast-start)
 for _, player in ipairs(Players:GetPlayers()) do
-    task.spawn(function()
-        local character = player.Character or player.CharacterAdded:Wait()
-        character:WaitForChild("HumanoidRootPart", 10)
-
-        while not shared.dungeonReady do
-            task.wait(0.1)
-        end
-
-        local containerName = shared.dungeonReady.containerName
-        viewReadyEvent:FireClient(player, { containerName = containerName })
-    end)
+    onPlayerReady(player)
 end
 
 --------------------------------------------------------------------------------

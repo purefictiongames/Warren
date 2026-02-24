@@ -10,22 +10,6 @@
     Runs after IceTerrainPainter, before PortalRoomBuilder.
 --]]
 
--- Build valid terrain material set at load time by probing the engine.
--- GetMaterialColor only succeeds for materials terrain actually supports.
-local TERRAIN_MATERIALS = {}
-do
-    local terrain = workspace.Terrain
-    for _, item in ipairs(Enum.Material:GetEnumItems()) do
-        if item.Value ~= 0 then -- skip Air/Plastic defaults
-            local ok = pcall(terrain.GetMaterialColor, terrain, item)
-            if ok then
-                TERRAIN_MATERIALS[item] = true
-                TERRAIN_MATERIALS[item.Name] = item
-            end
-        end
-    end
-end
-
 local VOXEL = 4
 local BLEED = 8 -- studs beyond door edge to spread blend
 
@@ -41,6 +25,7 @@ return {
 
     In = {
         onBuildPass = function(self, payload)
+            local TERRAIN_MATERIALS = require(script.Parent.MaterialValidator).get()
             local Dom = _G.Warren.Dom
             local Canvas = Dom.Canvas
             local rooms = payload.rooms

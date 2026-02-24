@@ -11,7 +11,7 @@
 return {
     -- Pipeline node load order (orchestrator is implicit from init.cfg)
     nodes = {
-        "WorldClient",
+        "WorldBridge",
         "DungeonOrchestrator",
         "InventoryNode", "SplinePlannerNode", "BlockoutNode",
         "TerrainPainterNode", "MeshTerrainPainterNode", "RockScatterNode",
@@ -180,16 +180,16 @@ return {
 
         wiring = {
             -- Hub-and-spoke: orchestrator calls each node sequentially
-            -- WorldMapOrchestrator → WorldClient → DungeonOrchestrator → pipeline nodes
-            WorldMapOrchestrator    = { "WorldClient", "DungeonOrchestrator", "MiniMap" },
-            WorldClient             = { "DungeonOrchestrator", "WorldMapOrchestrator" },
+            -- WorldMapOrchestrator → WorldBridge → DungeonOrchestrator → pipeline nodes
+            WorldMapOrchestrator    = { "WorldBridge", "DungeonOrchestrator", "MiniMap" },
+            WorldBridge             = { "DungeonOrchestrator", "WorldMapOrchestrator" },
             DungeonOrchestrator     = {
                 "InventoryNode", "SplinePlannerNode", "BlockoutNode",
                 "TerrainPainterNode", "MeshTerrainPainterNode", "RockScatterNode",
                 "MountainRoomPlacer", "ShellBuilder", "DoorPlanner",
                 "TrussBuilder", "LightBuilder", "Materializer",
                 "IceTerrainPainter", "DoorCutter",
-                "WorldMapOrchestrator", "WorldClient",
+                "WorldMapOrchestrator", "WorldBridge",
             },
             InventoryNode           = { "DungeonOrchestrator" },
             SplinePlannerNode       = { "DungeonOrchestrator" },
@@ -209,8 +209,8 @@ return {
         },
     },
 
-    -- WorldClient manages chunked world loading/unloading
-    WorldClient = {
+    -- WorldBridge manages chunked world loading/unloading
+    WorldBridge = {
         computeTarget = "warren",
         loadRadius = 2,        -- chunks around player to keep loaded (5x5 = 25)
         unloadRadius = 4,      -- chunks beyond this get unloaded

@@ -1,7 +1,7 @@
 local Components = {}
 
 Components.WorldMapOrchestrator = require(script.WorldMapOrchestrator)
-Components.WorldClient = require(script.WorldClient)
+Components.WorldBridge = require(script.WorldBridge)
 Components.DungeonOrchestrator = require(script.DungeonOrchestrator)
 Components.InventoryNode = require(script.Pipeline.InventoryNode)
 Components.SplinePlannerNode = require(script.Pipeline.SplinePlannerNode)

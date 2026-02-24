@@ -13,8 +13,8 @@
     It follows an Arduino-like model where games are composed of modular
     components wired together through a unified messaging bus.
 
-    On Roblox: Full stack — DOM, Factory, Renderer, Transport client.
-    On Lune:   Headless — Shared logic, Transport server, Open Cloud.
+    On Roblox: Full stack — DOM, Factory, Renderer, Open Cloud.
+    On Lune:   Headless — Shared logic, Open Cloud, RPC compute.
 
     This module is the public API surface. Runtime detection determines
     which subsystems are loaded.
@@ -30,7 +30,7 @@
 
     -- Lune
     local Warren = require("warren")
-    Warren.Transport.start({ port = 8080, authToken = "..." })
+    -- Lune boot handles RPC server setup
     ```
 
     ============================================================================
@@ -50,7 +50,7 @@
 --]]
 
 local Warren = {
-    _VERSION = "3.0.0",
+    _VERSION = "3.0.1",
 }
 
 -- Dual-runtime require: Lune uses @warren/ aliases, Roblox uses script tree
@@ -70,19 +70,6 @@ Warren.Styles = _L and require("@warren/Styles") or require(script.Styles)
 
 -- ClassResolver: DOM class inheritance resolution
 Warren.ClassResolver = _L and require("@warren/ClassResolver") or require(script.ClassResolver)
-
--- Transport: Roblox ↔ Lune communication layer
-Warren.Transport = _L and require("@warren/Transport") or require(script.Transport)
-
--- State: Versioned state store, diff engine, sync, predictions
-Warren.State = _L and require("@warren/State") or require(script.State)
-
--- Wire State ↔ Transport binding
-Warren.State.bindTransport(Warren.Transport)
-
--- =============================================================================
--- SHARED MODULES (continued)
--- =============================================================================
 
 -- OpenCloud: DataStore, Messaging HTTP clients (cross-runtime via Platform)
 Warren.OpenCloud = _L and require("@warren/OpenCloud") or require(script.OpenCloud)

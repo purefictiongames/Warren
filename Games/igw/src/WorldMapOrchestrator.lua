@@ -94,7 +94,7 @@ return {
         print(string.format("[WorldMapOrchestrator] Building region %d — biome: %s (seed %d)",
             self._regionNum, biomeName, seed))
 
-        -- Chunked path: WorldClient handles VPS creation + incremental chunk loading
+        -- Chunked path: WorldBridge handles VPS creation + incremental chunk loading
         self.Out:Fire("buildWorld", {
             biome = biome,
             biomeName = biomeName,
@@ -206,7 +206,7 @@ return {
         local mc = mapCenter
         local processed = {}
 
-        -- Inline chunk coord helper (mirrors WorldClient._worldToChunk)
+        -- Inline chunk coord helper (mirrors WorldBridge._worldToChunk)
         local function worldToChunk(worldX, worldZ)
             if not chunkGrid then return 0, 0 end
             local cx = floor((worldX - chunkGrid.mapMinX) / chunkGrid.chunkSize)
@@ -494,7 +494,7 @@ return {
 
     In = {
         --------------------------------------------------------------------
-        -- Chunked path: WorldClient reports world is ready with initial chunks loaded
+        -- Chunked path: WorldBridge reports world is ready with initial chunks loaded
         --------------------------------------------------------------------
         onWorldReady = function(self, data)
             print(string.format("[WorldMapOrchestrator] onWorldReady: %s (region %d)",
@@ -506,7 +506,14 @@ return {
             local spawnPos = data.spawn and data.spawn.position
             self._spawnPos = spawnPos
             self._dungeonReady = true
-            shared.dungeonReady = { worldId = data.worldId }
+            shared.dungeonReady = {
+                worldId = data.worldId,
+                containerName = "Dungeon",
+            }
+
+            -- Signal Bootstrap's loading screen protocol
+            local drEvent = game:GetService("ServerStorage"):FindFirstChild("DungeonReady")
+            if drEvent then drEvent:Fire() end
 
             self:_spawnAllPlayers(spawnPos)
             self:_unanchorAllPlayers()
@@ -670,8 +677,13 @@ return {
             self._spawnPos = spawnPos
             self._dungeonReady = true
             shared.dungeonReady = {
-                containerName = self._container and self._container.Name,
+                worldId = nil,
+                containerName = self._container and self._container.Name or "Dungeon",
             }
+
+            -- Signal Bootstrap's loading screen protocol
+            local drEvent = game:GetService("ServerStorage"):FindFirstChild("DungeonReady")
+            if drEvent then drEvent:Fire() end
 
             self:_spawnAllPlayers(spawnPos)
             self:_unanchorAllPlayers()
@@ -772,7 +784,7 @@ return {
             task.wait(1.0)
             print(string.format("[WorldMapOrchestrator] +%.1fs: fade done, destroying old region", os.clock() - t0))
 
-            -- Destroy via WorldClient (chunked path) or direct (monolithic)
+            -- Destroy via WorldBridge (chunked path) or direct (monolithic)
             if self._worldId then
                 self.Out:Fire("destroyWorld", {})
                 self._worldId = nil

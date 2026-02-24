@@ -51,4 +51,15 @@ OpenCloud.DataStore = _L and require("@warren/OpenCloud/DataStore") or require(s
 OpenCloud.Messaging = _L and require("@warren/OpenCloud/Messaging") or require(script.Messaging)
 OpenCloud.Platform = _L and require("@warren/OpenCloud/Platform") or require(script.Platform)
 
+-- Roblox-side config (universeId + apiKey Secret)
+local _robloxConfig = nil
+
+function OpenCloud.setRobloxConfig(config)
+    _robloxConfig = config
+end
+
+function OpenCloud.getRobloxConfig()
+    return _robloxConfig
+end
+
 return OpenCloud

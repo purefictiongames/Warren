@@ -17,21 +17,6 @@
     Runs after PortalBlender, before DoorCutter.
 --]]
 
--- Build valid terrain material set at load time by probing the engine.
-local TERRAIN_MATERIALS = {}
-do
-    local terrain = workspace.Terrain
-    for _, item in ipairs(Enum.Material:GetEnumItems()) do
-        if item.Value ~= 0 then
-            local ok = pcall(terrain.GetMaterialColor, terrain, item)
-            if ok then
-                TERRAIN_MATERIALS[item] = true
-                TERRAIN_MATERIALS[item.Name] = item
-            end
-        end
-    end
-end
-
 local PORTAL_COLOR = Color3.fromRGB(128, 0, 255)
 local PORTAL_TRANSPARENCY = 0.3
 local PORTAL_LIGHT_COLOR = Color3.fromRGB(160, 80, 255)
@@ -51,6 +36,7 @@ return {
 
     In = {
         onBuildPass = function(self, payload)
+            local TERRAIN_MATERIALS = require(script.Parent.MaterialValidator).get()
             local t0 = os.clock()
             local Dom = _G.Warren.Dom
             local Canvas = Dom.Canvas

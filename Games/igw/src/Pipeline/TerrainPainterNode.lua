@@ -605,13 +605,13 @@ return {
 
                 ----------------------------------------------------------------
                 -- Compute height field (pure math — shared with Lune adapter)
-                -- Cached height field may be provided by WorldClient on payload
+                -- Cached height field may be provided by WorldBridge on payload
                 ----------------------------------------------------------------
 
                 local hfResult
 
                 if payload.heightField then
-                    -- Use cached height field from WorldClient (skip recomputation)
+                    -- Use cached height field from WorldBridge (skip recomputation)
                     hfResult = {
                         heightField = payload.heightField,
                         gridW       = payload.heightFieldGridW,

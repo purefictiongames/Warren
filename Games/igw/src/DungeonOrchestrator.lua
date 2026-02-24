@@ -255,7 +255,7 @@ return {
     end,
 
     ------------------------------------------------------------------------
-    -- Chunk build: WorldClient sends pre-filtered payload per chunk.
+    -- Chunk build: WorldBridge sends pre-filtered payload per chunk.
     -- Skip compute — data already provided. Just render terrain + rooms.
     ------------------------------------------------------------------------
 
@@ -348,7 +348,7 @@ return {
         end
 
         ----------------------------------------------------------------
-        -- Done — fire back to WorldClient
+        -- Done — fire back to WorldBridge
         ----------------------------------------------------------------
 
         if Debug then

@@ -14,6 +14,10 @@
       "init.cfg": { "$path": "init.cfg.lua" },
       "metadata": { "$path": "metadata.lua" }
     },
+    "ServerStorage": {
+      "$className": "ServerStorage",
+      "WarrenSDK": { "$path": "../../Framework/v3/warren-sdk" }
+    },
     "ServerScriptService": {
       "$className": "ServerScriptService",
       "Bootstrap": { "$path": "Bootstrap.server.lua" }

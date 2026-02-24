@@ -61,6 +61,42 @@ return {
         local VOXEL = Canvas.getVoxelSize()
 
         ----------------------------------------------------------------
+        -- Height field: detect rooms fully above terrain surface
+        -- (skip artificial terrain ops — let natural geology show)
+        ----------------------------------------------------------------
+
+        local hField = payload.heightField
+        local hfGridW = payload.heightFieldGridW or 0
+        local hfGridD = payload.heightFieldGridD or 0
+        local hfMinX = payload.heightFieldMinX or 0
+        local hfMinZ = payload.heightFieldMinZ or 0
+
+        local function isRoomAboveTerrain(room)
+            if not hField or hfGridW == 0 then return false end
+            local rpos = room.position
+            local rdims = room.dims
+            local roomBottom = rpos[2] - rdims[2] / 2
+            -- Sample terrain height at room corners + center
+            local pts = {
+                { rpos[1], rpos[3] },
+                { rpos[1] - rdims[1]/2, rpos[3] - rdims[3]/2 },
+                { rpos[1] + rdims[1]/2, rpos[3] - rdims[3]/2 },
+                { rpos[1] - rdims[1]/2, rpos[3] + rdims[3]/2 },
+                { rpos[1] + rdims[1]/2, rpos[3] + rdims[3]/2 },
+            }
+            for _, pt in ipairs(pts) do
+                local xi = math.floor((pt[1] - hfMinX) / VOXEL) + 1
+                local zi = math.floor((pt[2] - hfMinZ) / VOXEL) + 1
+                xi = math.max(1, math.min(hfGridW, xi))
+                zi = math.max(1, math.min(hfGridD, zi))
+                if hField[xi][zi] >= roomBottom then
+                    return false
+                end
+            end
+            return true
+        end
+
+        ----------------------------------------------------------------
         -- Build door-face map per room (same logic as LightBuilder)
         ----------------------------------------------------------------
         local roomDoorFaces = {}
@@ -111,6 +147,7 @@ return {
             local room = rooms[roomId]
             if not room then continue end
             if portalAssignments[roomId] then continue end
+            if isRoomAboveTerrain(room) then continue end
             local pos = room.position
             local dims = room.dims
 
@@ -156,9 +193,9 @@ return {
             end
         end
 
-        -- Paint floors AFTER carve (skip portal rooms)
+        -- Paint floors AFTER carve (skip portal rooms + above-terrain rooms)
         for id, room in pairs(rooms) do
-            if not portalAssignments[id] then
+            if not portalAssignments[id] and not isRoomAboveTerrain(room) then
                 if buf then
                     buf:paintFloor(room.position, room.dims, floorMaterial)
                 else

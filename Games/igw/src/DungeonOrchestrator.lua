@@ -61,48 +61,45 @@ return {
 
     _fetchFromWarren = function(self, payload)
         local RunService = game:GetService("RunService")
+        local HttpService = game:GetService("HttpService")
         local rpcPayload = {
             biomeName = payload.biomeName,
             seed      = payload.seed,
         }
 
-        local ok, result
+        local url = "https://alpharabbitgames.com/rpc"
+        local token = "igw-dev-token"
 
         if RunService:IsStudio() then
-            -- Direct call to local Lune server (no SDK/Registry needed)
-            local HttpService = game:GetService("HttpService")
-            local body = HttpService:JSONEncode({
-                action  = "mapgen.action.generate",
-                payload = rpcPayload,
-            })
-            ok, result = pcall(HttpService.RequestAsync, HttpService, {
-                Url     = "http://localhost:8091/rpc",
-                Method  = "POST",
-                Headers = {
-                    ["Content-Type"]  = "application/json",
-                    ["Authorization"] = "Bearer igw-dev-token",
-                },
-                Body = body,
-            })
-            if ok then
-                if result.Success then
-                    result = HttpService:JSONDecode(result.Body)
-                else
-                    error("[DungeonOrchestrator] Warren server returned HTTP " .. result.StatusCode)
-                end
-            else
-                error("[DungeonOrchestrator] Warren server unreachable: " .. tostring(result)
-                    .. "\n  → Studio: enable HTTP requests in Game Settings"
-                    .. "\n  → Then start Lune server: lune run lune/server.lua")
-            end
+            -- Studio: can override URL/token for local dev if needed
         else
-            -- Production: WarrenSDK → Registry → Lune
-            local WarrenSDK = require(game:GetService("ServerStorage").WarrenSDK)
-            ok, result = pcall(WarrenSDK.MapGen.generate, rpcPayload)
-            if not ok then
-                error("[DungeonOrchestrator] Warren server failed: " .. tostring(result))
-            end
+            -- TODO: Production should use WarrenSDK → Registry → Lune for
+            -- license validation and usage tracking. Direct HTTP bypasses
+            -- the Registry auth chain (API key, session, tier/scope checks).
+            -- Requires: Roblox Secret "warren_api_key", Registry modules
+            -- for MapGen/World (added), and WarrenSDK in ServerStorage.
         end
+
+        local body = HttpService:JSONEncode({
+            action  = "mapgen.action.generate",
+            payload = rpcPayload,
+        })
+        local ok, result = pcall(HttpService.RequestAsync, HttpService, {
+            Url     = url,
+            Method  = "POST",
+            Headers = {
+                ["Content-Type"]  = "application/json",
+                ["Authorization"] = "Bearer " .. token,
+            },
+            Body = body,
+        })
+        if not ok then
+            error("[DungeonOrchestrator] Warren server unreachable: " .. tostring(result))
+        end
+        if not result.Success then
+            error("[DungeonOrchestrator] Warren server returned HTTP " .. result.StatusCode)
+        end
+        result = HttpService:JSONDecode(result.Body)
 
         if result and result.status == "ok" then
             return result.mapData

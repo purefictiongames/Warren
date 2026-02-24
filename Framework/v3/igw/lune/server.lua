@@ -267,18 +267,10 @@ local function handleWorldDestroy(payload)
 end
 
 --------------------------------------------------------------------------------
--- MAP POOL INIT (pre-build maps for instant serving)
---------------------------------------------------------------------------------
-
-Pool.init({
-    registryUrl   = config.registryUrl,
-    registryToken = config.authToken,
-})
-
---------------------------------------------------------------------------------
 -- SYNCHRONOUS RPC SERVER (Registry → Lune compute calls)
 --------------------------------------------------------------------------------
--- The Registry proxies stateless compute (layout, styles, mapgen) through this endpoint.
+-- Bind port FIRST (before pool warm-up) so restarts don't fail on TIME_WAIT.
+-- Requests during warm-up hit the synchronous fallback in handleMapGenerate.
 
 local rpcHandlers = {
     ["layout.action.generate"]  = handleLayoutGenerate,
@@ -317,6 +309,18 @@ net.serve(config.rpcPort, {
 })
 
 stdio.write("[IGW] RPC server listening on port " .. config.rpcPort .. "\n")
+
+--------------------------------------------------------------------------------
+-- MAP POOL INIT (pre-build maps for instant serving)
+--------------------------------------------------------------------------------
+-- Runs after port is bound. Requests during warm-up fall back to sync generation.
+
+Pool.init({
+    registryUrl   = config.registryUrl,
+    registryToken = config.authToken,
+    warmSync      = true,
+})
+
 stdio.write("[IGW] Press Ctrl+C to stop.\n\n")
 
 -- Lune's net.serve runs in the background — script stays alive

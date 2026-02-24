@@ -138,9 +138,36 @@ local function _shortfall(biomeName)
 end
 
 --------------------------------------------------------------------------------
--- BACKGROUND REFILL
+-- REFILL (sync + async variants)
 --------------------------------------------------------------------------------
 
+local function _fillOnce(biomeName)
+    local mapData = _generateOne(biomeName)
+    if not _pool[biomeName] then
+        _pool[biomeName] = {}
+    end
+    table.insert(_pool[biomeName], mapData)
+    _pushToRegistry(biomeName, mapData)
+    stdio.write(string.format(
+        "[Pool] %s pool: %d/%d\n",
+        biomeName, #_pool[biomeName], TARGET_PER_BIOME
+    ))
+end
+
+-- Synchronous fill: blocks until all biomes are at target.
+-- Called during server startup so the pool is warm before accepting traffic.
+local function _fillSync()
+    stdio.write("[Pool] Synchronous warm-up starting...\n")
+    local t0 = os.clock()
+    for _, biomeName in ipairs(BIOMES) do
+        while _shortfall(biomeName) > 0 do
+            _fillOnce(biomeName)
+        end
+    end
+    stdio.write(string.format("[Pool] Warm-up complete (%.1fs)\n", os.clock() - t0))
+end
+
+-- Async refill: runs in background after a pool.pull() drains a slot.
 local function _refillAll()
     if _filling then return end
     _filling = true
@@ -148,29 +175,12 @@ local function _refillAll()
     task.spawn(function()
         for _, biomeName in ipairs(BIOMES) do
             while _shortfall(biomeName) > 0 do
-                local mapData = _generateOne(biomeName)
-
-                -- Push to memory
-                if not _pool[biomeName] then
-                    _pool[biomeName] = {}
-                end
-                table.insert(_pool[biomeName], mapData)
-
-                -- Push to Registry (fire-and-forget)
-                _pushToRegistry(biomeName, mapData)
-
-                stdio.write(string.format(
-                    "[Pool] %s pool: %d/%d\n",
-                    biomeName, #_pool[biomeName], TARGET_PER_BIOME
-                ))
-
-                -- Prevent CPU saturation
+                _fillOnce(biomeName)
                 if _shortfall(biomeName) > 0 then
                     task.wait(REFILL_DELAY)
                 end
             end
         end
-
         _filling = false
     end)
 end
@@ -182,7 +192,7 @@ end
 local Pool = {}
 
 --- Initialize the pool.
---- @param opts { registryUrl?: string, registryToken?: string }
+--- @param opts { registryUrl?: string, registryToken?: string, warmSync?: boolean }
 function Pool.init(opts)
     opts = opts or {}
     _registryUrl = opts.registryUrl
@@ -203,8 +213,12 @@ function Pool.init(opts)
         stdio.write("[Pool] Memory-only mode (no WARREN_REGISTRY_URL)\n")
     end
 
-    -- Fill any shortfall in background
-    _refillAll()
+    -- Fill any shortfall
+    if opts.warmSync then
+        _fillSync()  -- Block until pool is full (use at server startup)
+    else
+        _refillAll()  -- Background fill (dev mode)
+    end
 end
 
 --- Pop a map from the pool. Returns mapData or nil.

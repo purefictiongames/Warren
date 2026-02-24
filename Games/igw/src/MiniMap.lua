@@ -28,7 +28,6 @@ local ContextActionService = game:GetService("ContextActionService")
 local RunService = game:GetService("RunService")
 
 local SCALE = 1 / 100
-local GRACE_PERIOD = 0.5
 
 -- Fog-of-war colors
 local VISITED_TRANSPARENCY = 0.3
@@ -80,7 +79,7 @@ return {
             self._roomClones = {}   -- { [roomId] = { {clone, isFloor}, ... } }
             self._builtRooms = {}   -- { [roomId] = true } — tracks which rooms have geometry
             self._zoneConns = {}
-            self._graceTimers = {}
+            self._positionConn = nil
 
             -- Geo observer (ReplicatedStorage.MiniMapGeo)
             self._geoConns = {}
@@ -198,11 +197,26 @@ return {
         pad.PaddingLeft = UDim.new(0, 8)
         pad.Parent = label
 
+        -- Loading overlay (shown while server CSG is in progress)
+        local loading = Instance.new("TextLabel")
+        loading.Name = "LoadingOverlay"
+        loading.Size = UDim2.new(1, 0, 1, 0)
+        loading.BackgroundTransparency = 0.7
+        loading.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+        loading.TextColor3 = Color3.fromRGB(255, 255, 255)
+        loading.Font = Enum.Font.GothamBold
+        loading.TextSize = 24
+        loading.Text = "Building Map..."
+        loading.Visible = false
+        loading.ZIndex = 10
+        loading.Parent = sg
+
         self._screenGui = sg
         self._viewport = vp
         self._camera = cam
         self._worldModel = wm
         self._roomCountLabel = label
+        self._loadingOverlay = loading
     end,
 
     ------------------------------------------------------------------------
@@ -238,6 +252,7 @@ return {
         self:_updateDisplay()
         self:_updateMarker()
         self:_updateCamera()
+        self:_updateLoadingState()
         self:_startInput()
         self:_startMarkerTracking()
     end,
@@ -247,6 +262,9 @@ return {
 
         self._isOpen = false
         self._zoomDir = 0
+        if self._loadingOverlay then
+            self._loadingOverlay.Visible = false
+        end
         if self._screenGui then
             self._screenGui.Enabled = false
         end
@@ -571,54 +589,28 @@ return {
                 desc.CanTouch = true
 
                 table.insert(selfRef._zoneConns, desc.Touched:Connect(function(hit)
-                    selfRef:_onZoneTouched(roomId, hit)
-                end))
+                    local player = Players.LocalPlayer
+                    if not player or not player.Character then return end
+                    if not hit:IsDescendantOf(player.Character) then return end
 
-                table.insert(selfRef._zoneConns, desc.TouchEnded:Connect(function(hit)
-                    selfRef:_onZoneTouchEnded(roomId, hit)
+                    if not selfRef._visitedRooms[roomId] then
+                        selfRef._visitedRooms[roomId] = true
+                        selfRef:_updateDisplay()
+                        selfRef:_updateLabel()
+                    end
+                    if selfRef._currentRoom ~= roomId then
+                        selfRef._currentRoom = roomId
+                    end
                 end))
             end
 
-            -- Connect zones that already exist in DOM
             for _, desc in ipairs(container:GetDescendants()) do
                 connectZone(desc)
             end
 
-            -- React to new zones as chunks load (DescendantAdded)
             table.insert(selfRef._zoneConns, container.DescendantAdded:Connect(function(desc)
                 connectZone(desc)
             end))
-        end)
-    end,
-
-    _onZoneTouched = function(self, roomId, hit)
-        local player = Players.LocalPlayer
-        if not player or not player.Character then return end
-        if not hit:IsDescendantOf(player.Character) then return end
-
-        -- Cancel any grace timer for this room
-        self._graceTimers[roomId] = nil
-
-        if self._currentRoom ~= roomId then
-            self._currentRoom = roomId
-            self._visitedRooms[roomId] = true
-            self:_updateDisplay()
-            self:_updateLabel()
-        end
-    end,
-
-    _onZoneTouchEnded = function(self, roomId, hit)
-        local player = Players.LocalPlayer
-        if not player or not player.Character then return end
-        if not hit:IsDescendantOf(player.Character) then return end
-
-        local selfRef = self
-        self._graceTimers[roomId] = tick()
-
-        task.delay(GRACE_PERIOD, function()
-            if selfRef._graceTimers[roomId] then
-                selfRef._graceTimers[roomId] = nil
-            end
         end)
     end,
 
@@ -671,7 +663,7 @@ return {
             end
         end
 
-        -- Apply to clones
+        -- Apply to clones (proximity CSG means distant rooms have no geometry)
         for roomId, clones in pairs(self._roomClones) do
             local state = showState[roomId]
             for _, entry in ipairs(clones) do
@@ -681,7 +673,7 @@ return {
                 elseif state == "adjacent" then
                     entry.clone.Transparency = ADJACENT_TRANSPARENCY
                     entry.clone.Color = ADJACENT_COLOR
-                else -- unknown: invisible
+                else
                     entry.clone.Transparency = 1
                 end
             end
@@ -697,6 +689,21 @@ return {
         self._roomCountLabel.Text = string.format("  ROOMS: %d / %d", visitedCount, totalCount)
     end,
 
+    _updateLoadingState = function(self)
+        if not self._loadingOverlay then return end
+        local totalRooms = 0
+        for _ in pairs(self._rooms) do totalRooms = totalRooms + 1 end
+        local builtRooms = 0
+        for _ in pairs(self._builtRooms) do builtRooms = builtRooms + 1 end
+
+        if totalRooms > 0 and builtRooms < totalRooms then
+            self._loadingOverlay.Text = string.format("Building Map... %d / %d", builtRooms, totalRooms)
+            self._loadingOverlay.Visible = true
+        else
+            self._loadingOverlay.Visible = false
+        end
+    end,
+
     ------------------------------------------------------------------------
     -- ROOM GEOMETRY — clone from ReplicatedStorage.MiniMapGeo
     --
@@ -707,7 +714,6 @@ return {
     _cloneRoomGeo = function(self, roomModel)
         local roomId = roomModel:GetAttribute("RoomId")
         if not roomId or self._builtRooms[roomId] then return end
-        self._builtRooms[roomId] = true
 
         local clones = {}
         for _, child in ipairs(roomModel:GetChildren()) do
@@ -724,7 +730,9 @@ return {
             end
         end
 
+        -- Only mark as built if we produced clones (children may not have replicated yet)
         if #clones > 0 then
+            self._builtRooms[roomId] = true
             self._roomClones[roomId] = clones
         end
     end,
@@ -741,6 +749,7 @@ return {
                 selfRef:_cloneRoomGeo(child)
             end
             selfRef:_updateDisplay()
+            selfRef:_updateLoadingState()
         end
 
         -- Watch for new rooms as server CSG completes them incrementally
@@ -748,8 +757,16 @@ return {
             local folder = RS:WaitForChild("MiniMapGeo", 30)
             if not folder then return end
             table.insert(selfRef._geoConns, folder.ChildAdded:Connect(function(child)
-                selfRef:_cloneRoomGeo(child)
-                selfRef:_updateDisplay()
+                -- Wait for children to replicate (server adds children before
+                -- parenting the model, but replication may split across frames)
+                task.spawn(function()
+                    if #child:GetChildren() == 0 then
+                        child.ChildAdded:Wait()
+                    end
+                    selfRef:_cloneRoomGeo(child)
+                    selfRef:_updateDisplay()
+                    selfRef:_updateLoadingState()
+                end)
             end))
         end)
     end,
@@ -776,7 +793,6 @@ return {
         self._builtRooms = {}
         self._visitedRooms = {}
         self._currentRoom = nil
-        self._graceTimers = {}
         self._playerMarker = nil
         self:_disconnectZones()
         self:_disconnectGeo()
@@ -861,8 +877,8 @@ return {
         -- Detect initial room from data (no workspace dependency)
         self:_detectInitialRoom(spawnPos)
 
-        -- Zone detection for ongoing Touched events (fog-of-war)
-        self:_connectZones(containerName)
+        -- Zone detection via position check (fog-of-war)
+        self:_connectZones()
 
         -- Clone geometry from ReplicatedStorage (server builds CSG'd walls)
         self:_connectGeo()

@@ -28,6 +28,7 @@ return {
     WorldMapOrchestrator = {
         startBiome = "mountain",
         portalCountdownSeconds = 5,
+        miniMapCsgRadius = 3,  -- chunks (Chebyshev distance from player)
 
         worldMap = {
             mountain = { elevation = 4, connects = {} },  -- blockout testing

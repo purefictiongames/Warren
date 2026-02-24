@@ -69,40 +69,39 @@ return {
 
     _callVPS = function(self, action, rpcPayload)
         local RunService = game:GetService("RunService")
-        local result
+        local HttpService = game:GetService("HttpService")
+
+        local url = "https://alpharabbitgames.com/rpc"
+        local token = "igw-dev-token"
 
         if RunService:IsStudio() then
-            local HttpService = game:GetService("HttpService")
-            local body = HttpService:JSONEncode({
-                action  = action,
-                payload = rpcPayload,
-            })
-            local ok, response = pcall(HttpService.RequestAsync, HttpService, {
-                Url     = "http://localhost:8091/rpc",
-                Method  = "POST",
-                Headers = {
-                    ["Content-Type"]  = "application/json",
-                    ["Authorization"] = "Bearer igw-dev-token",
-                },
-                Body = body,
-            })
-            if not ok then
-                error("[WorldClient] VPS unreachable: " .. tostring(response))
-            end
-            if not response.Success then
-                error("[WorldClient] VPS returned HTTP " .. response.StatusCode)
-            end
-            result = HttpService:JSONDecode(response.Body)
+            -- Studio: can override URL/token for local dev if needed
         else
-            local WarrenSDK = require(game:GetService("ServerStorage").WarrenSDK)
-            local ok, res = pcall(WarrenSDK.World.create, rpcPayload)
-            if not ok then
-                error("[WorldClient] SDK call failed: " .. tostring(res))
-            end
-            result = res
+            -- TODO: Production should use WarrenSDK → Registry → Lune for
+            -- license validation and usage tracking. Direct HTTP bypasses
+            -- the Registry auth chain. See DungeonOrchestrator for details.
         end
 
-        return result
+        local body = HttpService:JSONEncode({
+            action  = action,
+            payload = rpcPayload,
+        })
+        local ok, response = pcall(HttpService.RequestAsync, HttpService, {
+            Url     = url,
+            Method  = "POST",
+            Headers = {
+                ["Content-Type"]  = "application/json",
+                ["Authorization"] = "Bearer " .. token,
+            },
+            Body = body,
+        })
+        if not ok then
+            error("[WorldClient] VPS unreachable: " .. tostring(response))
+        end
+        if not response.Success then
+            error("[WorldClient] VPS returned HTTP " .. response.StatusCode)
+        end
+        return HttpService:JSONDecode(response.Body)
     end,
 
     ------------------------------------------------------------------------
@@ -236,6 +235,9 @@ return {
         -- Dispatch to DungeonOrchestrator (onChunkBuildComplete sets loaded.container)
         self:_syncCall("buildChunk", payload)
 
+        -- Fix overlap: re-carve rooms from other chunks that extend into this tile
+        self:_carveOverlapRooms(key, chunkData)
+
         -- Stash border doors for later processing
         if chunkData.borderDoors and #chunkData.borderDoors > 0 then
             self._pendingBorderDoors[key] = chunkData.borderDoors
@@ -243,38 +245,397 @@ return {
     end,
 
     _processBorderDoors = function(self)
-        -- Build border doors when both adjacent chunks are loaded
+        -- Process border doors individually: cut each door when BOTH rooms' chunks are loaded.
+        -- Per-door granularity prevents one unresolved door from blocking all doors in a chunk.
+        -- Dedup: border doors are stored in BOTH chunks by the chunker, so the same door
+        -- can appear under two chunk keys. Use door.id to skip duplicates.
+        local readyDoors = {}
+        local seen = {}
+
         for key, doors in pairs(self._pendingBorderDoors) do
-            local allLoaded = true
+            local remaining = {}
             for _, door in ipairs(doors) do
-                local roomAChunk = self:_findRoomChunk(door.fromRoom)
-                local roomBChunk = self:_findRoomChunk(door.toRoom)
-                if not (roomAChunk and self._loadedChunks[roomAChunk]
-                    and roomBChunk and self._loadedChunks[roomBChunk]) then
-                    allLoaded = false
-                    break
+                local fromChunk = self:_findRoomChunk(door.fromRoom)
+                local toChunk = self:_findRoomChunk(door.toRoom)
+                if fromChunk and self._loadedChunks[fromChunk]
+                    and toChunk and self._loadedChunks[toChunk] then
+                    -- Dedup by door identity (fromRoom-toRoom pair)
+                    local doorKey = door.fromRoom .. "-" .. door.toRoom
+                    if not seen[doorKey] then
+                        seen[doorKey] = true
+                        table.insert(readyDoors, door)
+                    end
+                else
+                    table.insert(remaining, door)
+                end
+            end
+            self._pendingBorderDoors[key] = #remaining > 0 and remaining or nil
+        end
+
+        if #readyDoors > 0 then
+            self:_cutBorderDoors(readyDoors)
+        end
+    end,
+
+    _cutBorderDoors = function(self, doors)
+        local dungeon = self._dungeonContainer
+        if not dungeon then return end
+
+        -- Build room container lookup from workspace.Dungeon descendants
+        local roomContainers = {}
+        for _, child in ipairs(dungeon:GetDescendants()) do
+            if child:IsA("Model") then
+                local idStr = child.Name:match("^Room_(%d+)")
+                if idStr then
+                    roomContainers[tonumber(idStr)] = child
+                end
+            end
+        end
+
+        -- Global rooms for truss height calculations
+        local allRooms = self._global and self._global.rooms or {}
+
+        local terrain = workspace.Terrain
+        local wt = 1  -- wallThickness (matches DoorCutter default)
+        local floorThreshold = 6.5  -- matches TrussBuilder default
+        local hideCount = 0
+        local trussCount = 0
+
+        for _, door in ipairs(doors) do
+            if not door.center then continue end
+
+            -- Cutter geometry (same as DoorCutter._cutDoors)
+            local cutterDepth = wt * 8
+            local cutterSize
+            if door.axis == 2 then
+                cutterSize = Vector3.new(door.width, cutterDepth, door.height)
+            else
+                if door.widthAxis == 1 then
+                    cutterSize = Vector3.new(door.width, door.height, cutterDepth)
+                else
+                    cutterSize = Vector3.new(cutterDepth, door.height, door.width)
+                end
+            end
+            local cutterPos = Vector3.new(door.center[1], door.center[2], door.center[3])
+
+            -- Hide wall parts in both rooms
+            for _, roomId in ipairs({ door.fromRoom, door.toRoom }) do
+                local container = roomContainers[roomId]
+                if container then
+                    for _, child in ipairs(container:GetChildren()) do
+                        if child:IsA("BasePart") and (
+                            child.Name:match("^Wall") or
+                            child.Name == "Floor" or
+                            child.Name == "Ceiling"
+                        ) then
+                            -- AABB intersection check
+                            local wPos = child.Position
+                            local wSize = child.Size
+                            local intersects = true
+
+                            for axis = 1, 3 do
+                                local prop = axis == 1 and "X" or axis == 2 and "Y" or "Z"
+                                if wPos[prop] + wSize[prop] / 2 <= cutterPos[prop] - cutterSize[prop] / 2
+                                    or cutterPos[prop] + cutterSize[prop] / 2 <= wPos[prop] - wSize[prop] / 2 then
+                                    intersects = false
+                                    break
+                                end
+                            end
+
+                            if intersects then
+                                child.Transparency = 1
+                                child.CanCollide = false
+                                hideCount = hideCount + 1
+                            end
+                        end
+                    end
                 end
             end
 
-            if allLoaded then
-                -- All rooms for these border doors are loaded — build them
-                self.Out:Fire("buildBorderDoors", {
-                    doors = doors,
-                    chunkKey = key,
-                })
-                self._pendingBorderDoors[key] = nil
+            -- Carve doorway terrain
+            local terrainClearSize = cutterSize + Vector3.new(VOXEL, VOXEL, VOXEL)
+            terrain:FillBlock(CFrame.new(cutterPos), terrainClearSize, Enum.Material.Air)
+
+            ----------------------------------------------------------------
+            -- Truss placement (same logic as TrussBuilder, but direct instances)
+            ----------------------------------------------------------------
+
+            local roomA = allRooms[tostring(door.fromRoom)]
+            local roomB = allRooms[tostring(door.toRoom)]
+            if roomA and roomB then
+                if door.axis == 2 then
+                    -- Ceiling hole: truss from lower floor to upper floor
+                    local lowerRoom, upperRoom
+                    if roomA.position[2] < roomB.position[2] then
+                        lowerRoom, upperRoom = roomA, roomB
+                    else
+                        lowerRoom, upperRoom = roomB, roomA
+                    end
+
+                    local lowerFloor = lowerRoom.position[2] - lowerRoom.dims[2] / 2
+                    local upperFloor = upperRoom.position[2] - upperRoom.dims[2] / 2
+                    local trussHeight = upperFloor - lowerFloor
+
+                    if trussHeight > 0 then
+                        local trussX = door.center[1] - door.width / 2 + 1
+                        local truss = Instance.new("TrussPart")
+                        truss.Name = "BorderTruss"
+                        truss.Size = Vector3.new(2, trussHeight, 2)
+                        truss.CFrame = CFrame.new(trussX, lowerFloor + trussHeight / 2, door.center[3])
+                        truss.Anchored = true
+                        truss.Material = Enum.Material.DiamondPlate
+                        truss.Color = Color3.fromRGB(80, 80, 80)
+                        truss.Parent = dungeon
+                        trussCount = trussCount + 1
+                    end
+                else
+                    -- Wall door: check each room for height drop-off
+                    for _, entry in ipairs({
+                        { room = roomA },
+                        { room = roomB },
+                    }) do
+                        local room = entry.room
+                        local wallBottom = room.position[2] - room.dims[2] / 2
+                        local holeBottom = door.bottom
+                        if holeBottom then
+                            local dist = holeBottom - wallBottom
+                            if dist > floorThreshold then
+                                local trussPos = {
+                                    door.center[1],
+                                    wallBottom + dist / 2,
+                                    door.center[3],
+                                }
+                                -- Offset truss into the room (away from door center)
+                                local dirToRoom = room.position[door.axis] > door.center[door.axis] and 1 or -1
+                                trussPos[door.axis] = door.center[door.axis] + dirToRoom * (wt / 2 + 3)
+
+                                local truss = Instance.new("TrussPart")
+                                truss.Name = "BorderTruss"
+                                truss.Size = Vector3.new(2, dist, 2)
+                                truss.CFrame = CFrame.new(trussPos[1], trussPos[2], trussPos[3])
+                                truss.Anchored = true
+                                truss.Material = Enum.Material.DiamondPlate
+                                truss.Color = Color3.fromRGB(80, 80, 80)
+                                truss.Parent = dungeon
+                                trussCount = trussCount + 1
+                            end
+                        end
+                    end
+                end
             end
+        end
+
+        if hideCount > 0 or trussCount > 0 then
+            print(string.format("[WorldClient] Cut %d border door walls, placed %d trusses (%d doors)",
+                hideCount, trussCount, #doors))
         end
     end,
 
     _findRoomChunk = function(self, roomId)
+        local roomKey = tostring(roomId)
         for key, loaded in pairs(self._loadedChunks) do
             if loaded.chunkData and loaded.chunkData.rooms
-                and loaded.chunkData.rooms[roomId] then
+                and loaded.chunkData.rooms[roomKey] then
                 return key
             end
         end
         return nil
+    end,
+
+    ------------------------------------------------------------------------
+    -- Overlap room terrain fix: re-carve rooms from other chunks that
+    -- extend into this tile (their interiors were overwritten by the
+    -- height field painted for this tile).
+    ------------------------------------------------------------------------
+
+    _carveOverlapRooms = function(self, chunkKey, chunkData)
+        local global = self._global
+        if not global or not global.rooms then return end
+
+        local grid = self._chunkGrid
+        local terrain = workspace.Terrain
+        -- Room terrain always uses ice biome override (same as DungeonOrchestrator._runChunkBuild)
+        local floorMaterial = Enum.Material.Snow
+        local wallMaterial = Enum.Material.Glacier
+
+        -- Chunk tile bounds
+        local tMinX = chunkData.worldMinX
+        local tMinZ = chunkData.worldMinZ
+        local tMaxX = tMinX + grid.chunkSize
+        local tMaxZ = tMinZ + grid.chunkSize
+
+        -- This chunk's own rooms (string keys — skip these, already handled by pipeline)
+        local ownRooms = chunkData.rooms or {}
+        local allRooms = global.rooms
+
+        -- Build door-face map for all global rooms (same logic as IceTerrainPainter)
+        local roomDoorFaces = {}
+        for _, door in ipairs(global.doors or {}) do
+            local fid = tostring(door.fromRoom)
+            local tid = tostring(door.toRoom)
+            local roomA = allRooms[fid]
+            local roomB = allRooms[tid]
+            if not (roomA and roomB) then continue end
+
+            if door.axis == 1 then
+                if roomA.position[1] < roomB.position[1] then
+                    roomDoorFaces[fid] = roomDoorFaces[fid] or {}
+                    roomDoorFaces[fid]["E"] = true
+                    roomDoorFaces[tid] = roomDoorFaces[tid] or {}
+                    roomDoorFaces[tid]["W"] = true
+                else
+                    roomDoorFaces[fid] = roomDoorFaces[fid] or {}
+                    roomDoorFaces[fid]["W"] = true
+                    roomDoorFaces[tid] = roomDoorFaces[tid] or {}
+                    roomDoorFaces[tid]["E"] = true
+                end
+            elseif door.axis == 3 then
+                if roomA.position[3] < roomB.position[3] then
+                    roomDoorFaces[fid] = roomDoorFaces[fid] or {}
+                    roomDoorFaces[fid]["N"] = true
+                    roomDoorFaces[tid] = roomDoorFaces[tid] or {}
+                    roomDoorFaces[tid]["S"] = true
+                else
+                    roomDoorFaces[fid] = roomDoorFaces[fid] or {}
+                    roomDoorFaces[fid]["S"] = true
+                    roomDoorFaces[tid] = roomDoorFaces[tid] or {}
+                    roomDoorFaces[tid]["N"] = true
+                end
+            end
+        end
+
+        -- Index doors by room (string keys) for doorway carving
+        local doorsByRoom = {}
+        for _, door in ipairs(global.doors or {}) do
+            local fid = tostring(door.fromRoom)
+            local tid = tostring(door.toRoom)
+            doorsByRoom[fid] = doorsByRoom[fid] or {}
+            table.insert(doorsByRoom[fid], door)
+            if fid ~= tid then
+                doorsByRoom[tid] = doorsByRoom[tid] or {}
+                table.insert(doorsByRoom[tid], door)
+            end
+        end
+
+        local overlapCount = 0
+
+        for roomIdStr, room in pairs(allRooms) do
+            -- Skip rooms owned by this chunk
+            if ownRooms[roomIdStr] then continue end
+
+            local pos = room.position
+            local dims = room.dims
+            if not pos or not dims then continue end
+
+            -- AABB overlap: room vs chunk tile (XZ plane)
+            local rMinX = pos[1] - dims[1] / 2
+            local rMaxX = pos[1] + dims[1] / 2
+            local rMinZ = pos[3] - dims[3] / 2
+            local rMaxZ = pos[3] + dims[3] / 2
+
+            if rMaxX <= tMinX or rMinX >= tMaxX
+                or rMaxZ <= tMinZ or rMinZ >= tMaxZ then
+                continue
+            end
+
+            -- Skip rooms fully above terrain surface (let natural geology show)
+            local aboveTerrain = false
+            if self._heightField and self._hfGridW then
+                local roomBottom = pos[2] - dims[2] / 2
+                local pts = {
+                    { pos[1], pos[3] },
+                    { pos[1] - dims[1]/2, pos[3] - dims[3]/2 },
+                    { pos[1] + dims[1]/2, pos[3] - dims[3]/2 },
+                    { pos[1] - dims[1]/2, pos[3] + dims[3]/2 },
+                    { pos[1] + dims[1]/2, pos[3] + dims[3]/2 },
+                }
+                aboveTerrain = true
+                for _, pt in ipairs(pts) do
+                    local xi = floor((pt[1] - self._hfMinX) / VOXEL) + 1
+                    local zi = floor((pt[2] - self._hfMinZ) / VOXEL) + 1
+                    xi = max(1, min(self._hfGridW, xi))
+                    zi = max(1, min(self._hfGridD, zi))
+                    if self._heightField[xi][zi] >= roomBottom then
+                        aboveTerrain = false
+                        break
+                    end
+                end
+            end
+
+            -- This room overlaps this chunk's tile but belongs to another chunk.
+            -- Terrain height field was written over it — replay IceTerrainPainter ops.
+            -- (skip artificial terrain for rooms fully above terrain surface)
+
+            -- 1. Fill door-wall slabs (skip for above-terrain rooms)
+            if not aboveTerrain then
+                local doorFaces = roomDoorFaces[roomIdStr]
+                if doorFaces then
+                    for face in pairs(doorFaces) do
+                        local cf, sz
+                        if face == "N" then
+                            cf = CFrame.new(pos[1], pos[2], pos[3] + dims[3]/2 + VOXEL/2)
+                            sz = Vector3.new(dims[1] + 2*VOXEL, dims[2] + 2*VOXEL, VOXEL * 2)
+                        elseif face == "S" then
+                            cf = CFrame.new(pos[1], pos[2], pos[3] - dims[3]/2 - VOXEL/2)
+                            sz = Vector3.new(dims[1] + 2*VOXEL, dims[2] + 2*VOXEL, VOXEL * 2)
+                        elseif face == "E" then
+                            cf = CFrame.new(pos[1] + dims[1]/2 + VOXEL/2, pos[2], pos[3])
+                            sz = Vector3.new(VOXEL * 2, dims[2] + 2*VOXEL, dims[3] + 2*VOXEL)
+                        elseif face == "W" then
+                            cf = CFrame.new(pos[1] - dims[1]/2 - VOXEL/2, pos[2], pos[3])
+                            sz = Vector3.new(VOXEL * 2, dims[2] + 2*VOXEL, dims[3] + 2*VOXEL)
+                        end
+                        if cf then
+                            terrain:FillBlock(cf, sz, wallMaterial)
+                        end
+                    end
+                end
+            end
+
+            -- 2. Carve room interior (always — safety net)
+            terrain:FillBlock(
+                CFrame.new(pos[1], pos[2], pos[3]),
+                Vector3.new(dims[1], dims[2], dims[3]),
+                Enum.Material.Air
+            )
+
+            -- 3. Paint floor (skip for above-terrain rooms)
+            if not aboveTerrain then
+                local floorY = pos[2] - dims[2] / 2 - VOXEL / 2
+                terrain:FillBlock(
+                    CFrame.new(pos[1], floorY, pos[3]),
+                    Vector3.new(dims[1] + VOXEL * 2, VOXEL, dims[3] + VOXEL * 2),
+                    floorMaterial
+                )
+            end
+
+            -- 4. Carve doorway terrain for this room's doors
+            local roomDoors = doorsByRoom[roomIdStr] or {}
+            for _, door in ipairs(roomDoors) do
+                if not door.center then continue end
+                local dc = door.center
+                local cutterPos = Vector3.new(dc[1], dc[2], dc[3])
+                local cutterSize
+                if door.axis == 2 then
+                    cutterSize = Vector3.new(door.width, 8, door.height)
+                else
+                    if door.widthAxis == 1 then
+                        cutterSize = Vector3.new(door.width, door.height, 8)
+                    else
+                        cutterSize = Vector3.new(8, door.height, door.width)
+                    end
+                end
+                local terrainClearSize = cutterSize + Vector3.new(VOXEL, VOXEL, VOXEL)
+                terrain:FillBlock(CFrame.new(cutterPos), terrainClearSize, Enum.Material.Air)
+            end
+
+            overlapCount = overlapCount + 1
+        end
+
+        if overlapCount > 0 then
+            print(string.format("[WorldClient] Carved %d overlap rooms for chunk %s",
+                overlapCount, chunkKey))
+        end
     end,
 
     ------------------------------------------------------------------------

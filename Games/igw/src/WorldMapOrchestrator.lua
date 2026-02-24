@@ -160,12 +160,26 @@ return {
     -- walls, CSG door holes at full scale, scale to 1/100, parent to
     -- ReplicatedStorage.MiniMapGeo. Client clones from there.
     -- Runs in background, processes rooms as they appear (DescendantAdded).
+    --
+    -- BUG (2026-02-24): Some rooms occasionally produce no minimap geometry.
+    -- The room Model exists in workspace.Dungeon and gets processed, but
+    -- either SubtractAsync fails silently, children haven't replicated when
+    -- processRoom runs, or the room container has no Floor/Wall_ children
+    -- at the moment of processing. The proximity gate (chunkGrid path) may
+    -- exacerbate this if DescendantAdded fires before the room's children
+    -- are fully parented. Workaround: rooms without geometry simply don't
+    -- appear on the minimap. No crash, just missing tiles.
     ------------------------------------------------------------------------
 
-    _buildMiniMapGeo = function(self, doors, mapCenter, wallThickness)
+    _buildMiniMapGeo = function(self, doors, mapCenter, wallThickness, chunkGrid, allRooms)
         local RS = game:GetService("ReplicatedStorage")
+        local Players = game:GetService("Players")
         local wt = wallThickness or 2
         local SCALE = 1 / 100
+        local floor = math.floor
+        local max = math.max
+        local min = math.min
+        local abs = math.abs
 
         -- Clean up previous
         local oldGeo = RS:FindFirstChild("MiniMapGeo")
@@ -192,6 +206,16 @@ return {
         local mc = mapCenter
         local processed = {}
 
+        -- Inline chunk coord helper (mirrors WorldClient._worldToChunk)
+        local function worldToChunk(worldX, worldZ)
+            if not chunkGrid then return 0, 0 end
+            local cx = floor((worldX - chunkGrid.mapMinX) / chunkGrid.chunkSize)
+            local cz = floor((worldZ - chunkGrid.mapMinZ) / chunkGrid.chunkSize)
+            cx = max(0, min(chunkGrid.sizeX - 1, cx))
+            cz = max(0, min(chunkGrid.sizeZ - 1, cz))
+            return cx, cz
+        end
+
         local function processRoom(roomContainer)
             if not self._miniMapRunning then return end
             local idStr = roomContainer.Name:match("^Room_(%d+)")
@@ -204,52 +228,44 @@ return {
             roomModel.Name = "Room_" .. roomId
             roomModel:SetAttribute("RoomId", roomId)
 
-            -- Clone Floor — always
-            local floorPart = roomContainer:FindFirstChild("Floor")
-            if floorPart and floorPart:IsA("BasePart") then
-                local f = floorPart:Clone()
-                local wp = f.Position
-                f.Size = f.Size * SCALE
-                f.CFrame = CFrame.new(
-                    (wp.X - mc[1]) * SCALE,
-                    (wp.Y - mc[2]) * SCALE,
-                    (wp.Z - mc[3]) * SCALE
-                )
-                f.Anchored = true
-                f.CanCollide = false
-                f.Material = Enum.Material.SmoothPlastic
-                f:SetAttribute("IsFloor", true)
-                f.Parent = roomModel
-            end
-
-            -- Collect Wall_* parts
-            local wallParts = {}
+            -- Collect all CSG candidates: Wall_* + Floor + Ceiling
+            local csgCandidates = {}
+            local floorPart = nil
             for _, child in ipairs(roomContainer:GetChildren()) do
-                if child:IsA("BasePart") and child.Name:match("^Wall_") then
-                    wallParts[child.Name] = child
+                if child:IsA("BasePart") then
+                    if child.Name == "Floor" then
+                        floorPart = child
+                        csgCandidates[child.Name] = child
+                    elseif child.Name:match("^Wall_") or child.Name == "Ceiling" then
+                        csgCandidates[child.Name] = child
+                    end
                 end
             end
 
-            -- For each door touching this room, find intersecting walls → CSG
-            local wallsToCSG = {} -- { [wallName] = { part, cutters = {{size,pos},...} } }
+            -- For each door touching this room, find intersecting parts → CSG
+            local partsToCSG = {} -- { [partName] = { part, cutters = {{size,pos},...} } }
             local roomDoors = doorsByRoom[roomId] or {}
 
             for _, door in ipairs(roomDoors) do
                 if not door.center then continue end
-                if door.axis == 2 then continue end
 
                 local cutterDepth = wt * 8
                 local cutterSize
-                if door.widthAxis == 1 then
-                    cutterSize = Vector3.new(door.width, door.height, cutterDepth)
+                if door.axis == 2 then
+                    -- Ceiling/floor hole: opening spans X and Z
+                    cutterSize = Vector3.new(door.width, cutterDepth, door.height)
                 else
-                    cutterSize = Vector3.new(cutterDepth, door.height, door.width)
+                    if door.widthAxis == 1 then
+                        cutterSize = Vector3.new(door.width, door.height, cutterDepth)
+                    else
+                        cutterSize = Vector3.new(cutterDepth, door.height, door.width)
+                    end
                 end
                 local cutterPos = Vector3.new(door.center[1], door.center[2], door.center[3])
 
-                for wallName, wallPart in pairs(wallParts) do
-                    local wPos = wallPart.Position
-                    local wSize = wallPart.Size
+                for partName, partInstance in pairs(csgCandidates) do
+                    local wPos = partInstance.Position
+                    local wSize = partInstance.Size
                     local intersects = true
                     for axis = 1, 3 do
                         local prop = axis == 1 and "X" or axis == 2 and "Y" or "Z"
@@ -263,18 +279,18 @@ return {
                         end
                     end
                     if intersects then
-                        if not wallsToCSG[wallName] then
-                            wallsToCSG[wallName] = { part = wallPart, cutters = {} }
+                        if not partsToCSG[partName] then
+                            partsToCSG[partName] = { part = partInstance, cutters = {} }
                         end
-                        table.insert(wallsToCSG[wallName].cutters, {
+                        table.insert(partsToCSG[partName].cutters, {
                             size = cutterSize, pos = cutterPos,
                         })
                     end
                 end
             end
 
-            -- CSG each door wall at full scale, then scale to 1/100
-            for _, entry in pairs(wallsToCSG) do
+            -- CSG each intersecting part at full scale, then scale to 1/100
+            for partName, entry in pairs(partsToCSG) do
                 local wall = entry.part:Clone()
                 wall.Transparency = 0
                 wall.Anchored = true
@@ -317,8 +333,26 @@ return {
                     result.UsePartColor = true
                 end
                 result.Parent = nil
-                result:SetAttribute("IsFloor", false)
+                result:SetAttribute("IsFloor", partName == "Floor")
                 result.Parent = roomModel
+            end
+
+            -- Floor always shown: if it wasn't CSG'd, add a plain clone
+            if floorPart and not partsToCSG["Floor"] then
+                local f = floorPart:Clone()
+                local wp = f.Position
+                f.Size = f.Size * SCALE
+                f.CFrame = CFrame.new(
+                    (wp.X - mc[1]) * SCALE,
+                    (wp.Y - mc[2]) * SCALE,
+                    (wp.Z - mc[3]) * SCALE
+                )
+                f.Transparency = 0  -- DoorCutter/_cutBorderDoors may have hidden the original
+                f.Anchored = true
+                f.CanCollide = false
+                f.Material = Enum.Material.SmoothPlastic
+                f:SetAttribute("IsFloor", true)
+                f.Parent = roomModel
             end
 
             -- Only add if we produced something
@@ -329,12 +363,15 @@ return {
             end
         end
 
-        -- Process rooms already in Dungeon
+        -- Queue for rooms awaiting proximity check
+        local queue = {}
+
+        -- Enqueue rooms already in Dungeon
         local dungeon = workspace:FindFirstChild("Dungeon")
         if dungeon then
             for _, child in ipairs(dungeon:GetDescendants()) do
                 if child:IsA("Model") and child.Name:match("^Room_") then
-                    processRoom(child)
+                    table.insert(queue, child)
                 end
             end
 
@@ -346,12 +383,76 @@ return {
                     return
                 end
                 if desc:IsA("Model") and desc.Name:match("^Room_") then
-                    -- Defer so children are populated
-                    task.defer(function()
-                        processRoom(desc)
-                    end)
+                    if chunkGrid then
+                        -- Chunked path: enqueue for proximity check
+                        table.insert(queue, desc)
+                    else
+                        -- Monolithic path: process immediately
+                        task.defer(function()
+                            processRoom(desc)
+                        end)
+                    end
                 end
             end)
+        end
+
+        if not chunkGrid then
+            -- Monolithic path: process all queued rooms immediately, done
+            for _, roomContainer in ipairs(queue) do
+                processRoom(roomContainer)
+            end
+            return
+        end
+
+        -- Chunked path: poll loop — process rooms within miniMapCsgRadius of player
+        local radius = self:getAttribute("miniMapCsgRadius") or 3
+
+        while self._miniMapRunning do
+            -- Get first player's position
+            local playerList = Players:GetPlayers()
+            local hrp = nil
+            for _, player in ipairs(playerList) do
+                local char = player.Character
+                hrp = char and char:FindFirstChild("HumanoidRootPart")
+                if hrp then break end
+            end
+
+            if hrp then
+                local pCX, pCZ = worldToChunk(hrp.Position.X, hrp.Position.Z)
+
+                -- Drain queue: process rooms in range, keep the rest
+                local remaining = {}
+                for _, roomContainer in ipairs(queue) do
+                    if not roomContainer.Parent then
+                        -- Room was destroyed (chunk unloaded), skip
+                        continue
+                    end
+
+                    local idStr = roomContainer.Name:match("^Room_(%d+)")
+                    local roomId = idStr and tonumber(idStr)
+                    if not roomId or processed[roomId] then
+                        continue
+                    end
+
+                    -- Get room's world position from allRooms data
+                    local roomData = allRooms and allRooms[roomId]
+                    if roomData and roomData.position then
+                        local rCX, rCZ = worldToChunk(roomData.position[1], roomData.position[3])
+                        local dist = max(abs(pCX - rCX), abs(pCZ - rCZ))  -- Chebyshev
+                        if dist <= radius then
+                            processRoom(roomContainer)
+                        else
+                            table.insert(remaining, roomContainer)
+                        end
+                    else
+                        -- No room data — process anyway (safety fallback)
+                        processRoom(roomContainer)
+                    end
+                end
+                queue = remaining
+            end
+
+            task.wait(1)
         end
 
         -- Temp folder cleaned up by _destroyCurrentRegion on next transition
@@ -482,8 +583,9 @@ return {
                 -- Start background CSG for minimap walls (server-side only)
                 self._miniMapRunning = true
                 local selfRef = self
+                local wt = selfRef:getAttribute("wallThickness") or 2
                 task.spawn(function()
-                    selfRef:_buildMiniMapGeo(doors, mapCenter, selfRef:getAttribute("wallThickness") or 2)
+                    selfRef:_buildMiniMapGeo(doors, mapCenter, wt, global.chunkGrid, rooms)
                 end)
             end
 
@@ -629,7 +731,7 @@ return {
             local selfRef = self
             local monolithicDoors = payload.doors or {}
             task.spawn(function()
-                selfRef:_buildMiniMapGeo(monolithicDoors, mapCenter, monolithicWt)
+                selfRef:_buildMiniMapGeo(monolithicDoors, mapCenter, monolithicWt, nil, nil)
             end)
 
             -- Enable map opening now that player is spawned

@@ -228,6 +228,7 @@ return {
         self:_syncCall("applyDoors", payload)          -- DoorPlanner phase 2
         self:_syncCall("cutDoors", payload)            -- DoorCutter alias
         self:_syncCall("spawnPassages", payload)       -- PassageNode
+        self:_syncCall("spawnItems", payload)          -- ItemNode
 
         self._dungeonContainer = payload.container
 
@@ -360,6 +361,7 @@ return {
             self:_syncCall("applyDoors", payload)
             self:_syncCall("cutDoors", payload)
             self:_syncCall("spawnPassages", payload)       -- PassageNode
+            self:_syncCall("spawnItems", payload)          -- ItemNode
 
             self._dungeonContainer = payload.container
 

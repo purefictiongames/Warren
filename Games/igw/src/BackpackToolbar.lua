@@ -1,9 +1,8 @@
 --[[
-    IGW Phase 1 — BackpackToolbar (Client Node)
-    Minimal toolbar UI for testing door interactions.
-    Shows 3 item slots (key, weapon, bomb) at bottom of screen.
-    Press 1/2/3 or click to select. Selection fires to server.
-    Throwaway scaffolding — Phase 2 builds the real inventory UI.
+    IGW Phase 2 — BackpackToolbar (Client Node)
+    Dynamic toolbar UI for inventory. Shows 4 backpack slots at bottom of screen.
+    Slots update in real-time as items are picked up, used, or dropped.
+    Press 1-4 or click to select. Right-click to drop.
 --]]
 
 return {
@@ -15,11 +14,13 @@ return {
             self._gui = nil
             self._slots = {}
             self._selected = 1
+            self._capacity = 4
         end,
 
         onStart = function(self)
             self:_createUI()
             self:_bindInput()
+            self:_bindUpdates()
             -- Delay initial query to let server create RemoteFunction
             task.delay(2, function()
                 self:_refresh()
@@ -49,8 +50,8 @@ return {
         -- Toolbar container at bottom center
         local frame = Instance.new("Frame")
         frame.Name = "Toolbar"
-        frame.Size = UDim2.new(0, 260, 0, 56)
-        frame.Position = UDim2.new(0.5, -130, 1, -72)
+        frame.Size = UDim2.new(0, 340, 0, 56)
+        frame.Position = UDim2.new(0.5, -170, 1, -72)
         frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
         frame.BackgroundTransparency = 0.3
         frame.BorderSizePixel = 0
@@ -67,22 +68,22 @@ return {
         layout.Padding = UDim.new(0, 6)
         layout.Parent = frame
 
-        local slotNames = { "Key", "Weapon", "Bomb" }
-        local slotColors = {
-            Color3.fromRGB(80, 120, 220),   -- key: blue
-            Color3.fromRGB(220, 60, 60),    -- weapon: red
-            Color3.fromRGB(220, 140, 40),   -- bomb: orange
+        -- Item type colors for display
+        local typeColors = {
+            key    = Color3.fromRGB(80, 120, 220),
+            weapon = Color3.fromRGB(220, 60, 60),
+            bomb   = Color3.fromRGB(220, 140, 40),
         }
 
-        for i = 1, 3 do
+        for i = 1, self._capacity do
             local slot = Instance.new("TextButton")
             slot.Name = "Slot_" .. i
             slot.Size = UDim2.new(0, 76, 0, 44)
             slot.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
             slot.BorderSizePixel = 2
             slot.BorderColor3 = Color3.fromRGB(60, 60, 60)
-            slot.Text = slotNames[i]
-            slot.TextColor3 = slotColors[i]
+            slot.Text = ""
+            slot.TextColor3 = Color3.fromRGB(180, 180, 180)
             slot.TextSize = 13
             slot.Font = Enum.Font.GothamBold
             slot.AutoButtonColor = false
@@ -97,7 +98,7 @@ return {
             countLabel.Size = UDim2.new(0, 20, 0, 14)
             countLabel.Position = UDim2.new(1, -22, 0, 2)
             countLabel.BackgroundTransparency = 1
-            countLabel.Text = "0"
+            countLabel.Text = ""
             countLabel.TextColor3 = Color3.fromRGB(160, 160, 160)
             countLabel.TextSize = 10
             countLabel.Font = Enum.Font.GothamBold
@@ -116,11 +117,21 @@ return {
             keyLabel.TextXAlignment = Enum.TextXAlignment.Left
             keyLabel.Parent = slot
 
+            -- Left-click to select
             slot.MouseButton1Click:Connect(function()
                 self:_selectSlot(i)
             end)
 
-            self._slots[i] = { button = slot, countLabel = countLabel }
+            -- Right-click to drop
+            slot.MouseButton2Click:Connect(function()
+                self:_dropSlot(i)
+            end)
+
+            self._slots[i] = {
+                button = slot,
+                countLabel = countLabel,
+                typeColors = typeColors,
+            }
         end
 
         self._gui = sg
@@ -134,6 +145,7 @@ return {
                 [Enum.KeyCode.One] = 1,
                 [Enum.KeyCode.Two] = 2,
                 [Enum.KeyCode.Three] = 3,
+                [Enum.KeyCode.Four] = 4,
             }
             local slot = keyMap[input.KeyCode]
             if slot then
@@ -142,9 +154,22 @@ return {
         end)
     end,
 
-    _selectSlot = function(self, slotIndex)
-        self._selected = slotIndex
+    _bindUpdates = function(self)
+        -- Listen for server-pushed inventory updates
+        local ReplicatedStorage = game:GetService("ReplicatedStorage")
+        task.spawn(function()
+            local updateEvent = ReplicatedStorage:WaitForChild("BackpackUpdate", 10)
+            if updateEvent then
+                updateEvent.OnClientEvent:Connect(function(data)
+                    self:_applyInventory(data)
+                end)
+            end
+        end)
+    end,
 
+    --- Visual-only highlight (no server fire). Used by _applyInventory.
+    _highlightSlot = function(self, slotIndex)
+        self._selected = slotIndex
         for i, slotData in ipairs(self._slots) do
             if i == slotIndex then
                 slotData.button.BorderColor3 = Color3.fromRGB(255, 200, 50)
@@ -154,11 +179,59 @@ return {
                 slotData.button.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
             end
         end
+    end,
+
+    --- User-initiated selection: update visual + tell server.
+    _selectSlot = function(self, slotIndex)
+        self:_highlightSlot(slotIndex)
 
         local ReplicatedStorage = game:GetService("ReplicatedStorage")
         local selectEvent = ReplicatedStorage:FindFirstChild("BackpackSelect")
         if selectEvent then
             selectEvent:FireServer(slotIndex)
+        end
+    end,
+
+    _dropSlot = function(self, slotIndex)
+        local ReplicatedStorage = game:GetService("ReplicatedStorage")
+        local dropEvent = ReplicatedStorage:FindFirstChild("BackpackDrop")
+        if dropEvent then
+            dropEvent:FireServer(slotIndex)
+        end
+    end,
+
+    _applyInventory = function(self, data)
+        if not data or not data.slots then return end
+        local typeColors = {
+            key    = Color3.fromRGB(80, 120, 220),
+            weapon = Color3.fromRGB(220, 60, 60),
+            bomb   = Color3.fromRGB(220, 140, 40),
+        }
+        local typeNames = {
+            key    = "Key",
+            weapon = "Weapon",
+            bomb   = "Bomb",
+        }
+
+        for i, slot in ipairs(data.slots) do
+            local slotData = self._slots[i]
+            if not slotData then break end
+
+            if slot and slot ~= false and slot.name then
+                local displayName = typeNames[slot.name] or slot.name
+                slotData.button.Text = displayName
+                slotData.button.TextColor3 = typeColors[slot.name]
+                    or Color3.fromRGB(180, 180, 180)
+                slotData.countLabel.Text = tostring(slot.count)
+            else
+                slotData.button.Text = ""
+                slotData.button.TextColor3 = Color3.fromRGB(80, 80, 80)
+                slotData.countLabel.Text = ""
+            end
+        end
+
+        if data.selected then
+            self:_highlightSlot(data.selected)
         end
     end,
 
@@ -168,15 +241,8 @@ return {
         if not queryFunc then return end
 
         local ok, data = pcall(queryFunc.InvokeServer, queryFunc)
-        if ok and data and data.slots then
-            for i, slot in ipairs(data.slots) do
-                if self._slots[i] then
-                    self._slots[i].countLabel.Text = tostring(slot.count)
-                end
-            end
-            if data.selected then
-                self:_selectSlot(data.selected)
-            end
+        if ok and data then
+            self:_applyInventory(data)
         end
     end,
 

@@ -219,7 +219,7 @@ local _backpackStub = nil
 
 local function getBackpackStub()
     if _backpackStub then return _backpackStub end
-    local mod = _components:FindFirstChild("BackpackStub")
+    local mod = _components:FindFirstChild("Backpack")
     if mod then
         _backpackStub = require(mod)
         _backpackStub.serverInit()

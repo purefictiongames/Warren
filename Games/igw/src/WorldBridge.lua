@@ -218,6 +218,26 @@ return {
             chunkKey = key,
         }
 
+        -- Apply resolved door types from DependencyResolver
+        if self._doorTypeLookup then
+            for _, door in ipairs(chunkData.doors or {}) do
+                local dkey = tostring(door.fromRoom) .. "-" .. tostring(door.toRoom)
+                door.type = self._doorTypeLookup[dkey] or "auto"
+            end
+        end
+
+        -- Filter item placements for this chunk's rooms
+        if self._globalItemPlacements then
+            local chunkItems = {}
+            for _, placement in ipairs(self._globalItemPlacements) do
+                local roomKey = tostring(placement.roomId)
+                if chunkData.rooms and (chunkData.rooms[roomKey] or chunkData.rooms[placement.roomId]) then
+                    table.insert(chunkItems, placement)
+                end
+            end
+            payload.itemPlacements = chunkItems
+        end
+
         -- Height field stored from initial compute
         payload.heightField      = self._heightField
         payload.heightFieldGridW = self._hfGridW
@@ -856,6 +876,55 @@ return {
                     Debug.info("WorldBridge", "World created:", selfRef._worldId,
                         "seed:", global.seed,
                         "grid:", global.chunkGrid.sizeX .. "x" .. global.chunkGrid.sizeZ)
+                end
+
+                --------------------------------------------------------
+                -- Step 1.5: Resolve dependencies on full map
+                -- Run DependencyResolver on ALL rooms/doors before
+                -- chunking so each chunk inherits resolved gate types
+                -- and item placements.
+                --------------------------------------------------------
+
+                local resolverMod = script.Parent.Pipeline:FindFirstChild("DependencyResolver")
+                if resolverMod and global.rooms and global.doors then
+                    local DependencyResolver = require(resolverMod)
+                    local resolverResult = DependencyResolver.resolve(
+                        global.rooms, global.doors, global.spawn,
+                        { gateCountMin = 1, gateCountMax = 3, maxKeyDistance = 4, branchGateChance = 0.3 },
+                        global.seed
+                    )
+
+                    -- Build identity lookup from post-resolve state
+                    selfRef._doorTypeLookup = resolverResult.doorTypesByIdentity
+                    selfRef._globalItemPlacements = resolverResult.itemPlacements or {}
+
+                    -- Override border doors to auto (no passage support across chunks)
+                    local grid = global.chunkGrid
+                    if grid and grid.chunkSize then
+                        local allRooms = global.rooms
+                        for _, door in ipairs(global.doors) do
+                            local roomA = allRooms[tostring(door.fromRoom)] or allRooms[door.fromRoom]
+                            local roomB = allRooms[tostring(door.toRoom)] or allRooms[door.toRoom]
+                            if roomA and roomB then
+                                local cxA = math.floor((roomA.position[1] - grid.mapMinX) / grid.chunkSize)
+                                local czA = math.floor((roomA.position[3] - grid.mapMinZ) / grid.chunkSize)
+                                local cxB = math.floor((roomB.position[1] - grid.mapMinX) / grid.chunkSize)
+                                local czB = math.floor((roomB.position[3] - grid.mapMinZ) / grid.chunkSize)
+                                if cxA ~= cxB or czA ~= czB then
+                                    local key = tostring(door.fromRoom) .. "-" .. tostring(door.toRoom)
+                                    selfRef._doorTypeLookup[key] = "auto"
+                                    door.type = "auto"
+                                end
+                            end
+                        end
+                    end
+
+                    if Debug then
+                        Debug.info("WorldBridge", "Resolved dependencies:",
+                            #resolverResult.itemPlacements, "items,",
+                            #resolverResult.criticalPath, "room path,",
+                            "valid:", resolverResult.valid)
+                    end
                 end
 
                 --------------------------------------------------------

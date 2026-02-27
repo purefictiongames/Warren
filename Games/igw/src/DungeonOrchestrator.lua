@@ -211,15 +211,7 @@ return {
         self:_syncCall("placeRooms", payload)          -- MountainRoomPlacer
         self:_syncCall("buildShells", payload)         -- ShellBuilder
         self:_syncCall("planDoors", payload)            -- DoorPlanner
-
-        -- Test harness: tag first few doors with different types
-        -- so all 4 door types are testable near spawn
-        if payload.doors and #payload.doors >= 4 then
-            payload.doors[1].type = "auto"
-            payload.doors[2].type = "keyed"
-            payload.doors[3].type = "shootThrough"
-            payload.doors[4].type = "destructible"
-        end
+        self:_syncCall("resolveDependencies", payload) -- DependencyResolver
 
         self:_syncCall("buildTrusses", payload)        -- TrussBuilder
         self:_syncCall("buildLights", payload)         -- LightBuilder (skips — skipLights)
@@ -346,12 +338,23 @@ return {
             self:_syncCall("buildShells", payload)
             self:_syncCall("planDoors", payload)
 
-            -- Test harness: tag first few doors per chunk with different types
-            if payload.doors and #payload.doors >= 4 then
-                payload.doors[1].type = "auto"
-                payload.doors[2].type = "keyed"
-                payload.doors[3].type = "shootThrough"
-                payload.doors[4].type = "destructible"
+            -- Door types + item placements pre-resolved by WorldBridge.
+            -- Bake resolver items into DOM room nodes so downstream reads from DOM.
+            if payload.itemPlacements then
+                local roomNodes = {}
+                for _, child in ipairs(Dom.getChildren(Dom.getRoot())) do
+                    local rid = Dom.getAttribute(child, "RoomId")
+                    if rid then roomNodes[tonumber(rid) or rid] = child end
+                end
+                for _, placement in ipairs(payload.itemPlacements) do
+                    local rid = tonumber(placement.roomId) or placement.roomId
+                    local node = roomNodes[rid]
+                    if node then
+                        local items = Dom.getAttribute(node, "ResolverItems") or {}
+                        table.insert(items, placement.itemType)
+                        Dom.setAttribute(node, "ResolverItems", items)
+                    end
+                end
             end
 
             self:_syncCall("buildTrusses", payload)

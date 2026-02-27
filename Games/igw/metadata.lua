@@ -18,6 +18,7 @@ return {
         "MountainRoomPlacer", "ShellBuilder", "DoorPlanner",
         "TrussBuilder", "LightBuilder", "Materializer",
         "IceTerrainPainter", "DoorCutter",
+        "DependencyResolver",
         "PassageNode",
         "ItemNode",
         "BackpackToolbar",
@@ -191,7 +192,8 @@ return {
                 "TerrainPainterNode", "MeshTerrainPainterNode", "RockScatterNode",
                 "MountainRoomPlacer", "ShellBuilder", "DoorPlanner",
                 "TrussBuilder", "LightBuilder", "Materializer",
-                "IceTerrainPainter", "DoorCutter", "PassageNode", "ItemNode",
+                "IceTerrainPainter", "DoorCutter",
+                "DependencyResolver", "PassageNode", "ItemNode",
                 "WorldMapOrchestrator", "WorldBridge",
             },
             InventoryNode           = { "DungeonOrchestrator" },
@@ -208,6 +210,7 @@ return {
             Materializer            = { "DungeonOrchestrator" },
             IceTerrainPainter       = { "DungeonOrchestrator" },
             DoorCutter              = { "DungeonOrchestrator" },
+            DependencyResolver      = { "DungeonOrchestrator" },
             PassageNode             = { "DungeonOrchestrator" },
             ItemNode                = { "DungeonOrchestrator" },
             BackpackToolbar         = {},
@@ -304,6 +307,13 @@ return {
         minVerticalRatio = 0.2,
         scaleRange = { min = 4, max = 12, minY = 4, maxY = 8 },
         origin = { 0, 40, 0 },
+    },
+
+    DependencyResolver = {
+        gateCountMin = 1,       -- min gates on critical path
+        gateCountMax = 3,       -- max gates on critical path
+        maxKeyDistance = 4,     -- max rooms between item and its gate (higher = harder)
+        branchGateChance = 0.3, -- probability of gating a branch entrance
     },
 
     PassageNode = {

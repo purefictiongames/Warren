@@ -246,67 +246,100 @@ return {
 
     In = {
         onSpawnItems = function(self, payload)
+            local Dom = _G.Warren.Dom
             local rooms = payload.rooms or {}
-            local doors = payload.doors or {}
-            local spawn = payload.spawn
             local container = payload.container
 
             -- Initialize backpack system
             getBackpack()
 
-            -- Collect rooms sorted by distance from spawn
-            local spawnPos = spawn and spawn.position or { 0, 0, 0 }
-            local roomList = {}
-            for id, room in pairs(rooms) do
-                local dx = room.position[1] - spawnPos[1]
-                local dz = room.position[3] - spawnPos[3]
-                local dist = math.sqrt(dx * dx + dz * dz)
-                table.insert(roomList, { id = id, room = room, dist = dist })
-            end
-            table.sort(roomList, function(a, b) return a.dist < b.dist end)
-
-            -- Determine which item types are needed based on door types
-            local neededItems = {}
-            for _, door in ipairs(doors) do
-                local dt = door.type
-                if dt == "keyed" then neededItems.key = (neededItems.key or 0) + 1
-                elseif dt == "shootThrough" then neededItems.weapon = (neededItems.weapon or 0) + 1
-                elseif dt == "destructible" then neededItems.bomb = (neededItems.bomb or 0) + 1
-                end
-            end
-
             local rng = Random.new(payload.seed or os.time())
             local itemId = 1
             local placed = 0
+            local resolverCount = 0
 
-            -- Phase 1: Guaranteed items in rooms nearest spawn
-            -- Always place one of each type regardless of door types present
-            local guaranteedTypes = { "key", "weapon", "bomb", "key", "bomb", "weapon" }
-            for i, itemType in ipairs(guaranteedTypes) do
-                local roomEntry = roomList[math.min(i + 1, #roomList)]
-                if roomEntry then
-                    local pos = randomFloorPos(roomEntry.room, rng)
-                    createPickup(itemType, pos, itemId, container)
-                    itemId = itemId + 1
-                    placed = placed + 1
+            -- Read resolver items from DOM room nodes (baked by DependencyResolver)
+            local root = Dom and Dom.getRoot()
+            local hasResolverItems = false
+
+            if root then
+                for _, child in ipairs(Dom.getChildren(root)) do
+                    local roomId = Dom.getAttribute(child, "RoomId")
+                    local resolverItems = Dom.getAttribute(child, "ResolverItems")
+                    if roomId and resolverItems then
+                        hasResolverItems = true
+                        local room = rooms[roomId] or rooms[tostring(roomId)]
+                        if room then
+                            for _, itemType in ipairs(resolverItems) do
+                                local pos = randomFloorPos(room, rng)
+                                createPickup(itemType, pos, itemId, container)
+                                itemId = itemId + 1
+                                placed = placed + 1
+                                resolverCount = resolverCount + 1
+                            end
+                        end
+                    end
                 end
             end
 
-            -- Phase 2: Random scatter in remaining rooms
-            local scatterTypes = { "key", "weapon", "bomb" }
-            for i = #guaranteedTypes + 2, #roomList do
-                local roomEntry = roomList[i]
-                if roomEntry and rng:NextNumber() < 0.45 then  -- 45% chance per room
-                    local itemType = scatterTypes[rng:NextInteger(1, #scatterTypes)]
-                    local pos = randomFloorPos(roomEntry.room, rng)
-                    createPickup(itemType, pos, itemId, container)
-                    itemId = itemId + 1
-                    placed = placed + 1
+            if hasResolverItems then
+                -- Bonus scatter (reduced density — resolver handles critical items)
+                local scatterTypes = { "key", "weapon", "bomb" }
+                for _, room in pairs(rooms) do
+                    if rng:NextNumber() < 0.2 then
+                        local itemType = scatterTypes[rng:NextInteger(1, #scatterTypes)]
+                        local pos = randomFloorPos(room, rng)
+                        createPickup(itemType, pos, itemId, container)
+                        itemId = itemId + 1
+                        placed = placed + 1
+                    end
                 end
+
+                print(string.format("[ItemNode] Spawned %d items (%d resolver, %d bonus)",
+                    placed, resolverCount, placed - resolverCount))
+            else
+                --------------------------------------------------------
+                -- Fallback: no DOM resolver data (backward compat)
+                --------------------------------------------------------
+
+                local spawn = payload.spawn
+                local spawnPos = spawn and spawn.position or { 0, 0, 0 }
+                local roomList = {}
+                for id, room in pairs(rooms) do
+                    local dx = room.position[1] - spawnPos[1]
+                    local dz = room.position[3] - spawnPos[3]
+                    local dist = math.sqrt(dx * dx + dz * dz)
+                    table.insert(roomList, { id = id, room = room, dist = dist })
+                end
+                table.sort(roomList, function(a, b) return a.dist < b.dist end)
+
+                local guaranteedTypes = { "key", "weapon", "bomb", "key", "bomb", "weapon" }
+                for i, itemType in ipairs(guaranteedTypes) do
+                    local roomEntry = roomList[math.min(i + 1, #roomList)]
+                    if roomEntry then
+                        local pos = randomFloorPos(roomEntry.room, rng)
+                        createPickup(itemType, pos, itemId, container)
+                        itemId = itemId + 1
+                        placed = placed + 1
+                    end
+                end
+
+                local scatterTypes = { "key", "weapon", "bomb" }
+                for i = #guaranteedTypes + 2, #roomList do
+                    local roomEntry = roomList[i]
+                    if roomEntry and rng:NextNumber() < 0.45 then
+                        local itemType = scatterTypes[rng:NextInteger(1, #scatterTypes)]
+                        local pos = randomFloorPos(roomEntry.room, rng)
+                        createPickup(itemType, pos, itemId, container)
+                        itemId = itemId + 1
+                        placed = placed + 1
+                    end
+                end
+
+                print(string.format("[ItemNode] Spawned %d items (fallback) across %d rooms",
+                    placed, #roomList))
             end
 
-            print(string.format("[ItemNode] Spawned %d items across %d rooms",
-                placed, #roomList))
             self.Out:Fire("nodeComplete", payload)
         end,
     },

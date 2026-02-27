@@ -211,12 +211,23 @@ return {
         self:_syncCall("placeRooms", payload)          -- MountainRoomPlacer
         self:_syncCall("buildShells", payload)         -- ShellBuilder
         self:_syncCall("planDoors", payload)            -- DoorPlanner
+
+        -- Test harness: tag first few doors with different types
+        -- so all 4 door types are testable near spawn
+        if payload.doors and #payload.doors >= 4 then
+            payload.doors[1].type = "auto"
+            payload.doors[2].type = "keyed"
+            payload.doors[3].type = "shootThrough"
+            payload.doors[4].type = "destructible"
+        end
+
         self:_syncCall("buildTrusses", payload)        -- TrussBuilder
         self:_syncCall("buildLights", payload)         -- LightBuilder (skips — skipLights)
         self:_syncCall("mount", payload)               -- Materializer
         self:_syncCall("paintMountainRooms", payload)  -- IceTerrainPainter alias
         self:_syncCall("applyDoors", payload)          -- DoorPlanner phase 2
         self:_syncCall("cutDoors", payload)            -- DoorCutter alias
+        self:_syncCall("spawnPassages", payload)       -- PassageNode
 
         self._dungeonContainer = payload.container
 
@@ -333,12 +344,22 @@ return {
 
             self:_syncCall("buildShells", payload)
             self:_syncCall("planDoors", payload)
+
+            -- Test harness: tag first few doors per chunk with different types
+            if payload.doors and #payload.doors >= 4 then
+                payload.doors[1].type = "auto"
+                payload.doors[2].type = "keyed"
+                payload.doors[3].type = "shootThrough"
+                payload.doors[4].type = "destructible"
+            end
+
             self:_syncCall("buildTrusses", payload)
             self:_syncCall("buildLights", payload)
             self:_syncCall("mount", payload)
             self:_syncCall("paintMountainRooms", payload)
             self:_syncCall("applyDoors", payload)
             self:_syncCall("cutDoors", payload)
+            self:_syncCall("spawnPassages", payload)       -- PassageNode
 
             self._dungeonContainer = payload.container
 

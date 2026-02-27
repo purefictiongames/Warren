@@ -18,6 +18,8 @@ return {
         "MountainRoomPlacer", "ShellBuilder", "DoorPlanner",
         "TrussBuilder", "LightBuilder", "Materializer",
         "IceTerrainPainter", "DoorCutter",
+        "PassageNode",
+        "BackpackToolbar",
         "MiniMap",
     },
 
@@ -188,7 +190,7 @@ return {
                 "TerrainPainterNode", "MeshTerrainPainterNode", "RockScatterNode",
                 "MountainRoomPlacer", "ShellBuilder", "DoorPlanner",
                 "TrussBuilder", "LightBuilder", "Materializer",
-                "IceTerrainPainter", "DoorCutter",
+                "IceTerrainPainter", "DoorCutter", "PassageNode",
                 "WorldMapOrchestrator", "WorldBridge",
             },
             InventoryNode           = { "DungeonOrchestrator" },
@@ -205,6 +207,8 @@ return {
             Materializer            = { "DungeonOrchestrator" },
             IceTerrainPainter       = { "DungeonOrchestrator" },
             DoorCutter              = { "DungeonOrchestrator" },
+            PassageNode             = { "DungeonOrchestrator" },
+            BackpackToolbar         = {},
             MiniMap                 = { "WorldMapOrchestrator" },
         },
     },
@@ -298,6 +302,10 @@ return {
         minVerticalRatio = 0.2,
         scaleRange = { min = 4, max = 12, minY = 4, maxY = 8 },
         origin = { 0, 40, 0 },
+    },
+
+    PassageNode = {
+        autoClose = 0,  -- seconds until re-close (0 = stays open)
     },
 
     TrussBuilder = {
